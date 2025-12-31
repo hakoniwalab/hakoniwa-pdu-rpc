@@ -11,6 +11,9 @@ class IPduRpcClientEndpoint {
 public:
     virtual ~IPduRpcClientEndpoint() = default;
 
+    virtual bool initialize_services(const std::string& service_path, uint64_t delta_time_usec) = 0;
+    virtual void sleep(uint64_t time_usec) = 0;
+
     /**
      * @brief Sends an RPC request asynchronously.
      * @param pdu The PDU data for the request.

@@ -2,34 +2,54 @@
 
 #include "pdu_rpc_types.hpp"
 #include "pdu_rpc_time.hpp"
+#include "hakoniwa/pdu/endpoint.hpp"
 #include <memory>
+#include <stdexcept>
+#include <limits>
 
 namespace hakoniwa::pdu::rpc {
 
-// Represents the state of a single RPC request/response transaction
 class PduRpcCore {
 public:
-    PduRpcCore(RequestId req_id, std::shared_ptr<ITimeSource> time_source, uint64_t timeout_usec)
+    PduRpcCore(RequestId req_id,
+               std::shared_ptr<ITimeSource> time_source,
+               std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint = nullptr)
         : request_id_(req_id),
-          time_source_(time_source),
+          time_source_(std::move(time_source)),
           status_(RpcStatus::DOING),
-          deadline_usec_(time_source->get_current_time_usec() + timeout_usec) {}
-
-    RequestId get_request_id() const {
-        return request_id_;
+          deadline_usec_(0),
+          endpoint_(std::move(endpoint))
+    {
+        if (!time_source_) {
+            throw std::invalid_argument("PduRpcCore: time_source is null");
+        }
     }
 
-    RpcStatus get_status() const {
-        return status_;
-    }
-
-    void set_status(RpcStatus status) {
-        status_ = status;
-    }
+    RequestId get_request_id() const { return request_id_; }
+    RpcStatus get_status() const { return status_; }
+    void set_status(RpcStatus status) { status_ = status; }
 
     bool is_timed_out() const {
-        if (!time_source_) return true; // Or handle as an error
-        return time_source_->get_current_time_usec() > deadline_usec_;
+        if (deadline_usec_ == 0) {
+            return false;
+        }
+        return time_source_->get_current_time_usec() >= deadline_usec_;
+    }
+    void start_timeout(uint64_t timeout_usec) {
+        if (timeout_usec == 0) {
+            deadline_usec_ = std::numeric_limits<uint64_t>::max();
+            return;
+        }
+        const uint64_t now = time_source_->get_current_time_usec();
+        if (now > std::numeric_limits<uint64_t>::max() - timeout_usec) {
+            deadline_usec_ = std::numeric_limits<uint64_t>::max();
+        } else {
+            deadline_usec_ = now + timeout_usec;
+        }
+    }
+
+    const std::shared_ptr<hakoniwa::pdu::Endpoint>& get_endpoint() const {
+        return endpoint_;
     }
 
 private:
@@ -37,8 +57,7 @@ private:
     std::shared_ptr<ITimeSource> time_source_;
     RpcStatus status_;
     uint64_t deadline_usec_;
-    // PduData request_pdu_; // To be added later
-    // PduData response_pdu_; // To be added later
+    std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_;
 };
 
 } // namespace hakoniwa::pdu::rpc

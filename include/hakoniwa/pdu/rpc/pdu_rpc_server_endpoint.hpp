@@ -16,6 +16,9 @@ class IPduRpcServerEndpoint {
 public:
     virtual ~IPduRpcServerEndpoint() = default;
 
+    virtual bool initialize_services(const std::string& service_path, uint64_t delta_time_usec) = 0;
+    virtual void sleep(uint64_t time_usec) = 0;
+
     /**
      * @brief Polls for incoming RPC events.
      * @return The type of event that occurred.
