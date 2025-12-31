@@ -52,5 +52,4 @@ struct RpcService {
     // other service-specific data
 };
 
-
 } // namespace hakoniwa::pdu::rpc

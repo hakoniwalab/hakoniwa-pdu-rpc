@@ -21,15 +21,16 @@ struct RpcReplyHeader {
 
 
 PduRpcServerEndpointImpl::PduRpcServerEndpointImpl(
-    const std::string& service_name, size_t max_clients, const std::string& service_path, uint64_t delta_time_usec,
+    const std::string& server_name, const std::string& service_name, size_t max_clients, const std::string& service_path, uint64_t delta_time_usec,
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source)
-    : IPduRpcServerEndpoint(service_name, max_clients, service_path, delta_time_usec),
+    : IPduRpcServerEndpoint(server_name, service_name, max_clients, service_path, delta_time_usec),
       endpoint_(endpoint), time_source_(time_source) {
     if (endpoint_) {
-        endpoint_->set_on_recv_callback([this](const hakoniwa::pdu::PduResolvedKey& pdu_key, std::span<const std::byte> data) {
-            PduRpcServerEndpointImpl::pdu_recv_callback(pdu_key, data);
+        endpoint_->set_on_recv_callback([this](const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) {
+            PduRpcServerEndpointImpl::pdu_recv_callback(resolved_pdu_key, data);
         });
     }
+    instances_.push_back(shared_from_this());
 }
 
 bool PduRpcServerEndpointImpl::initialize_services() {
@@ -37,14 +38,7 @@ bool PduRpcServerEndpointImpl::initialize_services() {
         std::cerr << "ERROR: Endpoint is not initialized." << std::endl;
         return false;
     }
-    // Open the communication endpoint using the service_path_ provided at construction
-    HakoPduErrorType err = endpoint_->open(service_path_);
-    if (err != HAKO_PDU_ERR_OK) {
-        std::cerr << "ERROR: Failed to open endpoint for service " << service_name_ << ": " << static_cast<int>(err) << std::endl;
-        return false;
-    }
-    // Service definition might be added here if needed in the future,
-    // but for now, the endpoint is initialized.
+
     return true;
 }
 
@@ -67,15 +61,36 @@ bool PduRpcServerEndpointImpl::start_rpc_service() {
     return true;
 }
 
-void PduRpcServerEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolvedKey& pdu_key, std::span<const std::byte> data) {
-
+void PduRpcServerEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) 
+{
+    for (const auto& instance : instances_) {
+        if (instance->endpoint_ == nullptr) {
+            continue;
+        }
+        std::string pdu_name = instance->endpoint_->get_pdu_name(resolved_pdu_key);
+        hakoniwa::pdu::PduKey pdu_key = {resolved_pdu_key.robot, pdu_name};
+        PduData pdu_data = {};
+        pdu_data.resize(data.size());
+        std::memcpy(pdu_data.data(), data.data(), data.size());
+        instance->put_pending_request(pdu_key, pdu_data);
+    }
 }
 
 
 ServerEventType PduRpcServerEndpointImpl::poll(RpcRequest& request) 
 {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (pending_requests_.empty()) {
+        return ServerEventType::NONE;
+    }
+    PendingRequest pending_request = std::move(pending_requests_.front());
+    pending_requests_.erase(pending_requests_.begin());
+    request.pdu = std::move(pending_request.pdu_data);
 
-    
+    convertor_request_.pdu2cpp(reinterpret_cast<char*>(request.pdu.data()), request.header);
+    if (!validate_header(request.header)) {
+        throw std::runtime_error("Invalid service request header: validation failed.");
+    }
     return ServerEventType::REQUEST_IN;
 }
 
@@ -132,5 +147,22 @@ void PduRpcServerEndpointImpl::send_cancel_reply(ClientId client_id, const PduDa
 
     active_rpcs_.erase(it);
 }
+
+bool PduRpcServerEndpointImpl::validate_header(HakoCpp_ServiceRequestHeader& header)
+{
+    if (header.service_name != this->service_name_) {
+        std::cerr << "ERROR: service_name is invalid: " << header.service_name << std::endl;
+        return false;
+    }
+    if (std::find(registered_clients_.begin(), registered_clients_.end(), header.client_name) == registered_clients_.end()) {
+        std::cerr << "ERROR: client_name is invalid: " << header.client_name << std::endl;
+        return false;
+    }
+    if (header.opcode >= HakoServiceOperationCodeType::HAKO_SERVICE_OPERATION_NUM) {
+        std::cerr << "ERROR: opcode is invalid: " << header.opcode << std::endl;
+        return false;
+    }
+    return true;
+} 
 
 } // namespace hakoniwa::pdu::rpc
