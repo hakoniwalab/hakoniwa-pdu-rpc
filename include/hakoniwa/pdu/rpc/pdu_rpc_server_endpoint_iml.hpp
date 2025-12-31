@@ -14,17 +14,17 @@ namespace hakoniwa::pdu::rpc {
 
 class PduRpcServerEndpointImpl : public IPduRpcServerEndpoint {
 public:
-    PduRpcServerEndpointImpl(std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source);
+    PduRpcServerEndpointImpl(
+        const std::string& service_name, size_t max_clients, const std::string& service_path, uint64_t delta_time_usec,
+        std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source);
     virtual ~PduRpcServerEndpointImpl() = default;
 
-    bool initialize_services(const std::string& service_path, uint64_t delta_time_usec) override;
+    bool initialize_services() override;
     void sleep(uint64_t time_usec) override;
 
-    bool start_rpc_service(const std::string& service_name, size_t max_clients) override;
+    bool start_rpc_service() override;
 
-    ServerEventType poll(std::string& service_name) override;
-
-    std::optional<RpcRequest> recv_request() override;
+    ServerEventType poll(RpcRequest& request) override;
 
     void send_reply(ClientId client_id, const PduData& pdu) override;
 
@@ -46,7 +46,7 @@ private:
     std::vector<PendingRequest> pending_requests_;
     std::optional<PendingRequest> last_polled_request_;
     
-    void pdu_recv_callback(const hakoniwa::pdu::PduResolvedKey& pdu_key, std::span<const std::byte> data);
+    static void pdu_recv_callback(const hakoniwa::pdu::PduResolvedKey& pdu_key, std::span<const std::byte> data);
 };
 
 } // namespace hakoniwa::pdu::rpc

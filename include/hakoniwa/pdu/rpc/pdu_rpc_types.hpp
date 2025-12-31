@@ -3,6 +3,9 @@
 #include <cstdint>
 #include <vector>
 #include "hakoniwa/pdu/endpoint_types.h" // For HakoPduErrorType
+#include "hako_srv_msgs/pdu_cpptype_conv_ServiceRequestHeader.hpp"
+#include "hako_srv_msgs/pdu_cpptype_conv_ServiceResponseHeader.hpp"
+#include "pdu_convertor.hpp"
 
 namespace hakoniwa::pdu::rpc {
 

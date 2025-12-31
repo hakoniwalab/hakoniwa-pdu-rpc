@@ -20,18 +20,31 @@ struct RpcReplyHeader {
 };
 
 
-PduRpcServerEndpointImpl::PduRpcServerEndpointImpl(std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source)
-    : endpoint_(endpoint), time_source_(time_source) {
+PduRpcServerEndpointImpl::PduRpcServerEndpointImpl(
+    const std::string& service_name, size_t max_clients, const std::string& service_path, uint64_t delta_time_usec,
+    std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source)
+    : IPduRpcServerEndpoint(service_name, max_clients, service_path, delta_time_usec),
+      endpoint_(endpoint), time_source_(time_source) {
     if (endpoint_) {
         endpoint_->set_on_recv_callback([this](const hakoniwa::pdu::PduResolvedKey& pdu_key, std::span<const std::byte> data) {
-            this->pdu_recv_callback(pdu_key, data);
+            PduRpcServerEndpointImpl::pdu_recv_callback(pdu_key, data);
         });
     }
 }
 
-bool PduRpcServerEndpointImpl::initialize_services(const std::string& /*service_path*/, uint64_t /*delta_time_usec*/) {
-    // Implementation depends on how services are defined and discovered.
-    // For now, we assume services are started explicitly via start_rpc_service.
+bool PduRpcServerEndpointImpl::initialize_services() {
+    if (!endpoint_) {
+        std::cerr << "ERROR: Endpoint is not initialized." << std::endl;
+        return false;
+    }
+    // Open the communication endpoint using the service_path_ provided at construction
+    HakoPduErrorType err = endpoint_->open(service_path_);
+    if (err != HAKO_PDU_ERR_OK) {
+        std::cerr << "ERROR: Failed to open endpoint for service " << service_name_ << ": " << static_cast<int>(err) << std::endl;
+        return false;
+    }
+    // Service definition might be added here if needed in the future,
+    // but for now, the endpoint is initialized.
     return true;
 }
 
@@ -40,106 +53,30 @@ void PduRpcServerEndpointImpl::sleep(uint64_t /*time_usec*/) {
     // depending on the threading model.
 }
 
-bool PduRpcServerEndpointImpl::start_rpc_service(const std::string& service_name, size_t max_clients) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (services_.find(service_name) != services_.end()) {
-        return false; // Service already exists
+bool PduRpcServerEndpointImpl::start_rpc_service() {
+    if (!endpoint_) {
+        std::cerr << "ERROR: Endpoint is not initialized." << std::endl;
+        return false;
     }
-    services_[service_name] = {service_name, max_clients, {}};
-    std::cout << "INFO: Started RPC service: " << service_name << std::endl;
+    // Start the communication endpoint
+    HakoPduErrorType err = endpoint_->start();
+    if (err != HAKO_PDU_ERR_OK) {
+        std::cerr << "ERROR: Failed to start endpoint for service " << service_name_ << ": " << static_cast<int>(err) << std::endl;
+        return false;
+    }
     return true;
 }
 
 void PduRpcServerEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolvedKey& pdu_key, std::span<const std::byte> data) {
-    std::lock_guard<std::mutex> lock(mtx_);
 
-    // This is a simplified interpretation of the incoming PDU.
-    // A real implementation would need a robust way to map channel_id to service_name.
-    // Here, we iterate through services to find a match based on channel_id, which is inefficient.
-    std::string service_name_str;
-    for (const auto& pair : services_) {
-        // This check is a placeholder. A real mapping is needed.
-        if (endpoint_->get_pdu_channel_id({"", pair.first}) == pdu_key.channel_id) {
-            service_name_str = pair.first;
-            break;
-        }
-    }
-    if (service_name_str.empty()) {
-         // Fallback for channel id not found in service mapping. This could be for client-side channels.
-         return;
-    }
-
-    if (data.size() < sizeof(RpcRequestHeader)) {
-        std::cerr << "ERROR: Received data too small for RPC header" << std::endl;
-        return;
-    }
-
-    RpcRequestHeader header;
-    std::memcpy(&header, data.data(), sizeof(header));
-    
-    // Naive client registration
-    ClientId client_id = header.client_id;
-    if (client_id == -1) { // Assuming -1 is for new clients
-        client_id = next_client_id_++;
-    }
-
-    PduData pdu_data;
-    if (header.data_len > 0) {
-        pdu_data.resize(header.data_len);
-        std::memcpy(pdu_data.data(), data.data() + sizeof(RpcRequestHeader), header.data_len);
-    }
-    
-    pending_requests_.push_back({
-        service_name_str,
-        { client_id, std::move(pdu_data) }
-    });
 }
 
 
-ServerEventType PduRpcServerEndpointImpl::poll(std::string& service_name) {
-    std::lock_guard<std::mutex> lock(mtx_);
+ServerEventType PduRpcServerEndpointImpl::poll(RpcRequest& request) 
+{
 
-    // Check for timed-out requests and clean them up
-    for (auto it = active_rpcs_.begin(); it != active_rpcs_.end(); ) {
-        if (it->second->is_timed_out()) {
-            it->second->set_status(RpcStatus::ERROR);
-            // Potentially move to a "timed_out_rpcs" map for later handling
-            it = active_rpcs_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
-    if (pending_requests_.empty()) {
-        return ServerEventType::NONE;
-    }
-
-    last_polled_request_ = std::move(pending_requests_.front());
-    pending_requests_.erase(pending_requests_.begin());
-
-    service_name = last_polled_request_->service_name;
     
-    // Here, we need to differentiate between a new request and a cancellation request.
-    // This requires more detail in the PDU header, which we assume is part of method_id.
-    // For now, all incoming are considered REQUEST_IN.
     return ServerEventType::REQUEST_IN;
-}
-
-std::optional<RpcRequest> PduRpcServerEndpointImpl::recv_request() {
-    std::lock_guard<std::mutex> lock(mtx_);
-
-    if (!last_polled_request_) {
-        return std::nullopt;
-    }
-
-    auto req = std::move(last_polled_request_->request);
-    last_polled_request_.reset();
-
-    // Create and store a core RPC object to track this request
-    auto rpc_core = std::make_shared<PduRpcCore>(req.pdu.size(), time_source_); // req.pdu.size() as a placeholder for request_id
-    active_rpcs_[req.client_id] = rpc_core;
-
-    return req;
 }
 
 void PduRpcServerEndpointImpl::send_reply(ClientId client_id, const PduData& pdu) {
