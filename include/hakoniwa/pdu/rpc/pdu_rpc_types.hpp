@@ -36,5 +36,18 @@ enum class ServerEventType {
     REQUEST_CANCEL
 };
 
+struct RpcClient {
+    ClientId id;
+    std::string name;
+    // other client-specific data
+};
+
+struct RpcService {
+    std::string name;
+    size_t max_clients;
+    std::vector<RpcClient> clients;
+    // other service-specific data
+};
+
 
 } // namespace hakoniwa::pdu::rpc

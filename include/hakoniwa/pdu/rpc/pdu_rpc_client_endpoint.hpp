@@ -22,7 +22,7 @@ public:
      * @param timeout The timeout for the request.
      * @return A future that will eventually hold the PDU data of the response.
      */
-    virtual std::future<PduData> async_call(const PduData& pdu, uint64_t timeout_usec) = 0;
+    virtual std::future<PduData> call(const PduData& pdu, uint64_t timeout_usec) = 0;
 
     /**
      * @brief Cancels a pending request.

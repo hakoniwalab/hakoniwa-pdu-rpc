@@ -1,5 +1,5 @@
 add_library(hakoniwa_pdu_rpc
-    hakoniwa_pdu_rpc.cpp
+    pdu_rpc_server_endpoint_iml.cpp
 )
 
 target_include_directories(hakoniwa_pdu_rpc
