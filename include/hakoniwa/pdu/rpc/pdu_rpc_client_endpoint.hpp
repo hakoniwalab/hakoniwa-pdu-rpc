@@ -14,6 +14,8 @@ public:
     virtual bool initialize_services(const std::string& service_path, uint64_t delta_time_usec) = 0;
     virtual void sleep(uint64_t time_usec) = 0;
 
+    virtual ClientId register_client(const std::string& service_name, const std::string& client_name) = 0;
+
     /**
      * @brief Sends an RPC request asynchronously.
      * @param pdu The PDU data for the request.
