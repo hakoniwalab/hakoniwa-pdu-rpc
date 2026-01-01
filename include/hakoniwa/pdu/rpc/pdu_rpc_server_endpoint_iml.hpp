@@ -39,9 +39,9 @@ public:
 
     ServerEventType poll(RpcRequest& request) override;
 
-    void send_reply(ClientId client_id, const PduData& pdu) override;
+    void send_reply(std::string client_name, const PduData& pdu) override;
 
-    void send_cancel_reply(ClientId client_id, const PduData& pdu) override;
+    void send_cancel_reply(std::string client_name, const PduData& pdu) override;
 
 protected:
     void put_pending_request(const hakoniwa::pdu::PduKey& pdu_key, const PduData& pdu_data) {
@@ -51,7 +51,6 @@ protected:
 private:
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_;
     std::shared_ptr<ITimeSource> time_source_;
-    std::map<ClientId, std::shared_ptr<PduRpcCore>> active_rpcs_;
     std::mutex mtx_;
 
     // A queue to hold incoming requests detected by the callback

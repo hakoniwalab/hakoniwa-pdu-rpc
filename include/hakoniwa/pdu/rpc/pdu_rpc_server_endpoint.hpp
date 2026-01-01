@@ -37,14 +37,14 @@ protected:
      * @param client_id The ID of the client to reply to.
      * @param pdu The PDU data to send as a reply.
      */
-    virtual void send_reply(ClientId client_id, const PduData& pdu) = 0;
+    virtual void send_reply(std::string client_name, const PduData& pdu) = 0;
 
     /**
      * @brief Notifies the client that its request was cancelled.
      * @param client_id The ID of the client.
      * @param pdu The PDU data to send.
      */
-    virtual void send_cancel_reply(ClientId client_id, const PduData& pdu) = 0;
+    virtual void send_cancel_reply(std::string client_name, const PduData& pdu) = 0;
 };
 
 } // namespace hakoniwa::pdu::rpc

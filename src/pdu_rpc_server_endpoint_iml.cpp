@@ -130,46 +130,52 @@ ServerEventType PduRpcServerEndpointImpl::poll(RpcRequest& request)
     }
 }
 
-void PduRpcServerEndpointImpl::send_reply(ClientId client_id, const PduData& pdu) {
+void PduRpcServerEndpointImpl::send_reply(std::string client_name, const PduData& pdu) {
     std::lock_guard<std::mutex> lock(mtx_);
-    auto it = active_rpcs_.find(client_id);
-    if (it == active_rpcs_.end()) {
-        std::cerr << "ERROR: Can't send reply to unknown or completed client_id: " << client_id << std::endl;
+
+    if (server_states_.find(client_name) == server_states_.end()) {
+        std::cerr << "ERROR: Unknown client_name: " << client_name << std::endl;
+        return;
+    }
+    else if (server_states_[client_name] != ServerState::SERVER_STATE_RUNNING) {
+        std::cerr << "ERROR: Cannot send reply, server state is not RUNNING for client: " << client_name << std::endl;
         return;
     }
     
+    server_states_[client_name] = ServerState::SERVER_STATE_IDLE;
+    std::cout << "INFO: Reset state to IDLE for client: " << client_name << std::endl;
+
     // Construct the reply PDU
     RpcReplyHeader reply_header;
-    reply_header.request_id = it->second->get_request_id();
-    reply_header.result_code = static_cast<int32_t>(RpcResultCode::OK);
-    reply_header.data_len = pdu.size();
-
+    //TODO
+    
     PduData reply_pdu(sizeof(reply_header) + pdu.size());
     std::memcpy(reply_pdu.data(), &reply_header, sizeof(reply_header));
     if (!pdu.empty()) {
         std::memcpy(reply_pdu.data() + sizeof(reply_header), pdu.data(), pdu.size());
     }
 
-    // This is a placeholder. Need to resolve client_id to a specific channel.
-    //hakoniwa::pdu::PduKey pdu_key = {"", "reply_channel_for_client_" + std::to_string(client_id)};
-    //endpoint_->send(pdu_key, std::as_bytes(std::span(reply_pdu)));
-
-    active_rpcs_.erase(it);
-    std::cout << "INFO: Sent reply to client_id: " << client_id << std::endl;
+    std::cout << "INFO: Sent reply to client_name: " << client_name << std::endl;
 }
 
-void PduRpcServerEndpointImpl::send_cancel_reply(ClientId client_id, const PduData& pdu) {
+void PduRpcServerEndpointImpl::send_cancel_reply(std::string client_name, const PduData& pdu) {
     // Similar to send_reply, but with a CANCELED result code
     std::lock_guard<std::mutex> lock(mtx_);
-    auto it = active_rpcs_.find(client_id);
-    if (it == active_rpcs_.end()) {
-        return; // Request might have already completed or timed out
+    if (server_states_.find(client_name) == server_states_.end()) {
+        std::cerr << "ERROR: Unknown client_name: " << client_name << std::endl;
+        return;
+    }
+    else if (server_states_[client_name] != ServerState::SERVER_STATE_CANCELLING) {
+        std::cerr << "ERROR: Cannot send reply, server state is not CANCELLING for client: " << client_name << std::endl;
+        return;
     }
     
+    // Reset server state to IDLE
+    server_states_[client_name] = ServerState::SERVER_STATE_IDLE;
+    std::cout << "INFO: Reset state to IDLE for client: " << client_name << " after cancellation" << std::endl;
+
     RpcReplyHeader reply_header;
-    reply_header.request_id = it->second->get_request_id();
-    reply_header.result_code = static_cast<int32_t>(RpcResultCode::CANCELED);
-    reply_header.data_len = pdu.size();
+    //TODO
     
     PduData reply_pdu(sizeof(reply_header) + pdu.size());
     std::memcpy(reply_pdu.data(), &reply_header, sizeof(reply_header));
@@ -177,11 +183,7 @@ void PduRpcServerEndpointImpl::send_cancel_reply(ClientId client_id, const PduDa
         std::memcpy(reply_pdu.data() + sizeof(reply_header), pdu.data(), pdu.size());
     }
 
-    // Placeholder for sending logic
-    //hakoniwa::pdu::PduKey pdu_key = {"", "reply_channel_for_client_" + std::to_string(client_id)};
-    //endpoint_->send(pdu_key, std::as_bytes(std::span(reply_pdu)));
-
-    active_rpcs_.erase(it);
+    std::cout << "INFO: Sent cancel reply to client_name: " << client_name << std::endl;
 }
 
 bool PduRpcServerEndpointImpl::validate_header(HakoCpp_ServiceRequestHeader& header)

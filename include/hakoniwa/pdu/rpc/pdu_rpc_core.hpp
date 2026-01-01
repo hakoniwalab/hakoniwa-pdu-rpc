@@ -12,9 +12,11 @@ namespace hakoniwa::pdu::rpc {
 class PduRpcCore {
 public:
     PduRpcCore(RequestId req_id,
+               const std::string& client_name, // Added client_name
                std::shared_ptr<ITimeSource> time_source,
                std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint = nullptr)
         : request_id_(req_id),
+          client_name_(client_name), // Initialize client_name
           time_source_(std::move(time_source)),
           status_(RpcStatus::DOING),
           deadline_usec_(0),
@@ -26,6 +28,7 @@ public:
     }
 
     RequestId get_request_id() const { return request_id_; }
+    const std::string& get_client_name() const { return client_name_; } // Added getter
     RpcStatus get_status() const { return status_; }
     void set_status(RpcStatus status) { status_ = status; }
 
@@ -54,6 +57,7 @@ public:
 
 private:
     RequestId request_id_;
+    std::string client_name_; // Added member
     std::shared_ptr<ITimeSource> time_source_;
     RpcStatus status_;
     uint64_t deadline_usec_;
