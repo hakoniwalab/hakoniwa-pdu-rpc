@@ -93,6 +93,7 @@ ServerEventType PduRpcServerEndpointImpl::poll(RpcRequest& request)
     if (!validate_header(request.header)) {
         std::cerr << "ERROR: Invalid request header received and ignored" << std::endl;
         //ignore invalid request
+        //TODO send error reply
         return ServerEventType::NONE;
     }
     if (request.header.opcode == HAKO_SERVICE_OPERATION_CODE_CANCEL) {
@@ -104,11 +105,13 @@ ServerEventType PduRpcServerEndpointImpl::poll(RpcRequest& request)
         else if (server_states_[request.header.client_name] == ServerState::SERVER_STATE_IDLE) {
             // Already idle, nothing to cancel
             // client must get normal reply and cancel request must be ignored
+            //TODO reply invalid cancel reply
             std::cerr << "WARNING: Received cancel request while idle for client: " << request.header.client_name << std::endl;
             return ServerEventType::NONE;
         }
         else {
             // Already cancelling
+            //TODO reply busy reply
             std::cerr << "WARNING: Received cancel request while already cancelling for client: " << request.header.client_name << std::endl;
             return ServerEventType::NONE;
         }
@@ -121,10 +124,12 @@ ServerEventType PduRpcServerEndpointImpl::poll(RpcRequest& request)
         }
         else if (server_states_[request.header.client_name] == ServerState::SERVER_STATE_RUNNING) {
             std::cerr << "WARNING: Received request while previous request is still running for client: " << request.header.client_name << std::endl;
+            //TODO reply busy reply
             return ServerEventType::NONE;
         }
         else { // CANCELING
             std::cerr << "WARNING: Received request while previous request is cancelling for client: " << request.header.client_name << std::endl;
+            //TODO reply busy reply
             return ServerEventType::NONE;
         }
     }
