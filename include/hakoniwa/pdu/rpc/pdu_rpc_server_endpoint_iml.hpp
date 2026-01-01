@@ -51,10 +51,8 @@ protected:
 private:
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_;
     std::shared_ptr<ITimeSource> time_source_;
-    std::map<std::string, RpcService> services_;
     std::map<ClientId, std::shared_ptr<PduRpcCore>> active_rpcs_;
     std::mutex mtx_;
-    ClientId next_client_id_ = 0;
 
     // A queue to hold incoming requests detected by the callback
     struct PendingRequest {

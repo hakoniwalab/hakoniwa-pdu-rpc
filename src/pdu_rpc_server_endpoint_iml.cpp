@@ -4,6 +4,8 @@
 
 namespace hakoniwa::pdu::rpc {
 
+std::vector<std::shared_ptr<PduRpcServerEndpointImpl>> PduRpcServerEndpointImpl::instances_;
+
 // Assuming a simple PDU header structure for requests
 // In a real scenario, this would be more complex, probably defined in a shared header.
 struct RpcRequestHeader {
