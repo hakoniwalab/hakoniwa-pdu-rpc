@@ -18,6 +18,13 @@ enum HakoServiceOperationCodeType {
     HAKO_SERVICE_OPERATION_NUM
 };
 
+enum ServerState {
+    SERVER_STATE_IDLE = 0,
+    SERVER_STATE_RUNNING,
+    SERVER_STATE_CANCELLING,
+    SERVER_STATE_NUM
+};
+
 class PduRpcServerEndpointImpl : public IPduRpcServerEndpoint, public std::enable_shared_from_this<PduRpcServerEndpointImpl> {
 public:
     PduRpcServerEndpointImpl(
@@ -54,6 +61,7 @@ private:
         hakoniwa::pdu::PduKey pdu_key;
         PduData pdu_data;
     };
+    std::map<std::string, ServerState> server_states_;
     std::vector<std::string> registered_clients_;
     std::vector<PendingRequest> pending_requests_;
     hako::pdu::PduConvertor<HakoCpp_ServiceRequestHeader, hako::pdu::msgs::hako_srv_msgs::ServiceRequestHeader> convertor_request_;
