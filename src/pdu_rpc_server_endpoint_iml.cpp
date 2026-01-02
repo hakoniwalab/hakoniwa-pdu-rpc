@@ -127,8 +127,8 @@ void PduRpcServerEndpointImpl::send_reply(std::string client_name, const PduData
         std::cerr << "ERROR: Unknown client_name: " << client_name << std::endl;
         return;
     }
-    else if (server_states_[client_name].state != ServerState::SERVER_STATE_RUNNING) {
-        std::cerr << "ERROR: Cannot send reply, server state is not RUNNING for client: " << client_name << std::endl;
+    else if (server_states_[client_name].state != ServerState::SERVER_STATE_IDLE) {
+        std::cerr << "ERROR: Cannot send reply, server state is not IDLE for client: " << client_name << std::endl;
         return;
     }
     
