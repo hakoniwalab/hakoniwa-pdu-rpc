@@ -9,9 +9,9 @@ namespace hakoniwa::pdu::rpc {
 std::vector<std::shared_ptr<PduRpcServerEndpointImpl>> PduRpcServerEndpointImpl::instances_;
 
 PduRpcServerEndpointImpl::PduRpcServerEndpointImpl(
-    const std::string& service_name, const std::string& service_path, uint64_t delta_time_usec,
+    const std::string& service_name, uint64_t delta_time_usec,
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source)
-    : IPduRpcServerEndpoint(service_name, service_path, delta_time_usec),
+    : IPduRpcServerEndpoint(service_name, delta_time_usec),
       endpoint_(endpoint), time_source_(time_source) {
     if (endpoint_) {
         endpoint_->set_on_recv_callback([this](const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) {
@@ -20,32 +20,20 @@ PduRpcServerEndpointImpl::PduRpcServerEndpointImpl(
     }
 }
 
-bool PduRpcServerEndpointImpl::initialize_services() {
+bool PduRpcServerEndpointImpl::initialize(const nlohmann::json& service_config) {
     if (!endpoint_) {
         std::cerr << "ERROR: Endpoint is not initialized." << std::endl;
         return false;
     }
     instances_.push_back(shared_from_this());
-    std::ifstream ifs(this->service_path_);
-    if (!ifs.is_open()) {
-        std::cerr << "ERROR: Failed to open service definition file: " << this->service_path_ << std::endl;
-        return false;
-    }
 
-    nlohmann::json services_json;
     try {
-        ifs >> services_json;
-    } catch (const nlohmann::json::exception& e) {
-        std::cerr << "ERROR: Failed to parse service definition file: " << e.what() << std::endl;
-        return false;
-    }
-    for (const auto& service : services_json["services"]) {
-        max_clients_ = service["maxClients"].get<size_t>();
-        std::string service_name = service["name"];
-        std::string service_type = service["type"];
+        max_clients_ = service_config["maxClients"].get<size_t>();
+        std::string service_name = service_config["name"];
+        std::string service_type = service_config["type"];
         auto& pdu_def = endpoint_->get_pdu_definition();
 
-        for (const auto& client : service["clients"]) {
+        for (const auto& client : service_config["clients"]) {
             std::string client_name = client["name"];
             // Register client
             registered_clients_.push_back(client_name);
@@ -58,7 +46,7 @@ bool PduRpcServerEndpointImpl::initialize_services() {
             req_def.org_name = client_name + "Req";
             req_def.name = service_name + "_" + req_def.org_name;
             req_def.channel_id = client["requestChannelId"];
-            req_def.pdu_size = service["pduSize"]["client"]["baseSize"].get<size_t>() + service["pduSize"]["client"]["heapSize"].get<size_t>();
+            req_def.pdu_size = service_config["pduSize"]["client"]["baseSize"].get<size_t>() + service_config["pduSize"]["client"]["heapSize"].get<size_t>();
             req_def.method_type = "RPC";
             pdu_def.add_definition(service_name, req_def);
 
@@ -67,10 +55,13 @@ bool PduRpcServerEndpointImpl::initialize_services() {
             res_def.org_name = client_name + "Res";
             res_def.name = service_name + "_" + res_def.org_name;
             res_def.channel_id = client["responseChannelId"];
-            res_def.pdu_size = service["pduSize"]["server"]["baseSize"].get<size_t>() + service["pduSize"]["server"]["heapSize"].get<size_t>();
+            res_def.pdu_size = service_config["pduSize"]["server"]["baseSize"].get<size_t>() + service_config["pduSize"]["server"]["heapSize"].get<size_t>();
             res_def.method_type = "RPC";
             pdu_def.add_definition(service_name, res_def);
         }
+    } catch (const nlohmann::json::exception& e) {
+        std::cerr << "ERROR: Failed to parse service config: " << e.what() << std::endl;
+        return false;
     }
 
     return true;

@@ -9,6 +9,7 @@
 #include <vector>
 #include <map>
 #include <mutex>
+#include <nlohmann/json_fwd.hpp>
 
 namespace hakoniwa::pdu::rpc {
 
@@ -68,11 +69,11 @@ struct ServerProcessingStatus {
 class PduRpcServerEndpointImpl : public IPduRpcServerEndpoint, public std::enable_shared_from_this<PduRpcServerEndpointImpl> {
 public:
     PduRpcServerEndpointImpl(
-        const std::string& service_name, const std::string& service_path, uint64_t delta_time_usec,
+        const std::string& service_name, uint64_t delta_time_usec,
         std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source);
     virtual ~PduRpcServerEndpointImpl() = default;
 
-    bool initialize_services() override;
+    bool initialize(const nlohmann::json& service_config) override;
 
 
     bool start_rpc_service() override;
