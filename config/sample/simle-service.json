@@ -1,6 +1,20 @@
 {
     "pduMetaDataSize": 24,
     "pdu_config_path": "examples/service/pdu_config.json",
+    "endpoints": [
+        {
+            "nodeId": "node1",
+            "endpoints": [
+                { "id": "n1-ep1", "config_path": "endpoint/n1-ep1.json" }
+            ]
+        },
+        {
+            "nodeId": "node2",
+            "endpoints": [
+                { "id": "n2-ep1", "config_path": "endpoint/n2-ep1.json" }
+            ]
+        }
+    ],
     "services": [
         {
             "name": "Service/Add",
@@ -16,12 +30,20 @@
                     "baseSize": 288
                 }
             },
+            "server_endpoint": {
+                "nodeId": "node1",
+                "endpointId": "n1-ep1"
+            },
             "clients": [
                 {
                     "name": "Client1",
                     "comment": "org_name is {type} + Req/Res",
                     "requestChannelId": 1,
-                    "responseChannelId": 2
+                    "responseChannelId": 2,
+                    "client_endpoint": {
+                        "nodeId": "node2",
+                        "endpointId": "n2-ep1"
+                    }
                 }
             ]
         }

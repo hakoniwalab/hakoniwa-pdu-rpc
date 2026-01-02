@@ -12,6 +12,38 @@
       "type": "string",
       "description": "Path to the PDU configuration file."
     },
+    "endpoints": {
+      "type": "array",
+      "description": "List of endpoint configurations.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "nodeId": {
+            "type": "string",
+            "description": "The ID of the node."
+          },
+          "endpoints": {
+            "type": "array",
+            "description": "List of endpoints for the node.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "The ID of the endpoint."
+                },
+                "config_path": {
+                  "type": "string",
+                  "description": "Path to the endpoint configuration file."
+                }
+              },
+              "required": ["id", "config_path"]
+            }
+          }
+        },
+        "required": ["nodeId", "endpoints"]
+      }
+    },
     "services": {
       "type": "array",
       "description": "List of service definitions.",
@@ -64,6 +96,20 @@
             },
             "required": ["server", "client"]
           },
+          "server_endpoint": {
+            "type": "object",
+            "properties": {
+                "nodeId": {
+                    "type": "string",
+                    "description": "The ID of the node where the server endpoint resides."
+                },
+                "endpointId": {
+                    "type": "string",
+                    "description": "The ID of the server endpoint."
+                }
+            },
+            "required": ["nodeId", "endpointId"]
+          },
           "clients": {
             "type": "array",
             "description": "List of client definitions for this service.",
@@ -85,15 +131,29 @@
                 "responseChannelId": {
                   "type": "integer",
                   "description": "Response channel ID."
+                },
+                "client_endpoint": {
+                    "type": "object",
+                    "properties": {
+                        "nodeId": {
+                            "type": "string",
+                            "description": "The ID of the node where the client endpoint resides."
+                        },
+                        "endpointId": {
+                            "type": "string",
+                            "description": "The ID of the client endpoint."
+                        }
+                    },
+                    "required": ["nodeId", "endpointId"]
                 }
               },
-              "required": ["name", "requestChannelId", "responseChannelId"]
+              "required": ["name", "requestChannelId", "responseChannelId", "client_endpoint"]
             }
           }
         },
-        "required": ["name", "type", "maxClients", "pduSize", "clients"]
+        "required": ["name", "type", "maxClients", "pduSize", "server_endpoint", "clients"]
       }
     }
   },
-  "required": ["pduMetaDataSize", "pdu_config_path", "services"]
+  "required": ["pduMetaDataSize", "pdu_config_path", "endpoints", "services"]
 }
