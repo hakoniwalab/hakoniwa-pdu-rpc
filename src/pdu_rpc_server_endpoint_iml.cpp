@@ -50,7 +50,8 @@ bool PduRpcServerEndpointImpl::initialize_services() {
             // Register client
             registered_clients_.push_back(client_name);
             // Initialize server state
-            server_states_[client_name] = SERVER_STATE_IDLE;
+            server_states_[client_name].state = SERVER_STATE_IDLE;
+            server_states_[client_name].request_id = 0;
 
             // Request PDU
             PduDef req_def;
@@ -157,12 +158,13 @@ void PduRpcServerEndpointImpl::send_reply(std::string client_name, const PduData
         std::cerr << "ERROR: Unknown client_name: " << client_name << std::endl;
         return;
     }
-    else if (server_states_[client_name] != ServerState::SERVER_STATE_RUNNING) {
+    else if (server_states_[client_name].state != ServerState::SERVER_STATE_RUNNING) {
         std::cerr << "ERROR: Cannot send reply, server state is not RUNNING for client: " << client_name << std::endl;
         return;
     }
     
-    server_states_[client_name] = ServerState::SERVER_STATE_IDLE;
+    server_states_[client_name].state = ServerState::SERVER_STATE_IDLE;
+    server_states_[client_name].request_id = 0;
     std::cout << "INFO: Reset state to IDLE for client: " << client_name << std::endl;
 
     hakoniwa::pdu::PduKey pdu_key = {service_name_, client_name + "Res"};
@@ -183,13 +185,14 @@ void PduRpcServerEndpointImpl::send_cancel_reply(std::string client_name, const 
         std::cerr << "ERROR: Unknown client_name: " << client_name << std::endl;
         return;
     }
-    else if (server_states_[client_name] != ServerState::SERVER_STATE_CANCELLING) {
+    else if (server_states_[client_name].state != ServerState::SERVER_STATE_CANCELLING) {
         std::cerr << "ERROR: Cannot send reply, server state is not CANCELLING for client: " << client_name << std::endl;
         return;
     }
     
     // Reset server state to IDLE
-    server_states_[client_name] = ServerState::SERVER_STATE_IDLE;
+    server_states_[client_name].state = ServerState::SERVER_STATE_IDLE;
+    server_states_[client_name].request_id = 0;
     std::cout << "INFO: Reset state to IDLE for client: " << client_name << " after cancellation" << std::endl;
 
     hakoniwa::pdu::PduKey pdu_key = {service_name_, client_name + "Res"};
@@ -220,12 +223,13 @@ bool PduRpcServerEndpointImpl::validate_header(HakoCpp_ServiceRequestHeader& hea
 
 
 ServerEventType PduRpcServerEndpointImpl::handle_request_in(RpcRequest& request) {
-    if (server_states_[request.header.client_name] == ServerState::SERVER_STATE_IDLE) {
+    if (server_states_[request.header.client_name].state == ServerState::SERVER_STATE_IDLE) {
         std::cout << "INFO: Received request for client: " << request.header.client_name << std::endl;
-        server_states_[request.header.client_name] = ServerState::SERVER_STATE_RUNNING;
+        server_states_[request.header.client_name].state = ServerState::SERVER_STATE_RUNNING;
+        server_states_[request.header.client_name].request_id = request.header.request_id;
         return ServerEventType::REQUEST_IN;
     }
-    else if (server_states_[request.header.client_name] == ServerState::SERVER_STATE_RUNNING) {
+    else if (server_states_[request.header.client_name].state == ServerState::SERVER_STATE_RUNNING) {
         std::cerr << "WARNING: Received request while previous request is still running for client: " << request.header.client_name << std::endl;
         send_error_reply(request.header, HAKO_SERVICE_RESULT_CODE_BUSY);
         return ServerEventType::NONE;
@@ -238,12 +242,18 @@ ServerEventType PduRpcServerEndpointImpl::handle_request_in(RpcRequest& request)
 }
 
 ServerEventType PduRpcServerEndpointImpl::handle_cancel_request(RpcRequest& request) {
-    if (server_states_[request.header.client_name] == ServerState::SERVER_STATE_RUNNING) {
-        server_states_[request.header.client_name] = ServerState::SERVER_STATE_CANCELLING;
+    if (server_states_[request.header.client_name].state == ServerState::SERVER_STATE_RUNNING) {
+        if (server_states_[request.header.client_name].request_id != request.header.request_id) {
+            // Request ID does not match
+            std::cerr << "WARNING: Received cancel request with mismatched request_id for client: " << request.header.client_name << std::endl;
+            send_error_reply(request.header, HAKO_SERVICE_RESULT_CODE_INVALID);
+            return ServerEventType::NONE;
+        }
+        server_states_[request.header.client_name].state = ServerState::SERVER_STATE_CANCELLING;
         std::cout << "INFO: Received cancel request for client: " << request.header.client_name << std::endl;
         return ServerEventType::REQUEST_CANCEL;
     }
-    else if (server_states_[request.header.client_name] == ServerState::SERVER_STATE_IDLE) {
+    else if (server_states_[request.header.client_name].state == ServerState::SERVER_STATE_IDLE) {
         // Already idle, nothing to cancel
         // client must get normal reply and cancel request must be ignored
         std::cerr << "WARNING: Received cancel request while idle for client: " << request.header.client_name << std::endl;
