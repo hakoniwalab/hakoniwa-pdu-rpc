@@ -86,10 +86,6 @@ bool PduRpcServerEndpointImpl::initialize_services() {
     return true;
 }
 
-void PduRpcServerEndpointImpl::sleep(uint64_t time_usec) {
-    time_source_->sleep(time_usec);
-}
-
 bool PduRpcServerEndpointImpl::start_rpc_service() {
     if (!endpoint_) {
         std::cerr << "ERROR: Endpoint is not initialized." << std::endl;
@@ -107,7 +103,7 @@ bool PduRpcServerEndpointImpl::start_rpc_service() {
         if (running) {
             break;
         }
-        this->sleep(1000); // Sleep for 1ms
+        time_source_->sleep(1000); // Sleep for 1ms
     }
     return true;
 }

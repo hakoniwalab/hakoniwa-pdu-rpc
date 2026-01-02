@@ -28,7 +28,6 @@ protected:
     virtual bool initialize_services() = 0;
     virtual bool start_rpc_service() = 0;
     virtual ServerEventType poll(RpcRequest& request) = 0;
-    virtual void sleep(uint64_t time_usec) = 0;
 
 
     /**

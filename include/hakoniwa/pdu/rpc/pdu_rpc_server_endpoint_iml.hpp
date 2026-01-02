@@ -33,7 +33,7 @@ public:
     virtual ~PduRpcServerEndpointImpl() = default;
 
     bool initialize_services() override;
-    void sleep(uint64_t time_usec) override;
+
 
     bool start_rpc_service() override;
 
