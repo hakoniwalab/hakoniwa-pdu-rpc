@@ -44,6 +44,11 @@ protected:
      * @param pdu The PDU data to send.
      */
     virtual void send_cancel_reply(std::string client_name, const PduData& pdu) = 0;
+
+public:
+    std::string get_service_name() const {
+        return service_name_;
+    }
 };
 
 } // namespace hakoniwa::pdu::rpc

@@ -108,10 +108,11 @@ bool PduRpcServerEndpointImpl::start_rpc_service() {
 void PduRpcServerEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) 
 {
     for (const auto& instance : instances_) {
-        if (instance->endpoint_ == nullptr) {
+        // robot_name = service_name
+        if (instance->get_service_name() != resolved_pdu_key.robot) {
             continue;
         }
-        // robot_name = service_name
+        assert(instance->endpoint_ != nullptr);
         // channel_Id = client_request_channel_id
         std::string pdu_name = instance->endpoint_->get_pdu_name(resolved_pdu_key);
         hakoniwa::pdu::PduKey pdu_key = {resolved_pdu_key.robot, pdu_name};
