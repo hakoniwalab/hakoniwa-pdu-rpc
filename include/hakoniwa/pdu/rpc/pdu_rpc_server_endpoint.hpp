@@ -37,8 +37,8 @@ public:
      */
     virtual void send_cancel_reply(std::string client_name, const PduData& pdu) = 0;
 protected:
-    IPduRpcServerEndpoint(const std::string& service_name, size_t max_clients, const std::string& service_path, uint64_t delta_time_usec)
-    : service_name_(service_name), max_clients_(max_clients), service_path_(service_path), delta_time_usec_(delta_time_usec) {}
+    IPduRpcServerEndpoint(const std::string& service_name, const std::string& service_path, uint64_t delta_time_usec)
+    : service_name_(service_name), max_clients_(1), service_path_(service_path), delta_time_usec_(delta_time_usec) {}
     virtual ~IPduRpcServerEndpoint() = default;
 
     virtual void send_error_reply(const HakoCpp_ServiceRequestHeader& header, Hako_int32 result_code) = 0;

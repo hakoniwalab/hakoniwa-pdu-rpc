@@ -9,9 +9,9 @@ namespace hakoniwa::pdu::rpc {
 std::vector<std::shared_ptr<PduRpcServerEndpointImpl>> PduRpcServerEndpointImpl::instances_;
 
 PduRpcServerEndpointImpl::PduRpcServerEndpointImpl(
-    const std::string& service_name, size_t max_clients, const std::string& service_path, uint64_t delta_time_usec,
+    const std::string& service_name, const std::string& service_path, uint64_t delta_time_usec,
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source)
-    : IPduRpcServerEndpoint(service_name, max_clients, service_path, delta_time_usec),
+    : IPduRpcServerEndpoint(service_name, service_path, delta_time_usec),
       endpoint_(endpoint), time_source_(time_source) {
     if (endpoint_) {
         endpoint_->set_on_recv_callback([this](const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) {
@@ -39,8 +39,8 @@ bool PduRpcServerEndpointImpl::initialize_services() {
         std::cerr << "ERROR: Failed to parse service definition file: " << e.what() << std::endl;
         return false;
     }
-
     for (const auto& service : services_json["services"]) {
+        max_clients_ = service["maxClients"].get<size_t>();
         std::string service_name = service["name"];
         std::string service_type = service["type"];
         auto& pdu_def = endpoint_->get_pdu_definition();

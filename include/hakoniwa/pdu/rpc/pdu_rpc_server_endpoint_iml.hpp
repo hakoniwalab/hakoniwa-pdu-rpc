@@ -64,7 +64,7 @@ enum ServerState {
 class PduRpcServerEndpointImpl : public IPduRpcServerEndpoint, public std::enable_shared_from_this<PduRpcServerEndpointImpl> {
 public:
     PduRpcServerEndpointImpl(
-        const std::string& service_name, size_t max_clients, const std::string& service_path, uint64_t delta_time_usec,
+        const std::string& service_name, const std::string& service_path, uint64_t delta_time_usec,
         std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source);
     virtual ~PduRpcServerEndpointImpl() = default;
 
