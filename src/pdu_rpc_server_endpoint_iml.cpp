@@ -67,28 +67,6 @@ bool PduRpcServerEndpointImpl::initialize(const nlohmann::json& service_config) 
     return true;
 }
 
-bool PduRpcServerEndpointImpl::start_rpc_service() {
-    if (!endpoint_) {
-        std::cerr << "ERROR: Endpoint is not initialized." << std::endl;
-        return false;
-    }
-    // Start the communication endpoint
-    HakoPduErrorType err = endpoint_->start();
-    if (err != HAKO_PDU_ERR_OK) {
-        std::cerr << "ERROR: Failed to start endpoint for service " << service_name_ << ": " << static_cast<int>(err) << std::endl;
-        return false;
-    }
-    bool running = false;
-    while (running == false) {
-        (void)endpoint_->is_running(running);
-        if (running) {
-            break;
-        }
-        time_source_->sleep(1000); // Sleep for 1ms
-    }
-    return true;
-}
-
 void PduRpcServerEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) 
 {
     for (const auto& instance : instances_) {

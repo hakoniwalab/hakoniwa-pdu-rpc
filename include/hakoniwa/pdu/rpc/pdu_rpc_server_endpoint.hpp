@@ -19,7 +19,6 @@ public:
         return service_name_;
     }
     virtual bool initialize(const nlohmann::json& service_config) = 0;
-    virtual bool start_rpc_service() = 0;
     virtual ServerEventType poll(RpcRequest& request) = 0;
     virtual void create_reply_buffer(const HakoCpp_ServiceRequestHeader& header, Hako_uint8 status, Hako_int32 result_code, PduData& pdu) = 0;
 

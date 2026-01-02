@@ -23,7 +23,6 @@ bool RpcServicesServer::initialize_services() {
     }
 
     // Pre-initialize all unique endpoints
-    std::map<std::pair<std::string, std::string>, std::shared_ptr<hakoniwa::pdu::Endpoint>> initialized_endpoints;
     if (config_json.contains("endpoints")) {
         for (const auto& node : config_json["endpoints"]) {
             std::string nodeId = node["nodeId"];
@@ -40,7 +39,7 @@ bool RpcServicesServer::initialize_services() {
                     std::cerr << "ERROR: Failed to open PDU endpoint with config " << config_path << std::endl;
                     return false; // Early exit if any endpoint fails to open
                 }
-                initialized_endpoints[{nodeId, endpointId}] = pdu_endpoint;
+                pdu_endpoints_[{nodeId, endpointId}] = pdu_endpoint;
                 std::cout << "INFO: Successfully opened endpoint " << endpointId << " on node " << nodeId << std::endl;
             }
         }
@@ -60,8 +59,8 @@ bool RpcServicesServer::initialize_services() {
         std::string service_name = service["name"];
         std::string server_endpoint_id = service["server_endpoint"]["endpointId"];
         
-        auto it = initialized_endpoints.find({server_node_id, server_endpoint_id});
-        if (it == initialized_endpoints.end()) {
+        auto it = pdu_endpoints_.find({server_node_id, server_endpoint_id});
+        if (it == pdu_endpoints_.end()) {
             std::cerr << "ERROR: Pre-initialized endpoint not found for service " << service_name 
                       << " on node " << server_node_id << " with endpoint " << server_endpoint_id << std::endl;
             continue;
@@ -81,11 +80,22 @@ bool RpcServicesServer::initialize_services() {
             continue;
         }
 
-        endpoints_[service_name] = endpoint;
+        rpc_endpoints_[service_name] = endpoint;
         std::cout << "INFO: Successfully initialized service: " << service_name << std::endl;
     }
 
     return true;
 }
 
+ServerEventType RpcServicesServer::poll(RpcRequest& request)
+{
+    for (auto& endpoint_pair : rpc_endpoints_) {
+        auto& endpoint = endpoint_pair.second;
+        ServerEventType event = endpoint->poll(request);
+        if (event != ServerEventType::NONE) {
+            return event;
+        }
+    }
+    return ServerEventType::NONE;
+}
 } // namespace hakoniwa::pdu::rpc

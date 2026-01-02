@@ -75,9 +75,6 @@ public:
 
     bool initialize(const nlohmann::json& service_config) override;
 
-
-    bool start_rpc_service() override;
-
     ServerEventType poll(RpcRequest& request) override;
     void create_reply_buffer(const HakoCpp_ServiceRequestHeader& header, Hako_uint8 status, Hako_int32 result_code, PduData& pdu) override {
         PduKey pdu_key = {header.service_name, header.client_name + "Res"};
