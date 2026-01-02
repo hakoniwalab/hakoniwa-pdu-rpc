@@ -11,26 +11,23 @@ namespace hakoniwa::pdu::rpc {
 
 class PduRpcCore {
 public:
-    PduRpcCore(RequestId req_id,
-               const std::string& client_name, // Added client_name
+    PduRpcCore(const std::string& service_name,
                std::shared_ptr<ITimeSource> time_source,
                std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint = nullptr)
-        : request_id_(req_id),
-          client_name_(client_name), // Initialize client_name
+        : service_name_(service_name),
+          client_name_(""),
           time_source_(std::move(time_source)),
-          status_(RpcStatus::DOING),
-          deadline_usec_(0),
           endpoint_(std::move(endpoint))
     {
         if (!time_source_) {
             throw std::invalid_argument("PduRpcCore: time_source is null");
         }
     }
-
-    RequestId get_request_id() const { return request_id_; }
-    const std::string& get_client_name() const { return client_name_; } // Added getter
-    RpcStatus get_status() const { return status_; }
-    void set_status(RpcStatus status) { status_ = status; }
+    const void set_client_name(const std::string& client_name) {
+        client_name_ = client_name;
+    }
+    const std::string& get_service_name() const { return service_name_; }
+    const std::string& get_client_name() const { return client_name_; }
 
     bool is_timed_out() const {
         if (deadline_usec_ == 0) {
@@ -56,10 +53,9 @@ public:
     }
 
 private:
-    RequestId request_id_;
-    std::string client_name_; // Added member
+    std::string service_name_;
+    std::string client_name_;
     std::shared_ptr<ITimeSource> time_source_;
-    RpcStatus status_;
     uint64_t deadline_usec_;
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_;
 };

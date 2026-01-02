@@ -23,9 +23,9 @@ struct RpcReplyHeader {
 
 
 PduRpcServerEndpointImpl::PduRpcServerEndpointImpl(
-    const std::string& server_name, const std::string& service_name, size_t max_clients, const std::string& service_path, uint64_t delta_time_usec,
+    const std::string& service_name, size_t max_clients, const std::string& service_path, uint64_t delta_time_usec,
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source)
-    : IPduRpcServerEndpoint(server_name, service_name, max_clients, service_path, delta_time_usec),
+    : IPduRpcServerEndpoint(service_name, max_clients, service_path, delta_time_usec),
       endpoint_(endpoint), time_source_(time_source) {
     if (endpoint_) {
         endpoint_->set_on_recv_callback([this](const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) {

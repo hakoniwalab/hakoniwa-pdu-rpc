@@ -15,11 +15,10 @@ struct RpcRequest {
 class IPduRpcServerEndpoint {
 public:
 protected:
-    IPduRpcServerEndpoint(const std::string& server_name, const std::string& service_name, size_t max_clients, const std::string& service_path, uint64_t delta_time_usec)
-    : server_name_(server_name), service_name_(service_name), max_clients_(max_clients), service_path_(service_path), delta_time_usec_(delta_time_usec) {}
+    IPduRpcServerEndpoint(const std::string& service_name, size_t max_clients, const std::string& service_path, uint64_t delta_time_usec)
+    : service_name_(service_name), max_clients_(max_clients), service_path_(service_path), delta_time_usec_(delta_time_usec) {}
 
 protected:
-    std::string server_name_;
     std::string service_name_;
     size_t max_clients_;
     std::string service_path_;
