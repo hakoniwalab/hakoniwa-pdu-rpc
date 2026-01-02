@@ -63,6 +63,11 @@ bool PduRpcServerEndpointImpl::initialize_services() {
 
         for (const auto& client : service["clients"]) {
             std::string client_name = client["name"];
+            // Register client
+            registered_clients_.push_back(client_name);
+            // Initialize server state
+            server_states_[client_name] = SERVER_STATE_IDLE;
+
             // Request PDU
             PduDef req_def;
             req_def.org_name = client_name + "Req";
@@ -197,17 +202,15 @@ void PduRpcServerEndpointImpl::send_reply(std::string client_name, const PduData
     server_states_[client_name] = ServerState::SERVER_STATE_IDLE;
     std::cout << "INFO: Reset state to IDLE for client: " << client_name << std::endl;
 
-    // Construct the reply PDU
-    RpcReplyHeader reply_header;
-    //TODO
-    
-    PduData reply_pdu(sizeof(reply_header) + pdu.size());
-    std::memcpy(reply_pdu.data(), &reply_header, sizeof(reply_header));
-    if (!pdu.empty()) {
-        std::memcpy(reply_pdu.data() + sizeof(reply_header), pdu.data(), pdu.size());
+    hakoniwa::pdu::PduKey pdu_key = {service_name_, client_name + "Res"};
+    std::span<const std::byte> data(reinterpret_cast<const std::byte*>(pdu.data()), pdu.size());
+    auto error = endpoint_->send(pdu_key,  data);
+    if (error != HAKO_PDU_ERR_OK) {
+        std::cerr << "ERROR: Failed to send reply to client_name: " << client_name << ", error: " << static_cast<int>(error) << std::endl;
     }
-
-    std::cout << "INFO: Sent reply to client_name: " << client_name << std::endl;
+    else {
+        std::cout << "INFO: Sent reply to client_name: " << client_name << std::endl;
+    }
 }
 
 void PduRpcServerEndpointImpl::send_cancel_reply(std::string client_name, const PduData& pdu) {
@@ -226,15 +229,12 @@ void PduRpcServerEndpointImpl::send_cancel_reply(std::string client_name, const 
     server_states_[client_name] = ServerState::SERVER_STATE_IDLE;
     std::cout << "INFO: Reset state to IDLE for client: " << client_name << " after cancellation" << std::endl;
 
-    RpcReplyHeader reply_header;
-    //TODO
-    
-    PduData reply_pdu(sizeof(reply_header) + pdu.size());
-    std::memcpy(reply_pdu.data(), &reply_header, sizeof(reply_header));
-    if (!pdu.empty()) {
-        std::memcpy(reply_pdu.data() + sizeof(reply_header), pdu.data(), pdu.size());
+    hakoniwa::pdu::PduKey pdu_key = {service_name_, client_name + "Res"};
+    std::span<const std::byte> data(reinterpret_cast<const std::byte*>(pdu.data()), pdu.size());
+    auto error = endpoint_->send(pdu_key,  data);
+    if (error != HAKO_PDU_ERR_OK) {
+        std::cerr << "ERROR: Failed to send reply to client_name: " << client_name << ", error: " << static_cast<int>(error) << std::endl;
     }
-
     std::cout << "INFO: Sent cancel reply to client_name: " << client_name << std::endl;
 }
 

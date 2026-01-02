@@ -12,10 +12,46 @@
 
 namespace hakoniwa::pdu::rpc {
 
+/*
+ * Operation code to be set by the client when sending a service request.
+ * This indicates the type of request the client wants to perform.
+ * 
+ * Field: HakoCpp_ServiceRequestHeader::opcode
+ */
 enum HakoServiceOperationCodeType {
     HAKO_SERVICE_OPERATION_CODE_REQUEST = 0,  // Standard service request
     HAKO_SERVICE_OPERATION_CODE_CANCEL,       // Cancel the currently active request
     HAKO_SERVICE_OPERATION_NUM
+};
+
+/*
+ * Service status to be set by the server when replying to a request.
+ * Indicates the internal progress/state of the requested operation.
+ * 
+ * Field: HakoCpp_ServiceResponseHeader::status
+ */
+enum HakoServiceStatusType {
+    HAKO_SERVICE_STATUS_NONE = 0,      // No active service
+    HAKO_SERVICE_STATUS_DOING,         // Service is currently being processed
+    HAKO_SERVICE_STATUS_CANCELING,     // Cancel is in progress
+    HAKO_SERVICE_STATUS_DONE,          // Service has completed
+    HAKO_SERVICE_STATUS_ERROR,         // An error occurred during processing
+    HAKO_SERVICE_STATUS_NUM
+};
+
+/*
+ * Result code to be set by the server when replying to a request.
+ * This represents the outcome of the request operation.
+ * 
+ * Field: HakoCpp_ServiceResponseHeader::result_code
+ */
+enum HakoServiceResultCodeType {
+    HAKO_SERVICE_RESULT_CODE_OK = 0,        // Request completed successfully
+    HAKO_SERVICE_RESULT_CODE_ERROR,         // Execution failed due to an error
+    HAKO_SERVICE_RESULT_CODE_CANCELED,      // Request was canceled by client
+    HAKO_SERVICE_RESULT_CODE_INVALID,       // Request was malformed or in invalid state
+    HAKO_SERVICE_RESULT_CODE_BUSY,          // Server is busy processing another request
+    HAKO_SERVICE_RESULT_CODE_NUM
 };
 
 enum ServerState {
@@ -38,6 +74,24 @@ public:
     bool start_rpc_service() override;
 
     ServerEventType poll(RpcRequest& request) override;
+    void create_reply_buffer(const HakoCpp_ServiceRequestHeader& header, Hako_uint8 status, Hako_int32 result_code, PduData& pdu) override {
+        PduKey pdu_key = {header.service_name, header.client_name + "Res"};
+        auto response_pdu_size = endpoint_->get_pdu_size(pdu_key);
+        pdu.resize(response_pdu_size);
+        HakoCpp_ServiceResponseHeader response_header;
+        response_header.request_id = header.request_id;
+        response_header.client_name = header.client_name;
+        response_header.service_name = header.service_name;
+        response_header.status = status;
+        response_header.processing_percentage = 100;
+        response_header.result_code = result_code;
+        convertor_response_.cpp2pdu(response_header, reinterpret_cast<char*>(pdu.data()), response_pdu_size);
+    }
+    void send_error_reply(const HakoCpp_ServiceRequestHeader& header, Hako_int32 result_code) override {
+        PduData pdu;
+        create_reply_buffer(header, HAKO_SERVICE_STATUS_ERROR, result_code, pdu);
+        send_reply(header.client_name, pdu);
+    }
 
     void send_reply(std::string client_name, const PduData& pdu) override;
 
