@@ -1,4 +1,6 @@
 #include "hakoniwa/pdu/rpc/pdu_rpc_server_endpoint_iml.hpp"
+#include "nlohmann/json.hpp"
+#include <fstream>
 #include <iostream>
 #include <cstring>
 
@@ -39,6 +41,46 @@ bool PduRpcServerEndpointImpl::initialize_services() {
     if (!endpoint_) {
         std::cerr << "ERROR: Endpoint is not initialized." << std::endl;
         return false;
+    }
+    std::ifstream ifs(this->service_path_);
+    if (!ifs.is_open()) {
+        std::cerr << "ERROR: Failed to open service definition file: " << this->service_path_ << std::endl;
+        return false;
+    }
+
+    nlohmann::json services_json;
+    try {
+        ifs >> services_json;
+    } catch (const nlohmann::json::exception& e) {
+        std::cerr << "ERROR: Failed to parse service definition file: " << e.what() << std::endl;
+        return false;
+    }
+
+    for (const auto& service : services_json["services"]) {
+        std::string service_name = service["name"];
+        std::string service_type = service["type"];
+        auto& pdu_def = endpoint_->get_pdu_definition();
+
+        for (const auto& client : service["clients"]) {
+            std::string client_name = client["name"];
+            // Request PDU
+            PduDef req_def;
+            req_def.org_name = client_name + "Req";
+            req_def.name = service_name + "_" + req_def.org_name;
+            req_def.channel_id = client["requestChannelId"];
+            req_def.pdu_size = service["pduSize"]["client"]["baseSize"].get<size_t>() + service["pduSize"]["client"]["heapSize"].get<size_t>();
+            req_def.method_type = "RPC";
+            pdu_def.add_definition(service_name, req_def);
+
+            // Response PDU
+            PduDef res_def;
+            res_def.org_name = client_name + "Res";
+            res_def.name = service_name + "_" + res_def.org_name;
+            res_def.channel_id = client["responseChannelId"];
+            res_def.pdu_size = service["pduSize"]["server"]["baseSize"].get<size_t>() + service["pduSize"]["server"]["heapSize"].get<size_t>();
+            res_def.method_type = "RPC";
+            pdu_def.add_definition(service_name, res_def);
+        }
     }
 
     return true;

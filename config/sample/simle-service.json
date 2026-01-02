@@ -19,7 +19,7 @@
             "clients": [
                 {
                     "name": "Client1",
-                    "comment": "pdu_name is name + _Req/_Res",
+                    "comment": "org_name is {type} + Req/Res",
                     "requestChannelId": 1,
                     "responseChannelId": 2
                 }
