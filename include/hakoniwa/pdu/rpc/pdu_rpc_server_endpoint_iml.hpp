@@ -123,6 +123,8 @@ private:
 
 
     bool validate_header(HakoCpp_ServiceRequestHeader& header);
+    ServerEventType handle_request_in(RpcRequest& request);
+    ServerEventType handle_cancel_request(RpcRequest& request);
 };
 
 } // namespace hakoniwa::pdu::rpc
