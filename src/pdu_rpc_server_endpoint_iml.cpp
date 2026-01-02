@@ -69,6 +69,8 @@ void PduRpcServerEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolve
         if (instance->endpoint_ == nullptr) {
             continue;
         }
+        // robot_name = service_name
+        // channel_Id = client_request_channel_id
         std::string pdu_name = instance->endpoint_->get_pdu_name(resolved_pdu_key);
         hakoniwa::pdu::PduKey pdu_key = {resolved_pdu_key.robot, pdu_name};
         PduData pdu_data = {};

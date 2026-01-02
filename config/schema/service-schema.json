@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Service Configuration Schema",
+  "description": "Schema for service configuration files",
+  "type": "object",
+  "properties": {
+    "pduMetaDataSize": {
+      "type": "integer",
+      "description": "Metadata size for PDU."
+    },
+    "pdu_config_path": {
+      "type": "string",
+      "description": "Path to the PDU configuration file."
+    },
+    "services": {
+      "type": "array",
+      "description": "List of service definitions.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the service."
+          },
+          "type": {
+            "type": "string",
+            "description": "Type of the service (e.g., hako_srv_msgs/AddTwoInts)."
+          },
+          "maxClients": {
+            "type": "integer",
+            "description": "Maximum number of clients for this service."
+          },
+          "pduSize": {
+            "type": "object",
+            "properties": {
+              "server": {
+                "type": "object",
+                "properties": {
+                  "heapSize": {
+                    "type": "integer",
+                    "description": "Heap size for the server PDU."
+                  },
+                  "baseSize": {
+                    "type": "integer",
+                    "description": "Base size for the server PDU."
+                  }
+                },
+                "required": ["heapSize", "baseSize"]
+              },
+              "client": {
+                "type": "object",
+                "properties": {
+                  "heapSize": {
+                    "type": "integer",
+                    "description": "Heap size for the client PDU."
+                  },
+                  "baseSize": {
+                    "type": "integer",
+                    "description": "Base size for the client PDU."
+                  }
+                },
+                "required": ["heapSize", "baseSize"]
+              }
+            },
+            "required": ["server", "client"]
+          },
+          "clients": {
+            "type": "array",
+            "description": "List of client definitions for this service.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Name of the client."
+                },
+                "comment": {
+                  "type": "string",
+                  "description": "Comment about the client."
+                },
+                "requestChannelId": {
+                  "type": "integer",
+                  "description": "Request channel ID."
+                },
+                "responseChannelId": {
+                  "type": "integer",
+                  "description": "Response channel ID."
+                }
+              },
+              "required": ["name", "requestChannelId", "responseChannelId"]
+            }
+          }
+        },
+        "required": ["name", "type", "maxClients", "pduSize", "clients"]
+      }
+    }
+  },
+  "required": ["pduMetaDataSize", "pdu_config_path", "services"]
+}
