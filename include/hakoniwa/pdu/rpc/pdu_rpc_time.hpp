@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <chrono>
+#include <thread>
 
 namespace hakoniwa::pdu::rpc {
 
@@ -19,6 +20,8 @@ public:
      * @return The current time in microseconds.
      */
     virtual uint64_t get_current_time_usec() const = 0;
+
+    virtual void sleep(uint64_t time_usec) = 0;
 };
 
 /**
@@ -29,6 +32,9 @@ public:
     uint64_t get_current_time_usec() const override {
         auto now = std::chrono::steady_clock::now();
         return std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+    }
+    void sleep(uint64_t time_usec) override {
+        std::this_thread::sleep_for(std::chrono::microseconds(time_usec));
     }
 };
 

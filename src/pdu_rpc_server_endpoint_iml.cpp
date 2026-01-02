@@ -86,9 +86,8 @@ bool PduRpcServerEndpointImpl::initialize_services() {
     return true;
 }
 
-void PduRpcServerEndpointImpl::sleep(uint64_t /*time_usec*/) {
-    // This might involve a condition variable or a simple sleep,
-    // depending on the threading model.
+void PduRpcServerEndpointImpl::sleep(uint64_t time_usec) {
+    time_source_->sleep(time_usec);
 }
 
 bool PduRpcServerEndpointImpl::start_rpc_service() {
@@ -101,6 +100,14 @@ bool PduRpcServerEndpointImpl::start_rpc_service() {
     if (err != HAKO_PDU_ERR_OK) {
         std::cerr << "ERROR: Failed to start endpoint for service " << service_name_ << ": " << static_cast<int>(err) << std::endl;
         return false;
+    }
+    bool running = false;
+    while (running == false) {
+        (void)endpoint_->is_running(running);
+        if (running) {
+            break;
+        }
+        this->sleep(1000); // Sleep for 1ms
     }
     return true;
 }
@@ -150,7 +157,6 @@ ServerEventType PduRpcServerEndpointImpl::poll(RpcRequest& request)
         else if (server_states_[request.header.client_name] == ServerState::SERVER_STATE_IDLE) {
             // Already idle, nothing to cancel
             // client must get normal reply and cancel request must be ignored
-            //TODO reply invalid cancel reply
             std::cerr << "WARNING: Received cancel request while idle for client: " << request.header.client_name << std::endl;
             return ServerEventType::NONE;
         }
