@@ -134,7 +134,7 @@ void PduRpcServerEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolve
 
 ServerEventType PduRpcServerEndpointImpl::poll(RpcRequest& request) 
 {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (pending_requests_.empty()) {
         return ServerEventType::NONE;
     }
@@ -146,7 +146,7 @@ ServerEventType PduRpcServerEndpointImpl::poll(RpcRequest& request)
     if (!validate_header(request.header)) {
         std::cerr << "ERROR: Invalid request header received and ignored" << std::endl;
         //ignore invalid request
-        //TODO send error reply
+        send_error_reply(request.header, HAKO_SERVICE_RESULT_CODE_ERROR);
         return ServerEventType::NONE;
     }
     if (request.header.opcode == HAKO_SERVICE_OPERATION_CODE_CANCEL) {
@@ -165,6 +165,7 @@ ServerEventType PduRpcServerEndpointImpl::poll(RpcRequest& request)
             // Already cancelling
             //TODO reply busy reply
             std::cerr << "WARNING: Received cancel request while already cancelling for client: " << request.header.client_name << std::endl;
+            send_error_reply(request.header, HAKO_SERVICE_RESULT_CODE_BUSY);
             return ServerEventType::NONE;
         }
     }
@@ -176,19 +177,19 @@ ServerEventType PduRpcServerEndpointImpl::poll(RpcRequest& request)
         }
         else if (server_states_[request.header.client_name] == ServerState::SERVER_STATE_RUNNING) {
             std::cerr << "WARNING: Received request while previous request is still running for client: " << request.header.client_name << std::endl;
-            //TODO reply busy reply
+            send_error_reply(request.header, HAKO_SERVICE_RESULT_CODE_BUSY);
             return ServerEventType::NONE;
         }
         else { // CANCELING
             std::cerr << "WARNING: Received request while previous request is cancelling for client: " << request.header.client_name << std::endl;
-            //TODO reply busy reply
+            send_error_reply(request.header, HAKO_SERVICE_RESULT_CODE_BUSY);
             return ServerEventType::NONE;
         }
     }
 }
 
 void PduRpcServerEndpointImpl::send_reply(std::string client_name, const PduData& pdu) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
 
     if (server_states_.find(client_name) == server_states_.end()) {
         std::cerr << "ERROR: Unknown client_name: " << client_name << std::endl;
@@ -215,7 +216,7 @@ void PduRpcServerEndpointImpl::send_reply(std::string client_name, const PduData
 
 void PduRpcServerEndpointImpl::send_cancel_reply(std::string client_name, const PduData& pdu) {
     // Similar to send_reply, but with a CANCELED result code
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (server_states_.find(client_name) == server_states_.end()) {
         std::cerr << "ERROR: Unknown client_name: " << client_name << std::endl;
         return;

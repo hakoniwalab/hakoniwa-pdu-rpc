@@ -99,13 +99,13 @@ public:
 
 protected:
     void put_pending_request(const hakoniwa::pdu::PduKey& pdu_key, const PduData& pdu_data) {
-        std::lock_guard<std::mutex> lock(mtx_);
+        std::lock_guard<std::recursive_mutex> lock(mtx_);
         pending_requests_.emplace_back(PendingRequest{pdu_key, pdu_data});
     }
 private:
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_;
     std::shared_ptr<ITimeSource> time_source_;
-    std::mutex mtx_;
+    std::recursive_mutex mtx_;
 
     // A queue to hold incoming requests detected by the callback
     struct PendingRequest {
