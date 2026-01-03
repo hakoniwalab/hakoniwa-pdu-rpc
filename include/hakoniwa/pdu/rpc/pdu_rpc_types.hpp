@@ -18,6 +18,11 @@ enum class ServerEventType {
     REQUEST_IN,
     REQUEST_CANCEL
 };
+enum class ClientEventType {
+    NONE,
+    RESPONSE_IN,
+    RESPONSE_CANCEL
+};
 
 /*
  * Operation code to be set by the client when sending a service request.
