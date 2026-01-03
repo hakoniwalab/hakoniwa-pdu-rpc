@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include <vector>
-#include "hakoniwa/pdu/endpoint_types.h" // For HakoPduErrorType
+#include "hakoniwa/pdu/endpoint_types.h"
 #include "hako_srv_msgs/pdu_cpptype_conv_ServiceRequestHeader.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_ServiceResponseHeader.hpp"
 #include "pdu_convertor.hpp"
@@ -11,26 +11,6 @@ namespace hakoniwa::pdu::rpc {
 
 // Common data types
 using PduData = std::vector<uint8_t>;
-using ClientId = int;
-using RequestId = int64_t;
-
-// Corresponds to API_STATUS_* in Python
-enum class RpcStatus {
-    NONE,
-    DOING,
-    CANCELING,
-    DONE,
-    ERROR
-};
-
-// Corresponds to API_RESULT_CODE_* in Python
-enum class RpcResultCode {
-    OK,
-    ERROR,
-    CANCELED,
-    INVALID,
-    BUSY
-};
 
 // Corresponds to SERVER_API_EVENT_* in Python
 enum class ServerEventType {
@@ -39,17 +19,46 @@ enum class ServerEventType {
     REQUEST_CANCEL
 };
 
-struct RpcClient {
-    ClientId id;
-    std::string name;
-    // other client-specific data
+/*
+ * Operation code to be set by the client when sending a service request.
+ * This indicates the type of request the client wants to perform.
+ * 
+ * Field: HakoCpp_ServiceRequestHeader::opcode
+ */
+enum HakoServiceOperationCodeType {
+    HAKO_SERVICE_OPERATION_CODE_REQUEST = 0,  // Standard service request
+    HAKO_SERVICE_OPERATION_CODE_CANCEL,       // Cancel the currently active request
+    HAKO_SERVICE_OPERATION_NUM
 };
 
-struct RpcService {
-    std::string name;
-    size_t max_clients;
-    std::vector<RpcClient> clients;
-    // other service-specific data
+/*
+ * Service status to be set by the server when replying to a request.
+ * Indicates the internal progress/state of the requested operation.
+ * 
+ * Field: HakoCpp_ServiceResponseHeader::status
+ */
+enum HakoServiceStatusType {
+    HAKO_SERVICE_STATUS_NONE = 0,      // No active service
+    HAKO_SERVICE_STATUS_DOING,         // Service is currently being processed
+    HAKO_SERVICE_STATUS_CANCELING,     // Cancel is in progress
+    HAKO_SERVICE_STATUS_DONE,          // Service has completed
+    HAKO_SERVICE_STATUS_ERROR,         // An error occurred during processing
+    HAKO_SERVICE_STATUS_NUM
+};
+
+/*
+ * Result code to be set by the server when replying to a request.
+ * This represents the outcome of the request operation.
+ * 
+ * Field: HakoCpp_ServiceResponseHeader::result_code
+ */
+enum HakoServiceResultCodeType {
+    HAKO_SERVICE_RESULT_CODE_OK = 0,        // Request completed successfully
+    HAKO_SERVICE_RESULT_CODE_ERROR,         // Execution failed due to an error
+    HAKO_SERVICE_RESULT_CODE_CANCELED,      // Request was canceled by client
+    HAKO_SERVICE_RESULT_CODE_INVALID,       // Request was malformed or in invalid state
+    HAKO_SERVICE_RESULT_CODE_BUSY,          // Server is busy processing another request
+    HAKO_SERVICE_RESULT_CODE_NUM
 };
 
 } // namespace hakoniwa::pdu::rpc
