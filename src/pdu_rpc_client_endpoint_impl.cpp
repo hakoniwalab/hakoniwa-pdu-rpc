@@ -15,7 +15,8 @@ PduRpcClientEndpointImpl::PduRpcClientEndpointImpl(
     const std::string& service_name, const std::string& client_name, uint64_t delta_time_usec,
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source)
     : IPduRpcClientEndpoint(service_name, client_name, delta_time_usec),
-      endpoint_(endpoint), time_source_(time_source) {
+      endpoint_(endpoint), time_source_(time_source), 
+      current_timeout_usec_(0), request_start_time_usec_(0) {
     
     client_state_.state = CLIENT_STATE_IDLE;
     client_state_.request_id = 0;
@@ -96,95 +97,81 @@ void PduRpcClientEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolve
     //std::cerr << "WARNING: Received PDU for unknown client or service: " << resolved_pdu_key.robot << std::endl;
 }
 
-void PduRpcClientEndpointImpl::send_request(const PduData& pdu) {
+bool PduRpcClientEndpointImpl::send_request(const PduData& pdu) {
     hakoniwa::pdu::PduKey pdu_key = {service_name_, client_name_ + "Req"};
     std::span<const std::byte> data(reinterpret_cast<const std::byte*>(pdu.data()), pdu.size());
     auto err = endpoint_->send(pdu_key, data);
     if (err != HAKO_PDU_ERR_OK) {
-        throw std::runtime_error("Failed to send request PDU: error=" + std::to_string(err));
+        std::cerr << "ERROR: Failed to send request PDU: error=" << static_cast<int>(err) << std::endl;
+        return false;
     }
+    return true;
 }
 
+bool PduRpcClientEndpointImpl::call(const PduData& pdu, uint64_t timeout_usec) {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    if (client_state_.state != CLIENT_STATE_IDLE) {
+        std::cerr << "ERROR: Client is busy" << std::endl;
+        return false;
+    }
+    client_state_.state = CLIENT_STATE_RUNNING;
+    client_state_.request_id = this->current_request_id_;
+    this->current_timeout_usec_ = timeout_usec;
+    this->request_start_time_usec_ = time_source_->get_current_time_usec();
 
-std::future<PduData> PduRpcClientEndpointImpl::call(const PduData& pdu, uint64_t timeout_usec) {
-    std::promise<PduData> promise;
-    //HakoCpp_ServiceRequestHeader request_header;
-    //convertor_request_.pdu2cpp(reinterpret_cast<const char*>(pdu.data()), request_header);
-
-    {
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        if (client_state_.state != CLIENT_STATE_IDLE) {
-            promise.set_exception(std::make_exception_ptr(std::runtime_error("Client is busy")));
-            return promise.get_future();
-        }
-        client_state_.state = CLIENT_STATE_RUNNING;
-        client_state_.request_id = this->current_request_id_;
+    // Check if send_request fails
+    if (!send_request(pdu)) {
+        client_state_.state = CLIENT_STATE_IDLE; // Rollback state
+        return false;
     }
 
-    try {
-        send_request(pdu);
-    } catch (const std::exception& e) {
-        promise.set_exception(std::make_exception_ptr(e));
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        client_state_.state = CLIENT_STATE_IDLE;
-        return promise.get_future();
+    return true;
+}
+
+ClientEventType PduRpcClientEndpointImpl::poll(RpcResponse& response) {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+    if (client_state_.state == CLIENT_STATE_IDLE) {
+        return ClientEventType::NONE;
     }
 
-    auto start_time = time_source_->get_current_time_usec();
-    while (true) {
-        if (time_source_->get_current_time_usec() - start_time > timeout_usec) {
-            promise.set_exception(std::make_exception_ptr(std::runtime_error("RPC call timed out")));
-            {
-                std::lock_guard<std::recursive_mutex> lock(mtx_);
-                client_state_.state = CLIENT_STATE_IDLE;
-            }
-            break;
-        }
-
-        RpcResponse response;
-        bool response_found = false;
-        {
-            std::lock_guard<std::recursive_mutex> lock(mtx_);
-            auto it = pending_responses_.begin();
-            while (it != pending_responses_.end()) {
-                HakoCpp_ServiceResponseHeader response_header;
-                convertor_response_.pdu2cpp(reinterpret_cast<char*>(it->pdu_data.data()), response_header);
-                if (response_header.request_id == client_state_.request_id) {
-                    response.pdu = std::move(it->pdu_data);
-                    response.header = response_header;
-                    pending_responses_.erase(it);
-                    response_found = true;
-                    break;
-                }
-                ++it;
-            }
-        }
-
-        if (response_found) {
-            if (!validate_header(response.header)) {
-                promise.set_exception(std::make_exception_ptr(std::runtime_error("Invalid response header")));
-            } else if (response.header.result_code == HAKO_SERVICE_RESULT_CODE_OK) {
-                promise.set_value(response.pdu);
+    if (client_state_.state == CLIENT_STATE_RUNNING || client_state_.state == CLIENT_STATE_CANCELLING) {
+        // Timeout check
+        if (time_source_->get_current_time_usec() - request_start_time_usec_ > current_timeout_usec_) {
+            std::cerr << "ERROR: RPC call timed out" << std::endl;
+            if (send_cancel_request()) {
+                client_state_.state = CLIENT_STATE_CANCELLING;
+                std::cout << "INFO: Sent cancel request due to timeout." << std::endl;
             } else {
-                promise.set_exception(std::make_exception_ptr(std::runtime_error("RPC call failed with error code: " + std::to_string(response.header.result_code))));
-            }
-            
-            {
-                std::lock_guard<std::recursive_mutex> lock(mtx_);
                 client_state_.state = CLIENT_STATE_IDLE;
+                std::cerr << "ERROR: Failed to send cancel request after timeout." << std::endl;
             }
-            break;
+            return ClientEventType::RESPONSE_TIMEOUT;
         }
-        std::this_thread::sleep_for(std::chrono::microseconds(delta_time_usec_));
-    }
 
-    return promise.get_future();
+        // Response check
+        auto it = pending_responses_.begin();
+        while (it != pending_responses_.end()) {
+            HakoCpp_ServiceResponseHeader response_header;
+            convertor_response_.pdu2cpp(reinterpret_cast<char*>(it->pdu_data.data()), response_header);
+            if (response_header.request_id == client_state_.request_id) {
+                response.pdu = std::move(it->pdu_data);
+                response.header = response_header;
+                pending_responses_.erase(it); // Remove the PDU from the queue BEFORE calling handle_response_in
+
+                return handle_response_in(response);
+            }
+            ++it;
+        }
+    }
+    // Add handling for CANCELLING state if needed
+    return ClientEventType::NONE;
 }
 
 
 bool PduRpcClientEndpointImpl::validate_header(HakoCpp_ServiceResponseHeader& header)
 {
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    // Assuming lock is already held by poll()
     if (header.service_name != this->service_name_) {
         std::cerr << "ERROR: service_name is invalid: " << header.service_name << std::endl;
         return false;
@@ -206,17 +193,32 @@ bool PduRpcClientEndpointImpl::validate_header(HakoCpp_ServiceResponseHeader& he
 
 ClientEventType PduRpcClientEndpointImpl::handle_response_in(RpcResponse& response)
 {
-    // This logic is now integrated into the `call` method.
-    // This function can be used for more complex state transitions if needed in the future.
-    (void)response;
-    return ClientEventType::RESPONSE_IN;
+    // The lock is already held by poll()
+    if (!validate_header(response.header)) {
+        std::cerr << "ERROR: Invalid response header during processing" << std::endl;
+        client_state_.state = CLIENT_STATE_IDLE; // Invalidate current request
+        return ClientEventType::NONE; // Or a dedicated error event
+    }
+    
+    switch (response.header.result_code) {
+        case HAKO_SERVICE_RESULT_CODE_OK:
+            client_state_.state = CLIENT_STATE_IDLE;
+            return ClientEventType::RESPONSE_IN;
+        case HAKO_SERVICE_RESULT_CODE_CANCELED:
+            return handle_cancel_response(response);
+        default:
+            std::cerr << "ERROR: RPC call failed with error code: " << response.header.result_code << std::endl;
+            client_state_.state = CLIENT_STATE_IDLE;
+            return ClientEventType::NONE;
+    }
 }
 
 ClientEventType PduRpcClientEndpointImpl::handle_cancel_response(RpcResponse& response)
 {
-    // This logic is not fully implemented as cancel flow is not complete.
-    (void)response;
-    return ClientEventType::NONE;
+    (void)response; // response might be used for logging in the future
+    std::cout << "INFO: RPC request " << client_state_.request_id << " was successfully cancelled." << std::endl;
+    client_state_.state = CLIENT_STATE_IDLE;
+    return ClientEventType::RESPONSE_CANCEL;
 }
 
 } // namespace hakoniwa::pdu::rpc

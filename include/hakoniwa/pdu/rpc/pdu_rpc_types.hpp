@@ -21,7 +21,8 @@ enum class ServerEventType {
 enum class ClientEventType {
     NONE,
     RESPONSE_IN,
-    RESPONSE_CANCEL
+    RESPONSE_CANCEL,
+    RESPONSE_TIMEOUT
 };
 
 /*
