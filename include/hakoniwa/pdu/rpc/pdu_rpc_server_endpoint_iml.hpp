@@ -1,7 +1,6 @@
 #pragma once
 
 #include "hakoniwa/pdu/rpc/pdu_rpc_server_endpoint.hpp"
-#include "hakoniwa/pdu/rpc/pdu_rpc_core.hpp"
 #include "hakoniwa/pdu/rpc/pdu_rpc_time.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
 #include <string>

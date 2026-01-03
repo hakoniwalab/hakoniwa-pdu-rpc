@@ -9,27 +9,24 @@ namespace hakoniwa::pdu::rpc {
 
 class IPduRpcClientEndpoint {
 public:
-    virtual ~IPduRpcClientEndpoint() = default;
-
-    virtual bool initialize_services(const std::string& service_path, uint64_t delta_time_usec) = 0;
-    virtual void sleep(uint64_t time_usec) = 0;
-
-    virtual ClientId register_client(const std::string& service_name, const std::string& client_name) = 0;
-
-    /**
-     * @brief Sends an RPC request asynchronously.
-     * @param pdu The PDU data for the request.
-     * @param timeout The timeout for the request.
-     * @return A future that will eventually hold the PDU data of the response.
-     */
+    std::string get_service_name() const {
+        return service_name_;
+    }
+    std::string get_client_name() const {
+        return client_name_;
+    }
+    virtual bool initialize(const nlohmann::json& service_config) = 0;
     virtual std::future<PduData> call(const PduData& pdu, uint64_t timeout_usec) = 0;
-
-    /**
-     * @brief Cancels a pending request.
-     * Note: Cancellation is best-effort and may not be supported by all transport implementations.
-     * @param request_id The ID of the request to cancel.
-     */
-    virtual void cancel_request(RequestId request_id) = 0;
+    virtual void create_request_buffer(const HakoCpp_ServiceRequestHeader& header, Hako_uint8 status, Hako_int32 result_code, PduData& pdu) = 0;
+    virtual void send_cancel_request(const PduData& pdu) = 0;
+protected:
+    IPduRpcClientEndpoint(const std::string& service_name, const std::string& client_name, uint64_t delta_time_usec)
+    : service_name_(service_name), client_name_(client_name), delta_time_usec_(delta_time_usec) {}
+    virtual ~IPduRpcClientEndpoint() = default;
+    
+    std::string service_name_;
+    std::string client_name_;
+    uint64_t delta_time_usec_;
 };
 
 } // namespace hakoniwa::pdu::rpc

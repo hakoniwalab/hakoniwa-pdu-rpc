@@ -23,18 +23,7 @@ public:
     virtual void create_reply_buffer(const HakoCpp_ServiceRequestHeader& header, Hako_uint8 status, Hako_int32 result_code, PduData& pdu) = 0;
 
 
-    /**
-     * @brief Sends a reply back to a specific client.
-     * @param client_id The ID of the client to reply to.
-     * @param pdu The PDU data to send as a reply.
-     */
     virtual void send_reply(std::string client_name, const PduData& pdu) = 0;
-
-    /**
-     * @brief Notifies the client that its request was cancelled.
-     * @param client_id The ID of the client.
-     * @param pdu The PDU data to send.
-     */
     virtual void send_cancel_reply(std::string client_name, const PduData& pdu) = 0;
 protected:
     IPduRpcServerEndpoint(const std::string& service_name, uint64_t delta_time_usec)
