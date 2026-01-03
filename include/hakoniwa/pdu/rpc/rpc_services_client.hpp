@@ -22,6 +22,17 @@ public:
     bool initialize_services();
     void start_all_services();
     void stop_all_services();
+    bool is_pdu_end_point_running() {
+        for (auto& pdu_endpoint_pair : pdu_endpoints_) {
+            auto& pdu_endpoint = pdu_endpoint_pair.second;
+            bool running = false;
+            pdu_endpoint->is_running(running);
+            if (!running) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     bool call(const std::string& service_name, const PduData& request_pdu, uint64_t timeout_usec);
     ClientEventType poll(std::string& service_name_out, RpcResponse& response_out);

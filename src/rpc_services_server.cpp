@@ -141,30 +141,6 @@ void RpcServicesServer::start_all_services() {
             std::cout.flush();
         }
     }
-    // Wait for all services to be running
-    bool all_running = false;
-    int retries = 0;
-    const int max_retries = 1000; // 1 second total wait
-    while (!all_running && retries < max_retries) {
-        all_running = true;
-        for (auto& pdu_endpoint_pair : pdu_endpoints_) {
-            auto& pdu_endpoint = pdu_endpoint_pair.second;
-            bool running = false;
-            pdu_endpoint->is_running(running);
-            if (!running) {
-                all_running = false;
-                break;
-            }
-        }
-        if (!all_running) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            retries++;
-        }
-    }
-    if (!all_running) {
-        std::cerr << "ERROR: Not all PDU endpoints started successfully after " << max_retries << " retries." << std::endl;
-        std::cout.flush();
-    }
 }
 
 void RpcServicesServer::stop_all_services() {
