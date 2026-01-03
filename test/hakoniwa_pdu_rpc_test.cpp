@@ -97,51 +97,57 @@ TEST_F(RpcServicesTest, ConfigParsingTest) {
     }
     HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
 
-    // Client side: Create request PDU
-    HakoCpp_AddTwoIntsRequest client_req_body;
-    client_req_body.a = 5;
-    client_req_body.b = 7;
-    ASSERT_TRUE(service_helper.call(client, service_name_, client_req_body, 1000000)); // 1 second timeout
+    // Client side: send request
+    {
+        HakoCpp_AddTwoIntsRequest client_req_body;
+        client_req_body.a = 5;
+        client_req_body.b = 7;
+        ASSERT_TRUE(service_helper.call(client, service_name_, client_req_body, 1000000)); // 1 second timeout
+    }
 
     // Server side: Poll for request
-    hakoniwa::pdu::rpc::RpcRequest server_request;
-    hakoniwa::pdu::rpc::ServerEventType server_event = hakoniwa::pdu::rpc::ServerEventType::NONE;
-    while (server_event == hakoniwa::pdu::rpc::ServerEventType::NONE) {
-        usleep(1000); // Wait for 1ms before polling again
-        server_event = server.poll(server_request);
+    {
+        hakoniwa::pdu::rpc::RpcRequest server_request;
+        hakoniwa::pdu::rpc::ServerEventType server_event = hakoniwa::pdu::rpc::ServerEventType::NONE;
+        while (server_event == hakoniwa::pdu::rpc::ServerEventType::NONE) {
+            usleep(1000); // Wait for 1ms before polling again
+            server_event = server.poll(server_request);
+        }
+        ASSERT_EQ(server_event, hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN);
+
+        // get HakoCpp_AddTwoIntsRequest from packet
+        HakoCpp_AddTwoIntsRequest req_body;
+        bool got_req_body = service_helper.get_request_body(server_request, req_body);
+        ASSERT_TRUE(got_req_body);
+        ASSERT_EQ(req_body.a, 5);
+        ASSERT_EQ(req_body.b, 7);
+
+        // set reply data
+        HakoCpp_AddTwoIntsResponse res_body;
+        res_body.sum = req_body.a + req_body.b;
+
+        // get pdu data for response buffer
+        ASSERT_TRUE(service_helper.reply(server, server_request, 
+            hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE, 
+            hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK, 
+            res_body));
     }
-    ASSERT_EQ(server_event, hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN);
-
-    // get HakoCpp_AddTwoIntsRequest from packet
-    HakoCpp_AddTwoIntsRequest req_body;
-    bool got_req_body = service_helper.get_request_body(server_request, req_body);
-    ASSERT_TRUE(got_req_body);
-    ASSERT_EQ(req_body.a, 5);
-    ASSERT_EQ(req_body.b, 7);
-
-    // set reply data
-    HakoCpp_AddTwoIntsResponse res_body;
-    res_body.sum = req_body.a + req_body.b;
-
-    // get pdu data for response buffer
-    ASSERT_TRUE(service_helper.reply(server, server_request, 
-        hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE, 
-        hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK, 
-        res_body));
 
     // Client side: Poll for response
-    hakoniwa::pdu::rpc::RpcResponse client_response;
-    hakoniwa::pdu::rpc::ClientEventType client_event = hakoniwa::pdu::rpc::ClientEventType::NONE;
-    std::string srvname;
-    while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE) {
-        usleep(1000); // Wait for 1ms before polling again
-        client_event = client.poll(srvname, client_response);
-    }
-    ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN);
-    ASSERT_EQ(srvname, service_name_);
+    {
+        hakoniwa::pdu::rpc::RpcResponse client_response;
+        hakoniwa::pdu::rpc::ClientEventType client_event = hakoniwa::pdu::rpc::ClientEventType::NONE;
+        std::string srvname;
+        while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE) {
+            usleep(1000); // Wait for 1ms before polling again
+            client_event = client.poll(srvname, client_response);
+        }
+        ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN);
+        ASSERT_EQ(srvname, service_name_);
 
-    HakoCpp_AddTwoIntsResponse client_res_body;
-    bool got_res_body = service_helper.get_response_body(client_response, client_res_body);
-    ASSERT_TRUE(got_res_body);
-    ASSERT_EQ(client_res_body.sum, 12);
+        HakoCpp_AddTwoIntsResponse client_res_body;
+        bool got_res_body = service_helper.get_response_body(client_response, client_res_body);
+        ASSERT_TRUE(got_res_body);
+        ASSERT_EQ(client_res_body.sum, 12);
+    }
 }
