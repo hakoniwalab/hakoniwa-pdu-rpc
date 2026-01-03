@@ -1,6 +1,6 @@
 {
     "name": "server_endpoint",
-     "pdu_def_path": "pdudef.json",
+    "pdu_def_path": "pdudef.json",
     "cache": "queue.json",
     "comm": "tcp_server_inout_comm.json"
 }

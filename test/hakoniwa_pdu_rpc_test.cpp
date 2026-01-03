@@ -82,8 +82,8 @@ TEST_F(RpcServicesTest, ConfigParsingTest) {
     ASSERT_TRUE(server.initialize_services());
 
     // Initialize client
-    //hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "PduRpcClientEndpointImpl", 1000);
-    //ASSERT_TRUE(client.initialize_services());
+    hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "PduRpcClientEndpointImpl", 1000);
+    ASSERT_TRUE(client.initialize_services());
 
     // Further assertions can be added here to check specific details of the initialized services
     // For example, checking if the expected service names are registered.
