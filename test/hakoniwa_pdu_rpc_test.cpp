@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 #include "hakoniwa/pdu/rpc/rpc_services_server.hpp"
 #include "hakoniwa/pdu/rpc/rpc_services_client.hpp"
+#include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp"
+#include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsResponsePacket.hpp"
+#include "pdu_convertor.hpp"
 #include <fstream>
 #include <iostream>
 #include <unistd.h> // For chdir, getcwd
@@ -85,7 +88,67 @@ TEST_F(RpcServicesTest, ConfigParsingTest) {
     hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "PduRpcClientEndpointImpl", 1000);
     ASSERT_TRUE(client.initialize_services());
 
-    // Further assertions can be added here to check specific details of the initialized services
-    // For example, checking if the expected service names are registered.
-    // This might require adding getter methods to RpcServicesServer/Client
+    server.start_all_services();
+    client.start_all_services();
+
+    while (!server.is_pdu_end_point_running() || !client.is_pdu_end_point_running()) {
+        usleep(1000); // Wait for 1ms before checking again
+    }
+
+    // Client side: Create request PDU
+    hakoniwa::pdu::rpc::PduData request_pdu;
+    client.create_request_buffer(service_name_, request_pdu);
+    hako::pdu::PduConvertor<HakoCpp_AddTwoIntsRequestPacket, hako::pdu::msgs::hako_srv_msgs::AddTwoIntsRequestPacket> convertor_request;
+    HakoCpp_AddTwoIntsRequestPacket request_packet;
+    bool ret = convertor_request.pdu2cpp(reinterpret_cast<char*>(request_pdu.data()), request_packet);
+    ASSERT_TRUE(ret);
+    request_packet.body.a = 5;
+    request_packet.body.b = 7;
+    int size = convertor_request.cpp2pdu(request_packet, reinterpret_cast<char*>(request_pdu.data()), request_pdu.size());
+    ASSERT_TRUE(size >= 0);
+
+    ASSERT_TRUE(client.call(service_name_, request_pdu, 1000000)); // 1 second timeout
+
+    // Server side: Poll for request
+    hakoniwa::pdu::rpc::RpcRequest server_request;
+    hakoniwa::pdu::rpc::ServerEventType server_event = hakoniwa::pdu::rpc::ServerEventType::NONE;
+    while (server_event == hakoniwa::pdu::rpc::ServerEventType::NONE) {
+        usleep(1000); // Wait for 1ms before polling again
+        server_event = server.poll(server_request);
+    }
+    ASSERT_EQ(server_event, hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN);
+    HakoCpp_AddTwoIntsRequestPacket server_request_packet;
+    ret = convertor_request.pdu2cpp(reinterpret_cast<char*>(server_request.pdu.data()), server_request_packet);
+    ASSERT_TRUE(ret);
+    ASSERT_EQ(server_request_packet.body.a, 5);
+    ASSERT_EQ(server_request_packet.body.b, 7);
+
+    // Server side: Create response PDU
+    hakoniwa::pdu::rpc::PduData response_pdu;
+    server.create_reply_buffer(server_request.header, hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE, hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK, response_pdu);
+    hako::pdu::PduConvertor<HakoCpp_AddTwoIntsResponsePacket, hako::pdu::msgs::hako_srv_msgs::AddTwoIntsResponsePacket> convertor_response;
+    HakoCpp_AddTwoIntsResponsePacket response_packet;
+    ret = convertor_response.pdu2cpp(reinterpret_cast<char*>(response_pdu.data()), response_packet);
+    ASSERT_TRUE(ret);
+    response_packet.body.sum = server_request_packet.body.a + server_request_packet.body.b;
+    size = convertor_response.cpp2pdu(response_packet, reinterpret_cast<char*>(response_pdu.data()), response_pdu.size());
+    ASSERT_TRUE(size >= 0);
+
+    server.send_reply(server_request.header, response_pdu);
+
+    // Client side: Poll for response
+    hakoniwa::pdu::rpc::RpcResponse client_response;
+    hakoniwa::pdu::rpc::ClientEventType client_event = hakoniwa::pdu::rpc::ClientEventType::NONE;
+    std::string srvname;
+    while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE) {
+        usleep(1000); // Wait for 1ms before polling again
+        client_event = client.poll(srvname, client_response);
+    }
+    ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN);
+    ASSERT_EQ(srvname, service_name_);
+    HakoCpp_AddTwoIntsResponsePacket client_response_packet;
+    ret = convertor_response.pdu2cpp(reinterpret_cast<char*>(client_response.pdu.data()), client_response_packet);
+    ASSERT_TRUE(ret);
+    ASSERT_EQ(client_response_packet.body.sum, 12);
+
 }

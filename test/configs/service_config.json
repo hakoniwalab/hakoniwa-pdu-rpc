@@ -1,5 +1,5 @@
 {
-  "pduMetaDataSize": 8,
+  "pduMetaDataSize": 24,
   "pdu_config_path": "pdudef.json",
   "endpoints": [
     {

@@ -20,7 +20,7 @@ public:
     std::string get_client_name() const {
         return client_name_;
     }
-    virtual bool initialize(const nlohmann::json& service_config) = 0;
+    virtual bool initialize(const nlohmann::json& service_config, int pdu_meta_data_size) = 0;
     virtual bool call(const PduData& pdu, uint64_t timeout_usec) = 0;
     virtual ClientEventType poll(RpcResponse& response) = 0;
     virtual void create_request_buffer(Hako_uint8 opcode, bool is_cancel_request, PduData& pdu) = 0;

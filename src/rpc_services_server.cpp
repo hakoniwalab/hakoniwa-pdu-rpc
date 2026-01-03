@@ -56,6 +56,7 @@ bool RpcServicesServer::initialize_services() {
     auto time_source = std::make_shared<RealTimeSource>();
 
     try {
+        int pdu_meta_data_size = json_config.value("pduMetaDataSize", 8);
         // First, process all endpoints relevant to this server node
         for (const auto& node_entry : json_config["endpoints"]) {
             std::string current_node_id = node_entry["nodeId"];
@@ -112,7 +113,7 @@ bool RpcServicesServer::initialize_services() {
                 std::cout.flush();
                 return false;
             }
-            if (!rpc_server_endpoint->initialize(service_entry)) {
+            if (!rpc_server_endpoint->initialize(service_entry, pdu_meta_data_size)) {
                 std::cerr << "ERROR: Failed to initialize RPC server endpoint for service " << service_name << std::endl;
                 std::cout.flush();
                 return false;

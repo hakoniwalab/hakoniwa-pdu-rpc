@@ -31,7 +31,7 @@ public:
         std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source);
     virtual ~PduRpcClientEndpointImpl() = default;
 
-    bool initialize(const nlohmann::json& service_config) override;
+    bool initialize(const nlohmann::json& service_config, int pdu_meta_data_size) override;
     bool call(const PduData& pdu, uint64_t timeout_usec) override;
     ClientEventType poll(RpcResponse& response) override;
 
@@ -46,7 +46,7 @@ public:
         request_header.service_name = service_name_;
         request_header.opcode = opcode;
         request_header.status_poll_interval_msec = 0;
-        convertor_request_.cpp2pdu(request_header, reinterpret_cast<char*>(pdu.data()), request_pdu_size);
+        (void)convertor_request_.cpp2pdu(request_header, reinterpret_cast<char*>(pdu.data()), request_pdu_size);
     }
     bool send_cancel_request()  override {
         PduData pdu;

@@ -28,7 +28,7 @@ PduRpcClientEndpointImpl::PduRpcClientEndpointImpl(
     }
 }
 
-bool PduRpcClientEndpointImpl::initialize(const nlohmann::json& service_config) {
+bool PduRpcClientEndpointImpl::initialize(const nlohmann::json& service_config, int pdu_meta_data_size) {
     if (!endpoint_) {
         std::cerr << "ERROR: Endpoint is not initialized." << std::endl;
         return false;
@@ -54,7 +54,9 @@ bool PduRpcClientEndpointImpl::initialize(const nlohmann::json& service_config) 
                 req_def.org_name = client_name_ + "Req";
                 req_def.name = service_name_ + "_" + req_def.org_name;
                 req_def.channel_id = client["requestChannelId"];
-                req_def.pdu_size = service_config["pduSize"]["client"]["baseSize"].get<size_t>() + service_config["pduSize"]["client"]["heapSize"].get<size_t>();
+                req_def.pdu_size = service_config["pduSize"]["server"]["baseSize"].get<size_t>() 
+                    + service_config["pduSize"]["client"]["heapSize"].get<size_t>()
+                    + pdu_meta_data_size;
                 req_def.method_type = "RPC";
                 pdu_def.add_definition(service_name_, req_def);
 
@@ -63,7 +65,9 @@ bool PduRpcClientEndpointImpl::initialize(const nlohmann::json& service_config) 
                 res_def.org_name = client_name_ + "Res";
                 res_def.name = service_name_ + "_" + res_def.org_name;
                 res_def.channel_id = client["responseChannelId"];
-                res_def.pdu_size = service_config["pduSize"]["server"]["baseSize"].get<size_t>() + service_config["pduSize"]["server"]["heapSize"].get<size_t>();
+                res_def.pdu_size = service_config["pduSize"]["client"]["baseSize"].get<size_t>() 
+                    + service_config["pduSize"]["server"]["heapSize"].get<size_t>()
+                    + pdu_meta_data_size;
                 res_def.method_type = "RPC";
                 pdu_def.add_definition(service_name_, res_def);
                 break;

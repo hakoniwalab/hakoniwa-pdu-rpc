@@ -20,7 +20,7 @@ PduRpcServerEndpointImpl::PduRpcServerEndpointImpl(
     }
 }
 
-bool PduRpcServerEndpointImpl::initialize(const nlohmann::json& service_config) {
+bool PduRpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int pdu_meta_data_size) {
     if (!endpoint_) {
         std::cerr << "ERROR: Endpoint is not initialized." << std::endl;
         return false;
@@ -46,7 +46,9 @@ bool PduRpcServerEndpointImpl::initialize(const nlohmann::json& service_config) 
             req_def.org_name = client_name + "Req";
             req_def.name = service_name + "_" + req_def.org_name;
             req_def.channel_id = client["requestChannelId"];
-            req_def.pdu_size = service_config["pduSize"]["client"]["baseSize"].get<size_t>() + service_config["pduSize"]["client"]["heapSize"].get<size_t>();
+            req_def.pdu_size = service_config["pduSize"]["server"]["baseSize"].get<size_t>() 
+                + service_config["pduSize"]["client"]["heapSize"].get<size_t>()
+                + pdu_meta_data_size;
             req_def.method_type = "RPC";
             pdu_def.add_definition(service_name, req_def);
 
@@ -55,7 +57,9 @@ bool PduRpcServerEndpointImpl::initialize(const nlohmann::json& service_config) 
             res_def.org_name = client_name + "Res";
             res_def.name = service_name + "_" + res_def.org_name;
             res_def.channel_id = client["responseChannelId"];
-            res_def.pdu_size = service_config["pduSize"]["server"]["baseSize"].get<size_t>() + service_config["pduSize"]["server"]["heapSize"].get<size_t>();
+            res_def.pdu_size = service_config["pduSize"]["client"]["baseSize"].get<size_t>() 
+                + service_config["pduSize"]["server"]["heapSize"].get<size_t>()
+                + pdu_meta_data_size;
             res_def.method_type = "RPC";
             pdu_def.add_definition(service_name, res_def);
         }
@@ -127,8 +131,8 @@ void PduRpcServerEndpointImpl::send_reply(std::string client_name, const PduData
         std::cerr << "ERROR: Unknown client_name: " << client_name << std::endl;
         return;
     }
-    else if (server_states_[client_name].state != ServerState::SERVER_STATE_IDLE) {
-        std::cerr << "ERROR: Cannot send reply, server state is not IDLE for client: " << client_name << std::endl;
+    else if (server_states_[client_name].state == ServerState::SERVER_STATE_IDLE) {
+        std::cerr << "ERROR: Cannot send reply, server state is IDLE for client: " << client_name << std::endl;
         return;
     }
     

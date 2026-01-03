@@ -18,7 +18,7 @@ public:
     std::string get_service_name() const {
         return service_name_;
     }
-    virtual bool initialize(const nlohmann::json& service_config) = 0;
+    virtual bool initialize(const nlohmann::json& service_config, int pdu_meta_data_size) = 0;
     virtual ServerEventType poll(RpcRequest& request) = 0;
     virtual void create_reply_buffer(const HakoCpp_ServiceRequestHeader& header, Hako_uint8 status, Hako_int32 result_code, PduData& pdu) = 0;
 

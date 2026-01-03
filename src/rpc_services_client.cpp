@@ -47,6 +47,7 @@ bool RpcServicesClient::initialize_services() {
     }
 
     try {
+        int pdu_meta_data_size = json_config.value("pduMetaDataSize", 8);
         for (const auto& service_entry : json_config["services"]) {
             std::string service_name = service_entry["name"];
             
@@ -96,7 +97,7 @@ bool RpcServicesClient::initialize_services() {
             std::shared_ptr<IPduRpcClientEndpoint> rpc_client_endpoint = 
                 std::make_shared<PduRpcClientEndpointImpl>(service_name, client_name_, delta_time_usec_, pdu_endpoint, time_source_);
             
-            if (!rpc_client_endpoint->initialize(service_entry)) {
+            if (!rpc_client_endpoint->initialize(service_entry, pdu_meta_data_size)) {
                 std::cerr << "ERROR: Failed to initialize RPC client endpoint for service " << service_name << std::endl;
                 std::cout.flush();
                 return false;

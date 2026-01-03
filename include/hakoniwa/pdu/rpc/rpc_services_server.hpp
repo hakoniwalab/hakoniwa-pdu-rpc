@@ -30,6 +30,14 @@ public:
         }
         return true;
     }
+    void create_reply_buffer(const HakoCpp_ServiceRequestHeader& header, Hako_uint8 status, Hako_int32 result_code, PduData& pdu) {
+        auto it = rpc_endpoints_.find(header.service_name);
+        if (it != rpc_endpoints_.end()) {
+            it->second->create_reply_buffer(header, status, result_code, pdu);
+        } else {
+            std::cerr << "ERROR: Service '" << header.service_name << "' not found for creating reply buffer." << std::endl;
+        }
+    }
 
     ServerEventType poll(RpcRequest& request);
 
