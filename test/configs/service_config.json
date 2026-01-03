@@ -1,13 +1,13 @@
 {
   "pduMetaDataSize": 8,
-  "pdu_config_path": "./dummy_pdu_config.json",
+  "pdu_config_path": "pdudef.json",
   "endpoints": [
     {
       "nodeId": "server_node",
       "endpoints": [
         {
           "id": "server_ep_id",
-          "config_path": "configs/tcp_server_inout_comm.json"
+          "config_path": "configs/server_endpoint.json"
         }
       ]
     },
@@ -16,7 +16,7 @@
       "endpoints": [
         {
           "id": "client_ep_id",
-          "config_path": "configs/tcp_client_inout_comm.json"
+          "config_path": "configs/client_endpoint.json"
         }
       ]
     }

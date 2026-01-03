@@ -7,10 +7,24 @@
 
 namespace hakoniwa::pdu::rpc {
 
+// Helper function to find config_path for a given nodeId and endpointId
+static std::string find_endpoint_config_path(const nlohmann::json& json_config, const std::string& node_id, const std::string& endpoint_id) {
+    for (const auto& node_entry : json_config["endpoints"]) {
+        if (node_entry["nodeId"] == node_id) {
+            for (const auto& ep_entry : node_entry["endpoints"]) {
+                if (ep_entry["id"] == endpoint_id) {
+                    return ep_entry["config_path"];
+                }
+            }
+        }
+    }
+    return ""; // Not found
+}
+
 // Constructor: takes client_name as a specific identity for this client instance
 RpcServicesClient::RpcServicesClient(const std::string& node_id, const std::string& client_name, const std::string& config_path, const std::string& impl_type, uint64_t delta_time_usec)
     : node_id_(node_id), client_name_(client_name), config_path_(config_path), impl_type_(impl_type), delta_time_usec_(delta_time_usec) {
-        time_source_ = std::make_shared<RealTimeSource>();
+        // time_source_ = std::make_shared<RealTimeSource>(); // Temporarily commented out for debugging
 }
 
 // Destructor: ensures all services are stopped cleanly
@@ -35,22 +49,48 @@ bool RpcServicesClient::initialize_services() {
     try {
         for (const auto& service_entry : json_config["services"]) {
             std::string service_name = service_entry["name"];
-            std::string endpoint_id = service_entry["endpointId"];
-
-            // Create low-level PDU endpoint
-            std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint;
-            if (impl_type_ == "PduRpcClientEndpointImpl") { // Assuming impl_type for PDU endpoint is also configurable or fixed
-                // For simplicity, always create a TCP endpoint. This might need to be dynamic later.
-                pdu_endpoint = std::make_shared<hakoniwa::pdu::Endpoint>(node_id_, endpoint_id, impl_type_);
-                if (!pdu_endpoint->initialize(service_entry["pdu_endpoint_config"])) {
-                    std::cerr << "ERROR: Failed to initialize PDU endpoint for service " << service_name << std::endl;
-                    return false;
+            
+            // Look for client-specific configuration for this service
+            bool client_config_found = false;
+            std::string client_ep_node_id;
+            std::string client_ep_id;
+            
+            for (const auto& client_spec : service_entry["clients"]) {
+                if (client_spec["name"] == this->client_name_) {
+                    client_ep_node_id = client_spec["client_endpoint"]["nodeId"];
+                    client_ep_id = client_spec["client_endpoint"]["endpointId"];
+                    client_config_found = true;
+                    break;
                 }
-            } else {
-                std::cerr << "ERROR: Unsupported PDU Endpoint Implementation Type: " << impl_type_ << std::endl;
+            }
+
+            if (!client_config_found) {
+                continue; 
+            }
+
+            if (client_ep_node_id != this->node_id_) {
+                continue;
+            }
+
+            // Find config_path for the low-level PDU Endpoint
+            std::string pdu_endpoint_config_path = find_endpoint_config_path(json_config, client_ep_node_id, client_ep_id);
+            if (pdu_endpoint_config_path.empty()) {
+                std::cerr << "ERROR: PDU Endpoint config_path not found for node '" << client_ep_node_id << "' and endpoint '" << client_ep_id << "'" << std::endl;
+                std::cout.flush();
                 return false;
             }
-            pdu_endpoints_[{node_id_, endpoint_id}] = pdu_endpoint; // Keyed by (node_id, endpoint_id)
+
+            // Create low-level PDU endpoint
+            std::string pdu_endpoint_name = client_ep_node_id + "-" + client_ep_id;
+            std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = 
+                std::make_shared<hakoniwa::pdu::Endpoint>(pdu_endpoint_name, HAKO_PDU_ENDPOINT_DIRECTION_INOUT);
+            
+            if (pdu_endpoint->open(pdu_endpoint_config_path) != HAKO_PDU_ERR_OK) {
+                std::cerr << "ERROR: Failed to open PDU endpoint config: " << pdu_endpoint_config_path << " for service " << service_name << std::endl;
+                std::cout.flush();
+                return false;
+            }
+            pdu_endpoints_[{client_ep_node_id, client_ep_id}] = pdu_endpoint; // Keyed by (nodeId, endpointId)
 
             // Create high-level RPC client endpoint
             std::shared_ptr<IPduRpcClientEndpoint> rpc_client_endpoint = 
@@ -58,12 +98,16 @@ bool RpcServicesClient::initialize_services() {
             
             if (!rpc_client_endpoint->initialize(service_entry)) {
                 std::cerr << "ERROR: Failed to initialize RPC client endpoint for service " << service_name << std::endl;
+                std::cout.flush();
                 return false;
             }
             rpc_endpoints_[service_name] = rpc_client_endpoint; // Keyed by service_name
+            std::cout << "INFO: Successfully initialized client for service: " << service_name << " on node " << this->node_id_ << std::endl;
+            std::cout.flush();
         }
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "ERROR: Malformed service config JSON: " << e.what() << std::endl;
+        std::cout.flush();
         return false;
     }
     return true;
@@ -74,13 +118,17 @@ void RpcServicesClient::start_all_services() {
         auto& pdu_endpoint = pdu_endpoint_pair.second;
         if (pdu_endpoint->start() != HAKO_PDU_ERR_OK) {
             std::cerr << "ERROR: Failed to start PDU endpoint for " << pdu_endpoint_pair.first.first << ":" << pdu_endpoint_pair.first.second << std::endl;
+            std::cout.flush();
         } else {
             std::cout << "INFO: Started PDU endpoint for " << pdu_endpoint_pair.first.first << ":" << pdu_endpoint_pair.first.second << std::endl;
+            std::cout.flush();
         }
     }
     // Wait for all services to be running
     bool all_running = false;
-    while (!all_running) {
+    int retries = 0;
+    const int max_retries = 1000; // 1 second total wait
+    while (!all_running && retries < max_retries) {
         all_running = true;
         for (auto& pdu_endpoint_pair : pdu_endpoints_) {
             auto& pdu_endpoint = pdu_endpoint_pair.second;
@@ -93,13 +141,19 @@ void RpcServicesClient::start_all_services() {
         }
         if (!all_running) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            retries++;
         }
+    }
+    if (!all_running) {
+        std::cerr << "ERROR: Not all PDU endpoints started successfully after " << max_retries << " retries." << std::endl;
+        std::cout.flush();
     }
 }
 
 void RpcServicesClient::stop_all_services() {
     for (auto& pdu_endpoint_pair : pdu_endpoints_) {
         pdu_endpoint_pair.second->stop();
+        pdu_endpoint_pair.second->close();
     }
 }
 
@@ -136,7 +190,7 @@ void RpcServicesClient::create_request_buffer(const std::string& service_name, P
     auto it = rpc_endpoints_.find(service_name);
     if (it == rpc_endpoints_.end()) {
         std::cerr << "ERROR: Service '" << service_name << "' not found for creating request buffer." << std::endl;
-        // Should throw an exception or return bool to indicate failure
+        // Should throw an exception or return bool to indicate failure, but void for now.
         return; 
     }
     // Assuming default opcode HAKO_SERVICE_OPERATION_CODE_REQUEST for generic buffer creation
@@ -147,7 +201,7 @@ void RpcServicesClient::create_request_buffer(const std::string& service_name, H
     auto it = rpc_endpoints_.find(service_name);
     if (it == rpc_endpoints_.end()) {
         std::cerr << "ERROR: Service '" << service_name << "' not found for creating request buffer." << std::endl;
-        // Should throw an exception or return bool to indicate failure
+        // Should throw an exception or return bool to indicate failure, but void for now.
         return; 
     }
     // Determine is_cancel_request based on opcode

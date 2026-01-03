@@ -15,35 +15,10 @@ class RpcServicesServer {
 public:
     RpcServicesServer(const std::string& node_id, const std::string& impl_type, const std::string& service_config_path, uint64_t delta_time_usec) 
         : node_id_(node_id), impl_type_(impl_type), service_config_path_(service_config_path), delta_time_usec_(delta_time_usec) {}
-    virtual ~RpcServicesServer() = default;
+    virtual ~RpcServicesServer(); // Removed = default;
     bool initialize_services();
-    void start_all_services() {
-        for (auto& pdu_endpoint_pair : pdu_endpoints_) {
-            auto& pdu_endpoint = pdu_endpoint_pair.second;
-            if (pdu_endpoint->start() != HAKO_PDU_ERR_OK) {
-                std::cerr << "ERROR: Failed to start PDU endpoint for service " << pdu_endpoint->get_name() << std::endl;
-            } else {
-                std::cout << "INFO: Started PDU endpoint for service " << pdu_endpoint->get_name() << std::endl;
-            }
-        }
-        //wait for all services to be running
-        bool all_running = false;
-        while (!all_running) {
-            all_running = true;
-            for (auto& pdu_endpoint_pair : pdu_endpoints_) {
-                auto& pdu_endpoint = pdu_endpoint_pair.second;
-                bool running = false;
-                pdu_endpoint->is_running(running);
-                if (!running) {
-                    all_running = false;
-                    break;
-                }
-            }
-            if (!all_running) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-        }
-    }
+    void start_all_services();
+    void stop_all_services();
 
     ServerEventType poll(RpcRequest& request);
 
