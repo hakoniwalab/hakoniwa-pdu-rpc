@@ -24,7 +24,7 @@ static std::string find_endpoint_config_path(const nlohmann::json& json_config, 
 // Constructor: takes client_name as a specific identity for this client instance
 RpcServicesClient::RpcServicesClient(const std::string& node_id, const std::string& client_name, const std::string& config_path, const std::string& impl_type, uint64_t delta_time_usec)
     : node_id_(node_id), client_name_(client_name), config_path_(config_path), impl_type_(impl_type), delta_time_usec_(delta_time_usec) {
-        // time_source_ = std::make_shared<RealTimeSource>(); // Temporarily commented out for debugging
+        time_source_ = std::make_shared<RealTimeSource>();
 }
 
 // Destructor: ensures all services are stopped cleanly
