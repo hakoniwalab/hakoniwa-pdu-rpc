@@ -1,0 +1,50 @@
+{
+  "pduMetaDataSize": 8,
+  "pdu_config_path": "./dummy_pdu_config.json",
+  "endpoints": [
+    {
+      "nodeId": "server_node",
+      "endpoints": [
+        {
+          "id": "server_ep_id",
+          "config_path": "configs/tcp_server_inout_comm.json"
+        }
+      ]
+    },
+    {
+      "nodeId": "client_node",
+      "endpoints": [
+        {
+          "id": "client_ep_id",
+          "config_path": "configs/tcp_client_inout_comm.json"
+        }
+      ]
+    }
+  ],
+  "services": [
+    {
+      "name": "Service/Add",
+      "type": "hako_srv_msgs/AddTwoInts",
+      "maxClients": 1,
+      "pduSize": {
+        "server": { "heapSize": 0, "baseSize": 296 },
+        "client": { "heapSize": 0, "baseSize": 288 }
+      },
+      "server_endpoint": {
+        "nodeId": "server_node",
+        "endpointId": "server_ep_id"
+      },
+      "clients": [
+        {
+          "name": "TestClient",
+          "requestChannelId": 1,
+          "responseChannelId": 2,
+          "client_endpoint": {
+            "nodeId": "client_node",
+            "endpointId": "client_ep_id"
+          }
+        }
+      ]
+    }
+  ]
+}
