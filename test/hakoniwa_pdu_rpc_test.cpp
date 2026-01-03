@@ -98,14 +98,10 @@ TEST_F(RpcServicesTest, ConfigParsingTest) {
     HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
 
     // Client side: Create request PDU
-    hakoniwa::pdu::rpc::PduData request_pdu;
     HakoCpp_AddTwoIntsRequest client_req_body;
     client_req_body.a = 5;
     client_req_body.b = 7;
-
-    auto ret = service_helper.set_request_body(client, service_name_, client_req_body, request_pdu);
-    ASSERT_TRUE(ret);
-    ASSERT_TRUE(client.call(service_name_, request_pdu, 1000000)); // 1 second timeout
+    ASSERT_TRUE(service_helper.call(client, service_name_, client_req_body, 1000000)); // 1 second timeout
 
     // Server side: Poll for request
     hakoniwa::pdu::rpc::RpcRequest server_request;
@@ -128,13 +124,10 @@ TEST_F(RpcServicesTest, ConfigParsingTest) {
     res_body.sum = req_body.a + req_body.b;
 
     // get pdu data for response buffer
-    hakoniwa::pdu::rpc::PduData response_pdu;
-    bool set_res_body = service_helper.set_response_body(server, 
-        server_request, hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE, 
+    ASSERT_TRUE(service_helper.reply(server, server_request, 
+        hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE, 
         hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK, 
-        res_body, response_pdu);
-    ASSERT_TRUE(set_res_body);
-    server.send_reply(server_request.header, response_pdu);
+        res_body));
 
     // Client side: Poll for response
     hakoniwa::pdu::rpc::RpcResponse client_response;

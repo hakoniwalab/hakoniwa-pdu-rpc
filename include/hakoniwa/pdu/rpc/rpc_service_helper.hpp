@@ -72,6 +72,26 @@ public:
         return true;
     }
 
+    bool call(RpcServicesClient& client, const std::string& service_name, CppReqBodyType& req_body, uint64_t timeout_usec) {
+        hakoniwa::pdu::rpc::PduData request_pdu;
+        bool set_req_body = set_request_body(client, service_name, req_body, request_pdu);
+        if (!set_req_body) {
+            std::cerr << "ERROR: Failed to set request body." << std::endl;
+            return false;
+        }
+        return client.call(service_name, request_pdu, timeout_usec);
+    }
+    bool reply(RpcServicesServer& server, RpcRequest& request, Hako_uint8 status, Hako_int32 result_code, const CppResBodyType& res_body) {
+        hakoniwa::pdu::rpc::PduData response_pdu;
+        bool set_res_body = set_response_body(server, request, status, result_code, res_body, response_pdu);
+        if (!set_res_body) {
+            std::cerr << "ERROR: Failed to set response body." << std::endl;
+            return false;
+        }
+        server.send_reply(request.header, response_pdu);
+        return true;
+    }
+
 };
 
 } // namespace hakoniwa::pdu::rpc
