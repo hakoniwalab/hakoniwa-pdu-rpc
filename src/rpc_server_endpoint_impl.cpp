@@ -84,9 +84,12 @@ bool RpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int
 
 void RpcServerEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) 
 {
+    std::cout << "INFO: Received PDU for service: " << resolved_pdu_key.robot << std::endl;
+    std::cout << " DEBUG: instance count: " << instances_.size() << std::endl;
     for (const auto& instance : instances_) {
         // robot_name = service_name
         if (instance->get_service_name() != resolved_pdu_key.robot) {
+            std::cout << "INFO: Skipping PDU for service: " << resolved_pdu_key.robot << ", does not match instance service: " << instance->get_service_name() << std::endl;
             continue;
         }
         assert(instance->endpoint_ != nullptr);
@@ -97,6 +100,7 @@ void RpcServerEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolvedKe
         pdu_data.resize(data.size());
         std::memcpy(pdu_data.data(), data.data(), data.size());
         instance->put_pending_request(pdu_key, pdu_data);
+        std::cout << "INFO: PDU stored for service: " << resolved_pdu_key.robot << std::endl;
         return;
     }
     std::cerr << "WARNING: Received PDU for unknown service: " << resolved_pdu_key.robot << std::endl;
@@ -107,6 +111,7 @@ ServerEventType RpcServerEndpointImpl::poll(RpcRequest& request)
 {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (pending_requests_.empty()) {
+        std::cout << "INFO: No pending requests to process. : service_name=" << service_name_ << std::endl;
         return ServerEventType::NONE;
     }
     PendingRequest pending_request = std::move(pending_requests_.front());
@@ -128,9 +133,11 @@ ServerEventType RpcServerEndpointImpl::poll(RpcRequest& request)
     }
 
     if (request.header.opcode == HAKO_SERVICE_OPERATION_CODE_CANCEL) {
+        std::cout << "INFO: Received cancel request for client: " << request.header.client_name << std::endl;
         return handle_cancel_request(request);
     }
     else { // REQUEST
+        std::cout << "INFO: Received request for client: " << request.header.client_name << std::endl;
         return handle_request_in(request);
     }
 }

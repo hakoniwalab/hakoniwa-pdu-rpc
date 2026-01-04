@@ -149,5 +149,71 @@ TEST_F(RpcServicesTest, ConfigParsingTest) {
         bool got_res_body = service_helper.get_response_body(client_response, client_res_body);
         ASSERT_TRUE(got_res_body);
         ASSERT_EQ(client_res_body.sum, 12);
+
+        server.stop_all_services();
+        client.stop_all_services();
+
+        server.clear_all_instances();
+    }
+}
+
+// Test case for RPC call timeout
+TEST_F(RpcServicesTest, RpcCallTimeoutTest) {
+    // Initialize server
+    hakoniwa::pdu::rpc::RpcServicesServer server(server_node_id_, "RpcServerEndpointImpl", config_path_, 1000);
+    ASSERT_TRUE(server.initialize_services());
+
+    // Initialize client
+    hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "RpcClientEndpointImpl", 1000);
+    ASSERT_TRUE(client.initialize_services());
+
+    server.start_all_services();
+    client.start_all_services();
+
+    while (!server.is_pdu_end_point_running() || !client.is_pdu_end_point_running()) {
+        usleep(1000); // Wait for 1ms before checking again
+    }
+    HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
+
+    // Client side: send request and expect timeout
+    {
+        HakoCpp_AddTwoIntsRequest client_req_body;
+        client_req_body.a = 5;
+        client_req_body.b = 7;
+        // Expect call to fail due to timeout (100ms)
+        ASSERT_TRUE(service_helper.call(client, service_name_, client_req_body, 100000)); // 100ms timeout
+    }
+
+    // Server side: Poll for request, but do not reply
+    {
+        hakoniwa::pdu::rpc::RpcRequest server_request;
+        hakoniwa::pdu::rpc::ServerEventType server_event = hakoniwa::pdu::rpc::ServerEventType::NONE;
+        // Wait a bit longer than client timeout to ensure request arrives
+        for (int i = 0; i < 200; ++i) { 
+            server_event = server.poll(server_request);
+            if (server_event == hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN) {
+                break;
+            }
+            usleep(1000);
+        }
+        // Verify that the server did receive the request
+        ASSERT_EQ(server_event, hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN);
+
+        // Intentionally DO NOT send a reply to cause a timeout on the client
+        std::cout << "Server received request, but will not reply, causing a timeout." << std::endl;
+    }
+
+    // Client side: Poll should not receive a response
+    {
+        hakoniwa::pdu::rpc::RpcResponse client_response;
+        hakoniwa::pdu::rpc::ClientEventType client_event = hakoniwa::pdu::rpc::ClientEventType::NONE;
+        std::string service_name;
+        while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE) {
+            usleep(1000); // Wait for 1ms before polling again
+            client_event = client.poll(service_name, client_response);
+        }
+        // Expect no response event
+        ASSERT_EQ(service_name, service_name_);
+        ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_TIMEOUT);
     }
 }

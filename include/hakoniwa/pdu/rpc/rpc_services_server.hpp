@@ -23,6 +23,7 @@ public:
     bool initialize_services();
     bool start_all_services();
     void stop_all_services();
+    void clear_all_instances();
     bool is_pdu_end_point_running() {
         for (auto& pdu_endpoint_pair : pdu_endpoints_) {
             auto& pdu_endpoint = pdu_endpoint_pair.second;

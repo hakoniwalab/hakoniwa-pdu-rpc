@@ -160,6 +160,13 @@ void RpcServicesServer::stop_all_services() {
         pdu_endpoint_pair.second->stop();
         pdu_endpoint_pair.second->close();
     }
+    for (auto& endpoint_pair : rpc_endpoints_) {
+        auto& endpoint = endpoint_pair.second;
+        auto impl = std::dynamic_pointer_cast<RpcServerEndpointImpl>(endpoint);
+        if (impl) {
+            impl->clear_pending_requests();
+        }
+    }
 }
 
 ServerEventType RpcServicesServer::poll(RpcRequest& request)
@@ -172,5 +179,15 @@ ServerEventType RpcServicesServer::poll(RpcRequest& request)
         }
     }
     return ServerEventType::NONE;
+}
+
+void RpcServicesServer::clear_all_instances() {
+    for (auto& endpoint_pair : rpc_endpoints_) {
+        auto& endpoint = endpoint_pair.second;
+        auto impl = std::dynamic_pointer_cast<RpcServerEndpointImpl>(endpoint);
+        if (impl) {
+            impl->clear_all_instances();
+        }
+    }
 }
 } // namespace hakoniwa::pdu::rpc

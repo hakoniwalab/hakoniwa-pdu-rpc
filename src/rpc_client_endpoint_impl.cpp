@@ -134,9 +134,11 @@ bool RpcClientEndpointImpl::call(const PduData& pdu, uint64_t timeout_usec) {
 
     // Check if send_request fails
     if (!send_request(pdu)) {
+        std::cerr << "ERROR: send_request failed for RPC call." << std::endl;
         client_state_.state = CLIENT_STATE_IDLE; // Rollback state
         return false;
     }
+    //std::cout << "INFO: Sent request with request_id: " << client_state_.request_id << std::endl;
 
     return true;
 }
