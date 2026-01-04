@@ -1,7 +1,7 @@
 add_library(hakoniwa_pdu_rpc
-    pdu_rpc_server_endpoint_impl.cpp
+    rpc_server_endpoint_impl.cpp
     rpc_services_server.cpp
-    pdu_rpc_client_endpoint_impl.cpp
+    rpc_client_endpoint_impl.cpp
     rpc_services_client.cpp
 )
 

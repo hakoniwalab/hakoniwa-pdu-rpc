@@ -1,6 +1,6 @@
 #pragma once
 
-#include "hakoniwa/pdu/rpc/pdu_rpc_client_endpoint.hpp"
+#include "rpc_client_endpoint.hpp"
 #include "hakoniwa/time_source/time_source.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
 #include <string>
@@ -24,12 +24,16 @@ struct ClientProcessingStatus {
     ClientState state;
 };
 
-class PduRpcClientEndpointImpl : public IPduRpcClientEndpoint, public std::enable_shared_from_this<PduRpcClientEndpointImpl> {
+class RpcClientEndpointImpl : public IRpcClientEndpoint, public std::enable_shared_from_this<RpcClientEndpointImpl> {
 public:
-    PduRpcClientEndpointImpl(
-        const std::string& service_name, const std::string& client_name, uint64_t delta_time_usec,
-        std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source);
-    virtual ~PduRpcClientEndpointImpl();
+    RpcClientEndpointImpl(
+        const std::string& service_name,
+        const std::string& client_name,
+        uint64_t delta_time_usec,
+        const std::shared_ptr<hakoniwa::pdu::Endpoint>& endpoint,
+        std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source
+    );
+    virtual ~RpcClientEndpointImpl();
 
     bool initialize(const nlohmann::json& service_config, int pdu_meta_data_size) override;
     bool call(const PduData& pdu, uint64_t timeout_usec) override;
@@ -76,7 +80,7 @@ protected:
         std::lock_guard<std::recursive_mutex> lock(mtx_);
         pending_responses_.emplace_back(PendingResponse{pdu_key, pdu_data});
     }
-    bool send_request(const PduData& pdu) override;
+    bool send_request(const PduData& pdu);
 private:
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_;
     std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
@@ -93,10 +97,11 @@ private:
     hako::pdu::PduConvertor<HakoCpp_ServiceResponseHeader, hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader> convertor_response_;
     
     static void pdu_recv_callback(const hakoniwa::pdu::PduResolvedKey& pdu_key, std::span<const std::byte> data);
-    static std::vector<std::shared_ptr<PduRpcClientEndpointImpl>> instances_;
+    static std::vector<std::shared_ptr<RpcClientEndpointImpl>> instances_;
 
     uint64_t current_timeout_usec_;
     uint64_t request_start_time_usec_;
+    uint64_t current_request_id_ = 0;
 
     bool validate_header(HakoCpp_ServiceResponseHeader& header);
     ClientEventType handle_response_in(RpcResponse& request);

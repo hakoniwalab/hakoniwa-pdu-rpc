@@ -102,8 +102,8 @@ bool RpcServicesClient::initialize_services() {
             pdu_endpoints_[{client_ep_node_id, client_ep_id}] = pdu_endpoint; // Keyed by (nodeId, endpointId)
 
             // Create high-level RPC client endpoint
-            std::shared_ptr<IPduRpcClientEndpoint> rpc_client_endpoint = 
-                std::make_shared<PduRpcClientEndpointImpl>(service_name, client_name_, delta_time_usec_, pdu_endpoint, time_source_);
+            std::shared_ptr<IRpcClientEndpoint> rpc_client_endpoint = 
+                std::make_shared<RpcClientEndpointImpl>(service_name, client_name_, delta_time_usec_, pdu_endpoint, time_source_);
             
             if (!rpc_client_endpoint->initialize(service_entry, pdu_meta_data_size)) {
                 std::cerr << "ERROR: Failed to initialize RPC client endpoint for service " << service_name << std::endl;
@@ -155,11 +155,11 @@ bool RpcServicesClient::call(const std::string& service_name, const PduData& req
     return it->second->call(request_pdu, timeout_usec);
 }
 
-ClientEventType RpcServicesClient::poll(std::string& service_name_out, RpcResponse& response_out) {
+ClientEventType RpcServicesClient::poll(std::string& service_name, RpcResponse& response_out) {
     for (auto& entry : rpc_endpoints_) {
         ClientEventType event_type = entry.second->poll(response_out);
         if (event_type != ClientEventType::NONE) {
-            service_name_out = entry.first; // service_name is the key
+            service_name = entry.first; // service_name is the key
             return event_type;
         }
     }

@@ -1,4 +1,4 @@
-#include "hakoniwa/pdu/rpc/pdu_rpc_server_endpoint_impl.hpp"
+#include "hakoniwa/pdu/rpc/rpc_server_endpoint_impl.hpp"
 #include "nlohmann/json.hpp"
 #include <fstream>
 #include <iostream>
@@ -8,30 +8,30 @@
 
 namespace hakoniwa::pdu::rpc {
 
-std::vector<std::shared_ptr<PduRpcServerEndpointImpl>> PduRpcServerEndpointImpl::instances_;
+std::vector<std::shared_ptr<RpcServerEndpointImpl>> RpcServerEndpointImpl::instances_;
 
-PduRpcServerEndpointImpl::PduRpcServerEndpointImpl(
+RpcServerEndpointImpl::RpcServerEndpointImpl(
     const std::string& service_name, uint64_t delta_time_usec,
-    std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source)
-    : IPduRpcServerEndpoint(service_name, delta_time_usec),
+    const std::shared_ptr<hakoniwa::pdu::Endpoint>& endpoint, std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source)
+ : IRpcServerEndpoint(service_name, delta_time_usec),
       endpoint_(endpoint), time_source_(time_source) {
     if (endpoint_) {
         endpoint_->set_on_recv_callback([this](const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) {
-            PduRpcServerEndpointImpl::pdu_recv_callback(resolved_pdu_key, data);
+            RpcServerEndpointImpl::pdu_recv_callback(resolved_pdu_key, data);
         });
     }
 }
 
-PduRpcServerEndpointImpl::~PduRpcServerEndpointImpl() {
+RpcServerEndpointImpl::~RpcServerEndpointImpl() {
     auto it = std::remove_if(instances_.begin(), instances_.end(),
-        [this](const std::shared_ptr<PduRpcServerEndpointImpl>& p) {
+        [this](const std::shared_ptr<RpcServerEndpointImpl>& p) {
             return p.get() == this;
         });
     instances_.erase(it, instances_.end());
 }
 
 
-bool PduRpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int pdu_meta_data_size) {
+bool RpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int pdu_meta_data_size) {
     if (!endpoint_) {
         std::cerr << "ERROR: Endpoint is not initialized." << std::endl;
         return false;
@@ -82,7 +82,7 @@ bool PduRpcServerEndpointImpl::initialize(const nlohmann::json& service_config, 
     return true;
 }
 
-void PduRpcServerEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) 
+void RpcServerEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) 
 {
     for (const auto& instance : instances_) {
         // robot_name = service_name
@@ -103,7 +103,7 @@ void PduRpcServerEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolve
 }
 
 
-ServerEventType PduRpcServerEndpointImpl::poll(RpcRequest& request) 
+ServerEventType RpcServerEndpointImpl::poll(RpcRequest& request) 
 {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (pending_requests_.empty()) {
@@ -135,7 +135,7 @@ ServerEventType PduRpcServerEndpointImpl::poll(RpcRequest& request)
     }
 }
 
-void PduRpcServerEndpointImpl::send_reply(std::string client_name, const PduData& pdu) {
+void RpcServerEndpointImpl::send_reply(std::string client_name, const PduData& pdu) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
 
     if (server_states_.find(client_name) == server_states_.end()) {
@@ -162,7 +162,7 @@ void PduRpcServerEndpointImpl::send_reply(std::string client_name, const PduData
     }
 }
 
-void PduRpcServerEndpointImpl::send_cancel_reply(std::string client_name, const PduData& pdu) {
+void RpcServerEndpointImpl::send_cancel_reply(std::string client_name, const PduData& pdu) {
     // Similar to send_reply, but with a CANCELED result code
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (server_states_.find(client_name) == server_states_.end()) {
@@ -188,7 +188,7 @@ void PduRpcServerEndpointImpl::send_cancel_reply(std::string client_name, const 
     std::cout << "INFO: Sent cancel reply to client_name: " << client_name << std::endl;
 }
 
-bool PduRpcServerEndpointImpl::validate_header(HakoCpp_ServiceRequestHeader& header)
+bool RpcServerEndpointImpl::validate_header(HakoCpp_ServiceRequestHeader& header)
 {
     if (header.service_name != this->service_name_) {
         std::cerr << "ERROR: service_name is invalid: " << header.service_name << std::endl;
@@ -198,7 +198,7 @@ bool PduRpcServerEndpointImpl::validate_header(HakoCpp_ServiceRequestHeader& hea
         std::cerr << "ERROR: client_name is invalid: " << header.client_name << std::endl;
         return false;
     }
-    if (header.opcode >= HakoServiceOperationCodeType::HAKO_SERVICE_OPERATION_NUM) {
+    if (header.opcode >= HakoServiceOperationCode::HAKO_SERVICE_OPERATION_NUM) {
         std::cerr << "ERROR: opcode is invalid: " << header.opcode << std::endl;
         return false;
     }
@@ -206,7 +206,7 @@ bool PduRpcServerEndpointImpl::validate_header(HakoCpp_ServiceRequestHeader& hea
 } 
 
 
-ServerEventType PduRpcServerEndpointImpl::handle_request_in(RpcRequest& request) {
+ServerEventType RpcServerEndpointImpl::handle_request_in(RpcRequest& request) {
     if (server_states_[request.header.client_name].state == ServerState::SERVER_STATE_IDLE) {
         std::cout << "INFO: Received request for client: " << request.header.client_name << std::endl;
         server_states_[request.header.client_name].state = ServerState::SERVER_STATE_RUNNING;
@@ -225,7 +225,7 @@ ServerEventType PduRpcServerEndpointImpl::handle_request_in(RpcRequest& request)
     }
 }
 
-ServerEventType PduRpcServerEndpointImpl::handle_cancel_request(RpcRequest& request) {
+ServerEventType RpcServerEndpointImpl::handle_cancel_request(RpcRequest& request) {
     if (server_states_[request.header.client_name].state == ServerState::SERVER_STATE_RUNNING) {
         if (server_states_[request.header.client_name].request_id != request.header.request_id) {
             // Request ID does not match

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "hakoniwa/pdu/rpc/pdu_rpc_server_endpoint.hpp"
+#include "rpc_server_endpoint.hpp"
 #include "hakoniwa/time_source/time_source.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
 #include <string>
@@ -24,12 +24,15 @@ struct ServerProcessingStatus {
     ServerState state;
 };
 
-class PduRpcServerEndpointImpl : public IPduRpcServerEndpoint, public std::enable_shared_from_this<PduRpcServerEndpointImpl> {
+class RpcServerEndpointImpl : public IRpcServerEndpoint, public std::enable_shared_from_this<RpcServerEndpointImpl> {
 public:
-    PduRpcServerEndpointImpl(
-        const std::string& service_name, uint64_t delta_time_usec,
-        std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source);
-    virtual ~PduRpcServerEndpointImpl();
+    RpcServerEndpointImpl(
+        const std::string& service_name,
+        uint64_t delta_time_usec,
+        const std::shared_ptr<hakoniwa::pdu::Endpoint>& endpoint,
+        std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source
+    );
+    virtual ~RpcServerEndpointImpl();
 
     bool initialize(const nlohmann::json& service_config, int pdu_meta_data_size) override;
 
@@ -47,7 +50,7 @@ public:
         response_header.result_code = result_code;
         convertor_response_.cpp2pdu(response_header, reinterpret_cast<char*>(pdu.data()), response_pdu_size);
     }
-    void send_error_reply(const HakoCpp_ServiceRequestHeader& header, Hako_int32 result_code) override {
+    void send_error_reply(const HakoCpp_ServiceRequestHeader& header, Hako_int32 result_code) {
         PduData pdu;
         create_reply_buffer(header, HAKO_SERVICE_STATUS_ERROR, result_code, pdu);
         send_reply(header.client_name, pdu);
@@ -75,11 +78,12 @@ private:
     std::map<std::string, ServerProcessingStatus> server_states_;
     std::vector<std::string> registered_clients_;
     std::vector<PendingRequest> pending_requests_;
+    size_t max_clients_;
     hako::pdu::PduConvertor<HakoCpp_ServiceRequestHeader, hako::pdu::msgs::hako_srv_msgs::ServiceRequestHeader> convertor_request_;
     hako::pdu::PduConvertor<HakoCpp_ServiceResponseHeader, hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader> convertor_response_;
     
     static void pdu_recv_callback(const hakoniwa::pdu::PduResolvedKey& pdu_key, std::span<const std::byte> data);
-    static std::vector<std::shared_ptr<PduRpcServerEndpointImpl>> instances_;
+    static std::vector<std::shared_ptr<RpcServerEndpointImpl>> instances_;
 
 
     bool validate_header(HakoCpp_ServiceRequestHeader& header);

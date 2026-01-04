@@ -1,5 +1,5 @@
 #include "hakoniwa/pdu/rpc/rpc_services_server.hpp"
-#include "hakoniwa/pdu/rpc/pdu_rpc_server_endpoint_impl.hpp"
+#include "hakoniwa/pdu/rpc/rpc_server_endpoint_impl.hpp"
 #include "hakoniwa/pdu/endpoint_types.hpp" // For HAKO_PDU_ENDPOINT_DIRECTION_INOUT
 #include "hakoniwa/pdu/endpoint.hpp" // For hakoniwa::pdu::Endpoint
 #include "hakoniwa/time_source/real_time_source.hpp" // For RealTimeSource
@@ -111,9 +111,9 @@ bool RpcServicesServer::initialize_services() {
             }
             std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = it->second;
 
-            std::shared_ptr<IPduRpcServerEndpoint> rpc_server_endpoint;
-            if (impl_type_ == "PduRpcServerEndpointImpl") {
-                rpc_server_endpoint = std::make_shared<PduRpcServerEndpointImpl>(service_name, delta_time_usec_, pdu_endpoint, time_source_);
+            std::shared_ptr<IRpcServerEndpoint> rpc_server_endpoint;
+            if (impl_type_ == "RpcServerEndpointImpl") {
+                rpc_server_endpoint = std::make_shared<RpcServerEndpointImpl>(service_name, delta_time_usec_, pdu_endpoint, time_source_);
             } else {
                 std::cerr << "ERROR: Unsupported RPC Server Endpoint Implementation Type: " << impl_type_ << std::endl;
                 std::cout.flush();

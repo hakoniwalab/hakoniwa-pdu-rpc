@@ -12,6 +12,17 @@ namespace hakoniwa::pdu::rpc {
 // Common data types
 using PduData = std::vector<uint8_t>;
 
+struct RpcRequest {
+    std::string client_name;
+    HakoCpp_ServiceRequestHeader header;
+    PduData pdu;
+};
+
+struct RpcResponse {
+    HakoCpp_ServiceResponseHeader header;
+    PduData pdu;
+};
+
 // Corresponds to SERVER_API_EVENT_* in Python
 enum class ServerEventType {
     NONE,
@@ -31,7 +42,7 @@ enum class ClientEventType {
  * 
  * Field: HakoCpp_ServiceRequestHeader::opcode
  */
-enum HakoServiceOperationCodeType {
+enum HakoServiceOperationCode {
     HAKO_SERVICE_OPERATION_CODE_REQUEST = 0,  // Standard service request
     HAKO_SERVICE_OPERATION_CODE_CANCEL,       // Cancel the currently active request
     HAKO_SERVICE_OPERATION_NUM
@@ -43,7 +54,7 @@ enum HakoServiceOperationCodeType {
  * 
  * Field: HakoCpp_ServiceResponseHeader::status
  */
-enum HakoServiceStatusType {
+enum HakoServiceStatus {
     HAKO_SERVICE_STATUS_NONE = 0,      // No active service
     HAKO_SERVICE_STATUS_DOING,         // Service is currently being processed
     HAKO_SERVICE_STATUS_CANCELING,     // Cancel is in progress
@@ -58,7 +69,7 @@ enum HakoServiceStatusType {
  * 
  * Field: HakoCpp_ServiceResponseHeader::result_code
  */
-enum HakoServiceResultCodeType {
+enum HakoServiceResultCode {
     HAKO_SERVICE_RESULT_CODE_OK = 0,        // Request completed successfully
     HAKO_SERVICE_RESULT_CODE_ERROR,         // Execution failed due to an error
     HAKO_SERVICE_RESULT_CODE_CANCELED,      // Request was canceled by client

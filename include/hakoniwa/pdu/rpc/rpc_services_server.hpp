@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pdu_rpc_server_endpoint.hpp"
+#include "rpc_server_endpoint.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
 #include "hakoniwa/time_source/time_source_factory.hpp"
 #include <string>
@@ -68,7 +68,7 @@ private:
     //(nodeId, endpointId), endpoint
     std::map<std::pair<std::string, std::string>, std::shared_ptr<hakoniwa::pdu::Endpoint>> pdu_endpoints_;
     //service_name, endpoint
-    std::map<std::string, std::shared_ptr<IPduRpcServerEndpoint>> rpc_endpoints_;
+    std::map<std::string, std::shared_ptr<IRpcServerEndpoint>> rpc_endpoints_;
     std::string node_id_;
     std::string impl_type_;
     std::string service_config_path_;

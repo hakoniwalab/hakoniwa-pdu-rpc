@@ -82,11 +82,11 @@ DirectoryChanger* RpcServicesTest::dir_changer_ = nullptr;
 // Test case for configuration parsing
 TEST_F(RpcServicesTest, ConfigParsingTest) {
     // Initialize server
-    hakoniwa::pdu::rpc::RpcServicesServer server(server_node_id_, "PduRpcServerEndpointImpl", config_path_, 1000);
+    hakoniwa::pdu::rpc::RpcServicesServer server(server_node_id_, "RpcServerEndpointImpl", config_path_, 1000);
     ASSERT_TRUE(server.initialize_services());
 
     // Initialize client
-    hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "PduRpcClientEndpointImpl", 1000);
+    hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "RpcClientEndpointImpl", 1000);
     ASSERT_TRUE(client.initialize_services());
 
     server.start_all_services();
@@ -137,13 +137,13 @@ TEST_F(RpcServicesTest, ConfigParsingTest) {
     {
         hakoniwa::pdu::rpc::RpcResponse client_response;
         hakoniwa::pdu::rpc::ClientEventType client_event = hakoniwa::pdu::rpc::ClientEventType::NONE;
-        std::string srvname;
+        std::string service_name;
         while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE) {
             usleep(1000); // Wait for 1ms before polling again
-            client_event = client.poll(srvname, client_response);
+            client_event = client.poll(service_name, client_response);
         }
         ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN);
-        ASSERT_EQ(srvname, service_name_);
+        ASSERT_EQ(service_name, service_name_);
 
         HakoCpp_AddTwoIntsResponse client_res_body;
         bool got_res_body = service_helper.get_response_body(client_response, client_res_body);
