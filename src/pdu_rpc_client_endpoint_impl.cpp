@@ -28,6 +28,15 @@ PduRpcClientEndpointImpl::PduRpcClientEndpointImpl(
     }
 }
 
+
+PduRpcClientEndpointImpl::~PduRpcClientEndpointImpl() {
+    auto it = std::remove_if(instances_.begin(), instances_.end(),
+        [this](const std::shared_ptr<PduRpcClientEndpointImpl>& p) {
+            return p.get() == this;
+        });
+    instances_.erase(it, instances_.end());
+}
+
 bool PduRpcClientEndpointImpl::initialize(const nlohmann::json& service_config, int pdu_meta_data_size) {
     if (!endpoint_) {
         std::cerr << "ERROR: Endpoint is not initialized." << std::endl;

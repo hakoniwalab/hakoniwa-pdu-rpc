@@ -3,6 +3,8 @@
 #include <fstream>
 #include <iostream>
 #include <cstring>
+#include <algorithm>
+#include <algorithm>
 
 namespace hakoniwa::pdu::rpc {
 
@@ -19,6 +21,15 @@ PduRpcServerEndpointImpl::PduRpcServerEndpointImpl(
         });
     }
 }
+
+PduRpcServerEndpointImpl::~PduRpcServerEndpointImpl() {
+    auto it = std::remove_if(instances_.begin(), instances_.end(),
+        [this](const std::shared_ptr<PduRpcServerEndpointImpl>& p) {
+            return p.get() == this;
+        });
+    instances_.erase(it, instances_.end());
+}
+
 
 bool PduRpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int pdu_meta_data_size) {
     if (!endpoint_) {

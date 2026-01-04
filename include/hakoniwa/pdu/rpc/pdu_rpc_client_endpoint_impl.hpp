@@ -29,7 +29,7 @@ public:
     PduRpcClientEndpointImpl(
         const std::string& service_name, const std::string& client_name, uint64_t delta_time_usec,
         std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source);
-    virtual ~PduRpcClientEndpointImpl() = default;
+    virtual ~PduRpcClientEndpointImpl();
 
     bool initialize(const nlohmann::json& service_config, int pdu_meta_data_size) override;
     bool call(const PduData& pdu, uint64_t timeout_usec) override;
