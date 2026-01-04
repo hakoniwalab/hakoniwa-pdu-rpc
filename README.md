@@ -81,7 +81,7 @@ The service configuration is a JSON file with two main sections: `endpoints` and
 
 ```json
 {
-  "pduMetaDataSize": 8,
+  "pduMetaDataSize": 24,
   "endpoints": [
     {
       "nodeId": "server_node",
