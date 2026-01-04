@@ -2,6 +2,7 @@
 
 #include "pdu_rpc_server_endpoint.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
+#include "hakoniwa/time_source/time_source_factory.hpp"
 #include <string>
 #include <memory>
 #include <optional>
@@ -13,8 +14,11 @@ namespace hakoniwa::pdu::rpc {
 
 class RpcServicesServer {
 public:
-    RpcServicesServer(const std::string& node_id, const std::string& impl_type, const std::string& service_config_path, uint64_t delta_time_usec) 
-        : node_id_(node_id), impl_type_(impl_type), service_config_path_(service_config_path), delta_time_usec_(delta_time_usec) {}
+    RpcServicesServer(const std::string& node_id, const std::string& impl_type, const std::string& service_config_path, uint64_t delta_time_usec, std::string time_source_type = "real")
+        : node_id_(node_id), impl_type_(impl_type), service_config_path_(service_config_path), delta_time_usec_(delta_time_usec) 
+        {
+            time_source_ = hakoniwa::time_source::create_time_source(time_source_type, delta_time_usec);
+        }
     virtual ~RpcServicesServer(); // Removed = default;
     bool initialize_services();
     void start_all_services();
@@ -69,6 +73,7 @@ private:
     std::string impl_type_;
     std::string service_config_path_;
     uint64_t delta_time_usec_;
+    std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
 };
 
 } // namespace hakoniwa::pdu::rpc

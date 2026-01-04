@@ -1,7 +1,7 @@
 #pragma once
 
 #include "hakoniwa/pdu/rpc/pdu_rpc_client_endpoint.hpp"
-#include "hakoniwa/pdu/rpc/pdu_rpc_time.hpp"
+#include "hakoniwa/time_source/time_source.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
 #include <string>
 #include <memory>
@@ -28,7 +28,7 @@ class PduRpcClientEndpointImpl : public IPduRpcClientEndpoint, public std::enabl
 public:
     PduRpcClientEndpointImpl(
         const std::string& service_name, const std::string& client_name, uint64_t delta_time_usec,
-        std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source);
+        std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source);
     virtual ~PduRpcClientEndpointImpl() = default;
 
     bool initialize(const nlohmann::json& service_config, int pdu_meta_data_size) override;
@@ -79,7 +79,7 @@ protected:
     bool send_request(const PduData& pdu) override;
 private:
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_;
-    std::shared_ptr<ITimeSource> time_source_;
+    std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
     std::recursive_mutex mtx_;
 
     // A queue to hold incoming requests detected by the callback

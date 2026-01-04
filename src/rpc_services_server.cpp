@@ -2,8 +2,9 @@
 #include "hakoniwa/pdu/rpc/pdu_rpc_server_endpoint_impl.hpp"
 #include "hakoniwa/pdu/endpoint_types.hpp" // For HAKO_PDU_ENDPOINT_DIRECTION_INOUT
 #include "hakoniwa/pdu/endpoint.hpp" // For hakoniwa::pdu::Endpoint
-#include "hakoniwa/pdu/rpc/pdu_rpc_time.hpp" // For RealTimeSource
-
+#include "hakoniwa/time_source/real_time_source.hpp" // For RealTimeSource
+#include "hakoniwa/time_source/virtual_time_source.hpp" // For VirtualTimeSource
+#include "hakoniwa/time_source/hakoniwa_time_source.hpp" // For HakoniwaTimeSource
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -52,8 +53,6 @@ bool RpcServicesServer::initialize_services() {
     }
 
     // A single time source can be shared among all services managed by this server
-    //TODO : Use a mock time source for testing
-    auto time_source = std::make_shared<RealTimeSource>();
 
     try {
         int pdu_meta_data_size = json_config.value("pduMetaDataSize", 8);
@@ -107,7 +106,7 @@ bool RpcServicesServer::initialize_services() {
 
             std::shared_ptr<IPduRpcServerEndpoint> rpc_server_endpoint;
             if (impl_type_ == "PduRpcServerEndpointImpl") {
-                rpc_server_endpoint = std::make_shared<PduRpcServerEndpointImpl>(service_name, delta_time_usec_, pdu_endpoint, time_source);
+                rpc_server_endpoint = std::make_shared<PduRpcServerEndpointImpl>(service_name, delta_time_usec_, pdu_endpoint, time_source_);
             } else {
                 std::cerr << "ERROR: Unsupported RPC Server Endpoint Implementation Type: " << impl_type_ << std::endl;
                 std::cout.flush();

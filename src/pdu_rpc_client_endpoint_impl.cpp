@@ -13,7 +13,7 @@ std::vector<std::shared_ptr<PduRpcClientEndpointImpl>> PduRpcClientEndpointImpl:
 
 PduRpcClientEndpointImpl::PduRpcClientEndpointImpl(
     const std::string& service_name, const std::string& client_name, uint64_t delta_time_usec,
-    std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source)
+    std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source)
     : IPduRpcClientEndpoint(service_name, client_name, delta_time_usec),
       endpoint_(endpoint), time_source_(time_source), 
       current_timeout_usec_(0), request_start_time_usec_(0) {
@@ -121,7 +121,7 @@ bool PduRpcClientEndpointImpl::call(const PduData& pdu, uint64_t timeout_usec) {
     client_state_.state = CLIENT_STATE_RUNNING;
     client_state_.request_id = this->current_request_id_;
     this->current_timeout_usec_ = timeout_usec;
-    this->request_start_time_usec_ = time_source_->get_current_time_usec();
+    this->request_start_time_usec_ = time_source_->get_microseconds();
 
     // Check if send_request fails
     if (!send_request(pdu)) {
@@ -141,7 +141,7 @@ ClientEventType PduRpcClientEndpointImpl::poll(RpcResponse& response) {
 
     if (client_state_.state == CLIENT_STATE_RUNNING || client_state_.state == CLIENT_STATE_CANCELLING) {
         // Timeout check
-        if (time_source_->get_current_time_usec() - request_start_time_usec_ > current_timeout_usec_) {
+        if (time_source_->get_microseconds() - request_start_time_usec_ > current_timeout_usec_) {
             std::cerr << "ERROR: RPC call timed out" << std::endl;
             if (send_cancel_request()) {
                 client_state_.state = CLIENT_STATE_CANCELLING;

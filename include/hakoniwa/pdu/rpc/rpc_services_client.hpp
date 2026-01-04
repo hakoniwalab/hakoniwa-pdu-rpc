@@ -4,7 +4,7 @@
 #include "hakoniwa/pdu/endpoint.hpp"
 #include "pdu_rpc_client_endpoint.hpp" // For IPduRpcClientEndpoint
 #include "pdu_rpc_client_endpoint_impl.hpp" // For PduRpcClientEndpointImpl
-#include "pdu_rpc_time.hpp" // For ITimeSource
+#include "hakoniwa/time_source/time_source.hpp" // For ITimeSource
 #include <string>
 #include <memory>
 #include <map>
@@ -16,7 +16,7 @@ namespace hakoniwa::pdu::rpc {
 
 class RpcServicesClient {
 public:
-    RpcServicesClient(const std::string& node_id, const std::string& client_name, const std::string& config_path, const std::string& impl_type = "PduRpcClientEndpointImpl", uint64_t delta_time_usec = 1000);
+    RpcServicesClient(const std::string& node_id, const std::string& client_name, const std::string& config_path, const std::string& impl_type = "PduRpcClientEndpointImpl", uint64_t delta_time_usec = 1000, std::string time_source_type = "real");
     ~RpcServicesClient();
 
     bool initialize_services();
@@ -51,7 +51,7 @@ private:
     std::map<std::pair<std::string, std::string>, std::shared_ptr<hakoniwa::pdu::Endpoint>> pdu_endpoints_;
     // RPC client endpoints (service_name) -> endpoint
     std::map<std::string, std::shared_ptr<IPduRpcClientEndpoint>> rpc_endpoints_;
-    std::shared_ptr<ITimeSource> time_source_;
+    std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
 };
 
 } // namespace hakoniwa::pdu::rpc

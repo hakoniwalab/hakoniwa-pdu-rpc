@@ -1,5 +1,6 @@
 #include "hakoniwa/pdu/rpc/rpc_services_client.hpp"
 #include "nlohmann/json.hpp"
+#include "hakoniwa/time_source/time_source_factory.hpp"
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -22,9 +23,9 @@ static std::string find_endpoint_config_path(const nlohmann::json& json_config, 
 }
 
 // Constructor: takes client_name as a specific identity for this client instance
-RpcServicesClient::RpcServicesClient(const std::string& node_id, const std::string& client_name, const std::string& config_path, const std::string& impl_type, uint64_t delta_time_usec)
+RpcServicesClient::RpcServicesClient(const std::string& node_id, const std::string& client_name, const std::string& config_path, const std::string& impl_type, uint64_t delta_time_usec, std::string time_source_type)
     : node_id_(node_id), client_name_(client_name), config_path_(config_path), impl_type_(impl_type), delta_time_usec_(delta_time_usec) {
-        time_source_ = std::make_shared<RealTimeSource>();
+        time_source_ = hakoniwa::time_source::create_time_source(time_source_type, delta_time_usec);
 }
 
 // Destructor: ensures all services are stopped cleanly

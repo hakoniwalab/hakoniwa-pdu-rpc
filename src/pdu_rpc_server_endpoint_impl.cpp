@@ -10,7 +10,7 @@ std::vector<std::shared_ptr<PduRpcServerEndpointImpl>> PduRpcServerEndpointImpl:
 
 PduRpcServerEndpointImpl::PduRpcServerEndpointImpl(
     const std::string& service_name, uint64_t delta_time_usec,
-    std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<ITimeSource> time_source)
+    std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint, std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source)
     : IPduRpcServerEndpoint(service_name, delta_time_usec),
       endpoint_(endpoint), time_source_(time_source) {
     if (endpoint_) {
