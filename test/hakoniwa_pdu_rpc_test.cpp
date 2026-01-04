@@ -154,6 +154,7 @@ TEST_F(RpcServicesTest, ConfigParsingTest) {
         client.stop_all_services();
 
         server.clear_all_instances();
+        client.clear_all_instances();
     }
 }
 
@@ -216,4 +217,118 @@ TEST_F(RpcServicesTest, RpcCallTimeoutTest) {
         ASSERT_EQ(service_name, service_name_);
         ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_TIMEOUT);
     }
+    server.stop_all_services();
+    client.stop_all_services();
+    server.clear_all_instances();
+    client.clear_all_instances();
+}
+
+// Test case for multiple consecutive RPC calls
+TEST_F(RpcServicesTest, MultipleServiceCallsTest) {
+    // Initialize server
+    hakoniwa::pdu::rpc::RpcServicesServer server(server_node_id_, "RpcServerEndpointImpl", config_path_, 1000);
+    ASSERT_TRUE(server.initialize_services());
+
+    // Initialize client
+    hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "RpcClientEndpointImpl", 1000);
+    ASSERT_TRUE(client.initialize_services());
+
+    server.start_all_services();
+    client.start_all_services();
+
+    while (!server.is_pdu_end_point_running() || !client.is_pdu_end_point_running()) {
+        usleep(1000); // Wait for 1ms before checking again
+    }
+    HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
+
+    // --- First RPC Call ---
+    {
+        // Client side: send request 1
+        HakoCpp_AddTwoIntsRequest client_req_body;
+        client_req_body.a = 10;
+        client_req_body.b = 20;
+        ASSERT_TRUE(service_helper.call(client, service_name_, client_req_body, 1000000)); // 1 second timeout
+
+        // Server side: Poll for request 1
+        hakoniwa::pdu::rpc::RpcRequest server_request;
+        hakoniwa::pdu::rpc::ServerEventType server_event = hakoniwa::pdu::rpc::ServerEventType::NONE;
+        while (server_event == hakoniwa::pdu::rpc::ServerEventType::NONE) {
+            usleep(1000);
+            server_event = server.poll(server_request);
+        }
+        ASSERT_EQ(server_event, hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN);
+
+        HakoCpp_AddTwoIntsRequest req_body;
+        service_helper.get_request_body(server_request, req_body);
+        ASSERT_EQ(req_body.a, 10);
+        ASSERT_EQ(req_body.b, 20);
+
+        // set reply data 1
+        HakoCpp_AddTwoIntsResponse res_body;
+        res_body.sum = req_body.a + req_body.b;
+        ASSERT_TRUE(service_helper.reply(server, server_request, hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE, hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK, res_body));
+
+        // Client side: Poll for response 1
+        hakoniwa::pdu::rpc::RpcResponse client_response;
+        hakoniwa::pdu::rpc::ClientEventType client_event = hakoniwa::pdu::rpc::ClientEventType::NONE;
+        std::string service_name;
+        while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE) {
+            usleep(1000);
+            client_event = client.poll(service_name, client_response);
+        }
+        ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN);
+        ASSERT_EQ(service_name, service_name_);
+
+        HakoCpp_AddTwoIntsResponse client_res_body;
+        service_helper.get_response_body(client_response, client_res_body);
+        ASSERT_EQ(client_res_body.sum, 30);
+    }
+
+    // --- Second RPC Call ---
+    {
+        // Client side: send request 2
+        HakoCpp_AddTwoIntsRequest client_req_body;
+        client_req_body.a = 15;
+        client_req_body.b = 25;
+        ASSERT_TRUE(service_helper.call(client, service_name_, client_req_body, 1000000)); // 1 second timeout
+
+        // Server side: Poll for request 2
+        hakoniwa::pdu::rpc::RpcRequest server_request;
+        hakoniwa::pdu::rpc::ServerEventType server_event = hakoniwa::pdu::rpc::ServerEventType::NONE;
+        while (server_event == hakoniwa::pdu::rpc::ServerEventType::NONE) {
+            usleep(1000);
+            server_event = server.poll(server_request);
+        }
+        ASSERT_EQ(server_event, hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN);
+
+        HakoCpp_AddTwoIntsRequest req_body;
+        service_helper.get_request_body(server_request, req_body);
+        ASSERT_EQ(req_body.a, 15);
+        ASSERT_EQ(req_body.b, 25);
+
+        // set reply data 2
+        HakoCpp_AddTwoIntsResponse res_body;
+        res_body.sum = req_body.a + req_body.b;
+        ASSERT_TRUE(service_helper.reply(server, server_request, hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE, hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK, res_body));
+
+        // Client side: Poll for response 2
+        hakoniwa::pdu::rpc::RpcResponse client_response;
+        hakoniwa::pdu::rpc::ClientEventType client_event = hakoniwa::pdu::rpc::ClientEventType::NONE;
+        std::string service_name;
+        while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE) {
+            usleep(1000);
+            client_event = client.poll(service_name, client_response);
+        }
+        ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN);
+        ASSERT_EQ(service_name, service_name_);
+
+        HakoCpp_AddTwoIntsResponse client_res_body;
+        service_helper.get_response_body(client_response, client_res_body);
+        ASSERT_EQ(client_res_body.sum, 40);
+    }
+
+    server.stop_all_services();
+    client.stop_all_services();
+    server.clear_all_instances();
+    client.clear_all_instances();
 }

@@ -144,6 +144,9 @@ void RpcServicesClient::stop_all_services() {
         pdu_endpoint_pair.second->stop();
         pdu_endpoint_pair.second->close();
     }
+    for (auto& endpoint_pair : rpc_endpoints_) {
+        endpoint_pair.second->clear_pending_responses();
+    }
 }
 
 bool RpcServicesClient::call(const std::string& service_name, const PduData& request_pdu, uint64_t timeout_usec) {
@@ -196,6 +199,17 @@ bool RpcServicesClient::create_request_buffer(const std::string& service_name, H
     bool is_cancel = (opcode == HAKO_SERVICE_OPERATION_CODE_CANCEL);
     it->second->create_request_buffer(opcode, is_cancel, pdu);
     return true;
+}
+
+void RpcServicesClient::clear_all_instances() {
+    for (auto& endpoint_pair : rpc_endpoints_) {
+        auto& endpoint = endpoint_pair.second;
+        endpoint->clear_pending_responses();
+        auto impl = std::dynamic_pointer_cast<RpcClientEndpointImpl>(endpoint);
+        if (impl) {
+            impl->clear_all_instances();
+        }
+    }
 }
 
 } // namespace hakoniwa::pdu::rpc

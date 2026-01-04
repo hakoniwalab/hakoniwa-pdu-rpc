@@ -30,6 +30,20 @@ cmake ..
 make
 ```
 
+## How to Test
+
+This project uses [Google Test](https://github.com/google/googletest) for unit testing. After building the project, tests can be executed using either `make test` or `ctest` from the build directory.
+
+```bash
+# Navigate to the build directory
+cd build
+
+# Run all tests
+make test
+# or
+ctest
+```
+
 ## Core Concepts
 
 ### Services
@@ -200,16 +214,30 @@ int main() {
     client_req_body.a = 5;
     client_req_body.b = 7;
 
-    // 4. Call the service and wait for the response
-    Hako_AddTwoInts_res client_res_body;
-    bool result = service_helper.call(client, "Service/Add", client_req_body, client_res_body, 1000000);
+    // 4. Call the service (sends the request)
+    service_helper.call(client, "Service/Add", client_req_body, 1000000); // 1 sec timeout for the entire transaction
 
-    // 5. Check the result
-    if (result) {
-        std::cout << "Response received: " << client_res_body.sum << std::endl;
-        assert(client_res_body.sum == 12);
+    // 5. Poll for the response
+    hakoniwa::pdu::rpc::RpcResponse client_response;
+    hakoniwa::pdu::rpc::ClientEventType client_event;
+    std::string service_name;
+
+    do {
+        client_event = client.poll(service_name, client_response);
+        // A small delay can be added here if running in a tight loop
+        // std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    } while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE);
+
+
+    // 6. Check the result
+    if (client_event == hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN) {
+        Hako_AddTwoInts_res client_res_body;
+        if (service_helper.get_response_body(client_response, client_res_body)) {
+            std::cout << "Response received: " << client_res_body.sum << std::endl;
+            assert(client_res_body.sum == 12);
+        }
     } else {
-        std::cerr << "RPC call failed or timed out." << std::endl;
+        std::cerr << "RPC call failed or timed out (event: " << client_event << ")" << std::endl;
     }
     return 0;
 }

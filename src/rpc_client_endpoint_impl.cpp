@@ -236,4 +236,15 @@ ClientEventType RpcClientEndpointImpl::handle_cancel_response(RpcResponse& respo
     return ClientEventType::RESPONSE_CANCEL;
 }
 
+void RpcClientEndpointImpl::clear_all_instances()
+{
+    instances_.clear();
+}
+
+void RpcClientEndpointImpl::clear_pending_responses()
+{
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    pending_responses_.clear();
+}
+
 } // namespace hakoniwa::pdu::rpc

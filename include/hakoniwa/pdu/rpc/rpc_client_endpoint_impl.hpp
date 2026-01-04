@@ -73,6 +73,8 @@ public:
             return false;
         }
     }
+    void clear_all_instances();
+    void clear_pending_responses() override;
 
 
 protected:

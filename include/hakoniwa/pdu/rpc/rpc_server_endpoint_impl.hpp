@@ -59,10 +59,7 @@ public:
     void send_reply(std::string client_name, const PduData& pdu) override;
 
     void send_cancel_reply(std::string client_name, const PduData& pdu) override;
-    void clear_pending_requests() {
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        pending_requests_.clear();
-    }
+    void clear_pending_requests() override;
     static void clear_all_instances() {
         instances_.clear();
     }

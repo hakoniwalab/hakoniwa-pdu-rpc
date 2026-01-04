@@ -259,4 +259,10 @@ ServerEventType RpcServerEndpointImpl::handle_cancel_request(RpcRequest& request
     }
 }
 
+void RpcServerEndpointImpl::clear_pending_requests()
+{
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    pending_requests_.clear();
+}
+
 } // namespace hakoniwa::pdu::rpc

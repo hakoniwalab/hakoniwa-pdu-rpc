@@ -17,6 +17,7 @@ public:
     virtual void send_reply(std::string client_name, const PduData& pdu) = 0;
     virtual void send_cancel_reply(std::string client_name, const PduData& pdu) = 0;
     virtual void create_reply_buffer(const HakoCpp_ServiceRequestHeader& header, Hako_uint8 status, Hako_int32 result_code, PduData& pdu) = 0;
+    virtual void clear_pending_requests() = 0;
     const std::string& get_service_name() const { return service_name_; }
 protected:
     IRpcServerEndpoint(const std::string& service_name, uint64_t delta_time_usec)

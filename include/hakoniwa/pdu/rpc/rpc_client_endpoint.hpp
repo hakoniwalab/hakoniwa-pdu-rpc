@@ -16,6 +16,7 @@ public:
     virtual ClientEventType poll(RpcResponse& response) = 0;
     virtual bool send_cancel_request() = 0;
     virtual void create_request_buffer(Hako_uint8 opcode, bool is_cancel_request, PduData& pdu) = 0;
+    virtual void clear_pending_responses() = 0;
 
     const std::string& get_service_name() const { return service_name_; }
     const std::string& get_client_name() const { return client_name_; }
