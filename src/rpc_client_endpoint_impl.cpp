@@ -152,16 +152,18 @@ ClientEventType RpcClientEndpointImpl::poll(RpcResponse& response) {
 
     if (client_state_.state == CLIENT_STATE_RUNNING || client_state_.state == CLIENT_STATE_CANCELLING) {
         // Timeout check
-        if (time_source_->get_microseconds() - request_start_time_usec_ > current_timeout_usec_) {
-            std::cerr << "ERROR: RPC call timed out" << std::endl;
-            if (send_cancel_request()) {
-                client_state_.state = CLIENT_STATE_CANCELLING;
-                std::cout << "INFO: Sent cancel request due to timeout." << std::endl;
-            } else {
-                client_state_.state = CLIENT_STATE_IDLE;
-                std::cerr << "ERROR: Failed to send cancel request after timeout." << std::endl;
+        if (current_timeout_usec_ > 0) {
+            if (time_source_->get_microseconds() - request_start_time_usec_ > current_timeout_usec_) {
+                std::cerr << "ERROR: RPC call timed out" << std::endl;
+                if (send_cancel_request()) {
+                    client_state_.state = CLIENT_STATE_CANCELLING;
+                    std::cout << "INFO: Sent cancel request due to timeout." << std::endl;
+                } else {
+                    client_state_.state = CLIENT_STATE_IDLE;
+                    std::cerr << "ERROR: Failed to send cancel request after timeout." << std::endl;
+                }
+                return ClientEventType::RESPONSE_TIMEOUT;
             }
-            return ClientEventType::RESPONSE_TIMEOUT;
         }
 
         // Response check

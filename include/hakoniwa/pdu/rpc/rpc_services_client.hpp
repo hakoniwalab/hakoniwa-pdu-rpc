@@ -35,6 +35,20 @@ public:
         return true;
     }
 
+    /**
+     * @brief Calls an RPC service with a specified timeout.
+     *
+     * This method sends a request to the specified RPC service and initiates a wait for a response.
+     * The response can then be retrieved by repeatedly calling the `poll` method.
+     * If a response is not received within the `timeout_usec` period, a timeout event will be reported by `poll`.
+     *
+     * @param service_name The name of the service to call.
+     * @param request_pdu The PDU data representing the request body.
+     * @param timeout_usec The maximum time in microseconds to wait for a response.
+     *                     A value of 0 indicates an indefinite wait (no timeout).
+     * @return true if the request was successfully sent and the RPC call initiated, false otherwise.
+     *         Note that `true` does not mean the service call succeeded, only that it was properly started.
+     */
     bool call(const std::string& service_name, const PduData& request_pdu, uint64_t timeout_usec);
     ClientEventType poll(std::string& service_name, RpcResponse& response_out);
     bool send_cancel_request(const std::string& service_name);

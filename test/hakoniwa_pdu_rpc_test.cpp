@@ -9,6 +9,7 @@
 #include <iostream>
 #include <unistd.h> // For chdir, getcwd
 #include <cstdlib>  // For free
+#include <thread>
 
 // Ensure the working directory is set to the project root for tests
 class DirectoryChanger {
@@ -327,6 +328,87 @@ TEST_F(RpcServicesTest, MultipleServiceCallsTest) {
         ASSERT_EQ(client_res_body.sum, 40);
     }
 
+    server.stop_all_services();
+    client.stop_all_services();
+    server.clear_all_instances();
+    client.clear_all_instances();
+}
+
+// Test case for RPC call with infinite wait (timeout = 0)
+TEST_F(RpcServicesTest, RpcCallInfiniteWaitTest) {
+    hakoniwa::pdu::rpc::RpcServicesServer server(server_node_id_, "RpcServerEndpointImpl", config_path_, 1000);
+    ASSERT_TRUE(server.initialize_services());
+
+    hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "RpcClientEndpointImpl", 1000);
+    ASSERT_TRUE(client.initialize_services());
+
+    server.start_all_services();
+    client.start_all_services();
+
+    while (!server.is_pdu_end_point_running() || !client.is_pdu_end_point_running()) {
+        usleep(1000);
+    }
+    HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
+
+    // Client sends request with timeout = 0 (infinite wait)
+    HakoCpp_AddTwoIntsRequest client_req_body;
+    client_req_body.a = 99;
+    client_req_body.b = 1;
+    ASSERT_TRUE(service_helper.call(client, service_name_, client_req_body, 0)); // Infinite timeout
+
+    // Server thread to handle the request after a delay
+    std::thread server_thread([&]() {
+        hakoniwa::pdu::rpc::RpcRequest server_request;
+        hakoniwa::pdu::rpc::ServerEventType server_event = hakoniwa::pdu::rpc::ServerEventType::NONE;
+
+        // Wait until request is received
+        while (server_event == hakoniwa::pdu::rpc::ServerEventType::NONE) {
+            server_event = server.poll(server_request);
+            usleep(1000);
+        }
+        ASSERT_EQ(server_event, hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN);
+
+        // Simulate processing time (longer than the standard timeout test)
+        usleep(200000); // 200ms
+
+        HakoCpp_AddTwoIntsRequest req_body;
+        ASSERT_TRUE(service_helper.get_request_body(server_request, req_body));
+        ASSERT_EQ(req_body.a, 99);
+        ASSERT_EQ(req_body.b, 1);
+
+        HakoCpp_AddTwoIntsResponse res_body;
+        res_body.sum = req_body.a + req_body.b;
+        ASSERT_TRUE(service_helper.reply(server, server_request, hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE, hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK, res_body));
+    });
+
+    // Client polls for response
+    hakoniwa::pdu::rpc::RpcResponse client_response;
+    hakoniwa::pdu::rpc::ClientEventType client_event = hakoniwa::pdu::rpc::ClientEventType::NONE;
+    std::string received_service_name;
+    int loop_count = 0;
+    const int max_loops = 400; // Wait for up to 400ms
+
+    while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE && loop_count < max_loops) {
+        client_event = client.poll(received_service_name, client_response);
+        usleep(1000); // Poll every 1ms
+        loop_count++;
+    }
+
+    // Join server thread
+    server_thread.join();
+    
+    // We must receive RESPONSE_IN, not TIMEOUT
+    ASSERT_NE(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_TIMEOUT);
+    ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN);
+    ASSERT_EQ(received_service_name, service_name_);
+
+    // Verify response body
+    HakoCpp_AddTwoIntsResponse client_res_body;
+    bool got_res_body = service_helper.get_response_body(client_response, client_res_body);
+    ASSERT_TRUE(got_res_body);
+    ASSERT_EQ(client_res_body.sum, 100);
+
+    // Cleanup
     server.stop_all_services();
     client.stop_all_services();
     server.clear_all_instances();
