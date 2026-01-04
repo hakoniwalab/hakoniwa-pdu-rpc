@@ -21,7 +21,7 @@ public:
         }
     virtual ~RpcServicesServer(); // Removed = default;
     bool initialize_services();
-    void start_all_services();
+    bool start_all_services();
     void stop_all_services();
     bool is_pdu_end_point_running() {
         for (auto& pdu_endpoint_pair : pdu_endpoints_) {

@@ -20,7 +20,7 @@ public:
     ~RpcServicesClient();
 
     bool initialize_services();
-    void start_all_services();
+    bool start_all_services();
     void stop_all_services();
     bool is_pdu_end_point_running() {
         for (auto& pdu_endpoint_pair : pdu_endpoints_) {
@@ -37,8 +37,8 @@ public:
     bool call(const std::string& service_name, const PduData& request_pdu, uint64_t timeout_usec);
     ClientEventType poll(std::string& service_name_out, RpcResponse& response_out);
     bool send_cancel_request(const std::string& service_name);
-    void create_request_buffer(const std::string& service_name, PduData& pdu);
-    void create_request_buffer(const std::string& service_name, Hako_uint8 opcode, PduData& pdu);
+    bool create_request_buffer(const std::string& service_name, PduData& pdu);
+    bool create_request_buffer(const std::string& service_name, Hako_uint8 opcode, PduData& pdu);
 
 private:
     std::string node_id_;

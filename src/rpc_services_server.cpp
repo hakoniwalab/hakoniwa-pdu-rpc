@@ -55,6 +55,11 @@ bool RpcServicesServer::initialize_services() {
     // A single time source can be shared among all services managed by this server
 
     try {
+        if (!json_config.contains("endpoints")) {
+            std::cerr << "ERROR: Service config missing 'endpoints' section." << std::endl;
+            stop_all_services();
+            return false;
+        }
         int pdu_meta_data_size = json_config.value("pduMetaDataSize", 8);
         // First, process all endpoints relevant to this server node
         for (const auto& node_entry : json_config["endpoints"]) {
@@ -74,6 +79,7 @@ bool RpcServicesServer::initialize_services() {
                 if (pdu_endpoint->open(config_path_for_endpoint) != HAKO_PDU_ERR_OK) {
                     std::cerr << "ERROR: Failed to open PDU endpoint config: " << config_path_for_endpoint << " for node '" << current_node_id << "' endpoint '" << endpoint_id << "'" << std::endl;
                     std::cout.flush();
+                    stop_all_services();
                     return false;
                 }
                 pdu_endpoints_[{current_node_id, endpoint_id}] = pdu_endpoint;
@@ -100,6 +106,7 @@ bool RpcServicesServer::initialize_services() {
                 std::cerr << "ERROR: PDU Endpoint not found for service " << service_name 
                           << " on node " << server_node_id_in_config << " with endpoint " << server_endpoint_id << ". Check 'endpoints' section in config." << std::endl;
                 std::cout.flush();
+                stop_all_services();
                 return false; // This is a configuration error
             }
             std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = it->second;
@@ -110,11 +117,13 @@ bool RpcServicesServer::initialize_services() {
             } else {
                 std::cerr << "ERROR: Unsupported RPC Server Endpoint Implementation Type: " << impl_type_ << std::endl;
                 std::cout.flush();
+                stop_all_services();
                 return false;
             }
             if (!rpc_server_endpoint->initialize(service_entry, pdu_meta_data_size)) {
                 std::cerr << "ERROR: Failed to initialize RPC server endpoint for service " << service_name << std::endl;
                 std::cout.flush();
+                stop_all_services();
                 return false;
             }
 
@@ -125,22 +134,25 @@ bool RpcServicesServer::initialize_services() {
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "ERROR: Malformed service config JSON: " << e.what() << std::endl;
         std::cout.flush();
+        stop_all_services();
         return false;
     }
     return true;
 }
 
-void RpcServicesServer::start_all_services() {
+bool RpcServicesServer::start_all_services() {
     for (auto& pdu_endpoint_pair : pdu_endpoints_) {
         auto& pdu_endpoint = pdu_endpoint_pair.second;
         if (pdu_endpoint->start() != HAKO_PDU_ERR_OK) {
             std::cerr << "ERROR: Failed to start PDU endpoint for " << pdu_endpoint_pair.first.first << ":" << pdu_endpoint_pair.first.second << std::endl;
             std::cout.flush();
+            return false;
         } else {
             std::cout << "INFO: Started PDU endpoint for " << pdu_endpoint_pair.first.first << ":" << pdu_endpoint_pair.first.second << std::endl;
             std::cout.flush();
         }
     }
+    return true;
 }
 
 void RpcServicesServer::stop_all_services() {

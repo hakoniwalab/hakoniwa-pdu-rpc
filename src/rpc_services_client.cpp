@@ -48,6 +48,11 @@ bool RpcServicesClient::initialize_services() {
     }
 
     try {
+        if (!json_config.contains("endpoints")) {
+            std::cerr << "ERROR: Service config missing 'endpoints' section." << std::endl;
+            stop_all_services();
+            return false;
+        }
         int pdu_meta_data_size = json_config.value("pduMetaDataSize", 8);
         for (const auto& service_entry : json_config["services"]) {
             std::string service_name = service_entry["name"];
@@ -79,6 +84,7 @@ bool RpcServicesClient::initialize_services() {
             if (pdu_endpoint_config_path.empty()) {
                 std::cerr << "ERROR: PDU Endpoint config_path not found for node '" << client_ep_node_id << "' and endpoint '" << client_ep_id << "'" << std::endl;
                 std::cout.flush();
+                stop_all_services();
                 return false;
             }
 
@@ -90,6 +96,7 @@ bool RpcServicesClient::initialize_services() {
             if (pdu_endpoint->open(pdu_endpoint_config_path) != HAKO_PDU_ERR_OK) {
                 std::cerr << "ERROR: Failed to open PDU endpoint config: " << pdu_endpoint_config_path << " for service " << service_name << std::endl;
                 std::cout.flush();
+                stop_all_services();
                 return false;
             }
             pdu_endpoints_[{client_ep_node_id, client_ep_id}] = pdu_endpoint; // Keyed by (nodeId, endpointId)
@@ -101,6 +108,7 @@ bool RpcServicesClient::initialize_services() {
             if (!rpc_client_endpoint->initialize(service_entry, pdu_meta_data_size)) {
                 std::cerr << "ERROR: Failed to initialize RPC client endpoint for service " << service_name << std::endl;
                 std::cout.flush();
+                stop_all_services();
                 return false;
             }
             rpc_endpoints_[service_name] = rpc_client_endpoint; // Keyed by service_name
@@ -110,22 +118,25 @@ bool RpcServicesClient::initialize_services() {
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "ERROR: Malformed service config JSON: " << e.what() << std::endl;
         std::cout.flush();
+        stop_all_services();
         return false;
     }
     return true;
 }
 
-void RpcServicesClient::start_all_services() {
+bool RpcServicesClient::start_all_services() {
     for (auto& pdu_endpoint_pair : pdu_endpoints_) {
         auto& pdu_endpoint = pdu_endpoint_pair.second;
         if (pdu_endpoint->start() != HAKO_PDU_ERR_OK) {
             std::cerr << "ERROR: Failed to start PDU endpoint for " << pdu_endpoint_pair.first.first << ":" << pdu_endpoint_pair.first.second << std::endl;
             std::cout.flush();
+            return false;
         } else {
             std::cout << "INFO: Started PDU endpoint for " << pdu_endpoint_pair.first.first << ":" << pdu_endpoint_pair.first.second << std::endl;
             std::cout.flush();
         }
     }
+    return true;
 }
 
 void RpcServicesClient::stop_all_services() {
@@ -164,27 +175,27 @@ bool RpcServicesClient::send_cancel_request(const std::string& service_name) {
     return it->second->send_cancel_request();
 }
 
-void RpcServicesClient::create_request_buffer(const std::string& service_name, PduData& pdu) {
+bool RpcServicesClient::create_request_buffer(const std::string& service_name, PduData& pdu) {
     auto it = rpc_endpoints_.find(service_name);
     if (it == rpc_endpoints_.end()) {
         std::cerr << "ERROR: Service '" << service_name << "' not found for creating request buffer." << std::endl;
-        // Should throw an exception or return bool to indicate failure, but void for now.
-        return; 
+        return false;
     }
     // Assuming default opcode HAKO_SERVICE_OPERATION_CODE_REQUEST for generic buffer creation
     it->second->create_request_buffer(HAKO_SERVICE_OPERATION_CODE_REQUEST, false, pdu);
+    return true;
 }
 
-void RpcServicesClient::create_request_buffer(const std::string& service_name, Hako_uint8 opcode, PduData& pdu) {
+bool RpcServicesClient::create_request_buffer(const std::string& service_name, Hako_uint8 opcode, PduData& pdu) {
     auto it = rpc_endpoints_.find(service_name);
     if (it == rpc_endpoints_.end()) {
         std::cerr << "ERROR: Service '" << service_name << "' not found for creating request buffer." << std::endl;
-        // Should throw an exception or return bool to indicate failure, but void for now.
-        return; 
+        return false;
     }
     // Determine is_cancel_request based on opcode
     bool is_cancel = (opcode == HAKO_SERVICE_OPERATION_CODE_CANCEL);
     it->second->create_request_buffer(opcode, is_cancel, pdu);
+    return true;
 }
 
 } // namespace hakoniwa::pdu::rpc
