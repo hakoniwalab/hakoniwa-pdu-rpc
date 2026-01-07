@@ -14,7 +14,7 @@
     },
     "endpoints": {
       "type": "array",
-      "description": "List of endpoint configurations.",
+      "description": "List of endpoint configurations (inline definition).",
       "items": {
         "type": "object",
         "properties": {
@@ -43,6 +43,10 @@
         },
         "required": ["nodeId", "endpoints"]
       }
+    },
+    "endpoints_config_path": {
+      "type": "string",
+      "description": "Path to the external endpoints configuration file."
     },
     "services": {
       "type": "array",
@@ -137,18 +141,18 @@
                   "description": "Response channel ID."
                 },
                 "client_endpoint": {
-                    "type": "object",
-                    "properties": {
-                        "nodeId": {
-                            "type": "string",
-                            "description": "The ID of the node where the client endpoint resides."
-                        },
-                        "endpointId": {
-                            "type": "string",
-                            "description": "The ID of the client endpoint."
-                        }
+                  "type": "object",
+                  "properties": {
+                    "nodeId": {
+                      "type": "string",
+                      "description": "The ID of the node where the client endpoint resides."
                     },
-                    "required": ["nodeId", "endpointId"]
+                    "endpointId": {
+                      "type": "string",
+                      "description": "The ID of the client endpoint."
+                    }
+                  },
+                  "required": ["nodeId", "endpointId"]
                 }
               },
               "required": ["name", "requestChannelId", "responseChannelId", "client_endpoint"]
@@ -159,5 +163,19 @@
       }
     }
   },
-  "required": ["pduMetaDataSize", "pdu_config_path", "endpoints", "services"]
+  "required": ["pduMetaDataSize", "pdu_config_path", "services"],
+  "oneOf": [
+    {
+      "required": ["endpoints"],
+      "not": {
+        "required": ["endpoints_config_path"]
+      }
+    },
+    {
+      "required": ["endpoints_config_path"],
+      "not": {
+        "required": ["endpoints"]
+      }
+    }
+  ]
 }
