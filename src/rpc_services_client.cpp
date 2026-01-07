@@ -5,22 +5,10 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include "endpoints_loader.hpp"
 
 namespace hakoniwa::pdu::rpc {
 
-// Helper function to find config_path for a given nodeId and endpointId
-static std::string find_endpoint_config_path(const nlohmann::json& json_config, const std::string& node_id, const std::string& endpoint_id) {
-    for (const auto& node_entry : json_config["endpoints"]) {
-        if (node_entry["nodeId"] == node_id) {
-            for (const auto& ep_entry : node_entry["endpoints"]) {
-                if (ep_entry["id"] == endpoint_id) {
-                    return ep_entry["config_path"];
-                }
-            }
-        }
-    }
-    return ""; // Not found
-}
 
 // Constructor: takes client_name as a specific identity for this client instance
 RpcServicesClient::RpcServicesClient(const std::string& node_id, const std::string& client_name, const std::string& config_path, const std::string& impl_type, uint64_t delta_time_usec, std::string time_source_type)
@@ -48,7 +36,7 @@ bool RpcServicesClient::initialize_services() {
     }
 
     try {
-        if (!json_config.contains("endpoints")) {
+        if (!json_config.contains("endpoints") && !json_config.contains("endpoints_config_path")) {
             std::cerr << "ERROR: Service config missing 'endpoints' section." << std::endl;
             stop_all_services();
             return false;
@@ -80,7 +68,8 @@ bool RpcServicesClient::initialize_services() {
             }
 
             // Find config_path for the low-level PDU Endpoint
-            std::string pdu_endpoint_config_path = find_endpoint_config_path(json_config, client_ep_node_id, client_ep_id);
+            nlohmann::json endpoints_json = load_endpoints_json(json_config, config_path_);
+            std::string pdu_endpoint_config_path = find_endpoint_config_path(endpoints_json, client_ep_node_id, client_ep_id);
             if (pdu_endpoint_config_path.empty()) {
                 std::cerr << "ERROR: PDU Endpoint config_path not found for node '" << client_ep_node_id << "' and endpoint '" << client_ep_id << "'" << std::endl;
                 std::cout.flush();

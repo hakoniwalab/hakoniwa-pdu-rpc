@@ -11,22 +11,12 @@
 #include <vector>
 #include <map>
 #include <memory>
+#include <filesystem>
+
+#include "endpoints_loader.hpp"
 
 namespace hakoniwa::pdu::rpc {
 
-// Helper function to find config_path for a given nodeId and endpointId
-static std::string find_endpoint_config_path(const nlohmann::json& json_config, const std::string& node_id, const std::string& endpoint_id) {
-    for (const auto& node_entry : json_config["endpoints"]) {
-        if (node_entry["nodeId"] == node_id) {
-            for (const auto& ep_entry : node_entry["endpoints"]) {
-                if (ep_entry["id"] == endpoint_id) {
-                    return ep_entry["config_path"];
-                }
-            }
-        }
-    }
-    return ""; // Not found
-}
 
 // Constructor is already defined in the header with its initializer list.
 // If debug prints are needed in the constructor, the definition must be moved from header to here.
@@ -56,17 +46,11 @@ bool RpcServicesServer::initialize_services() {
         return false;
     }
 
-    // A single time source can be shared among all services managed by this server
-
     try {
-        if (!json_config.contains("endpoints")) {
-            std::cerr << "ERROR: Service config missing 'endpoints' section." << std::endl;
-            stop_all_services();
-            return false;
-        }
+        nlohmann::json endpoints_json = load_endpoints_json(json_config, this->service_config_path_);
         int pdu_meta_data_size = json_config.value("pduMetaDataSize", 8);
         // First, process all endpoints relevant to this server node
-        for (const auto& node_entry : json_config["endpoints"]) {
+        for (const auto& node_entry : endpoints_json) {
             std::string current_node_id = node_entry["nodeId"];
             if (current_node_id != this->node_id_) {
                 continue; // Only process endpoints for this server's node
@@ -94,12 +78,10 @@ bool RpcServicesServer::initialize_services() {
 
         // Then, initialize services that are meant for this server
         for (const auto& service_entry : json_config["services"]) {
-            //std::cout << "DEBUG: Processing service entry: " << service_entry.dump() << std::endl;
             std::string service_name = service_entry["name"];
             std::cout << "DEBUG: Looking for server endpoint for service: " << service_name << std::endl;
             bool found = false;
             std::string server_endpoint_id;
-            // server_endpoints キーが存在するか、かつ配列であるかを確認
             if (!service_entry.contains("server_endpoints") || !service_entry["server_endpoints"].is_array()) {
                 std::cerr << "ERROR: 'server_endpoints' section missing or not an array for service " << service_name << std::endl;
                 std::cout.flush();
@@ -153,8 +135,8 @@ bool RpcServicesServer::initialize_services() {
             std::cout << "INFO: Successfully initialized service: " << service_name << " on node " << this->node_id_ << std::endl;
             std::cout.flush();
         }
-    } catch (const nlohmann::json::exception& e) {
-        std::cerr << "ERROR: Malformed service config JSON: " << e.what() << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "ERROR: " << e.what() << std::endl;
         std::cout.flush();
         stop_all_services();
         return false;
