@@ -30,10 +30,12 @@
                     "baseSize": 288
                 }
             },
-            "server_endpoint": {
-                "nodeId": "node1",
-                "endpointId": "n1-ep1"
-            },
+            "server_endpoints": [
+                {
+                    "nodeId": "node1",
+                    "endpointId": "n1-ep1"
+                }
+            ],
             "clients": [
                 {
                     "name": "Client1",

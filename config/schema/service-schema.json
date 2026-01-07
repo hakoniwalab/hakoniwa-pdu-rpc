@@ -96,19 +96,23 @@
             },
             "required": ["server", "client"]
           },
-          "server_endpoint": {
-            "type": "object",
-            "properties": {
+          "server_endpoints": {
+            "type": "array",
+            "description": "List of server endpoints for this service.",
+            "items": {
+              "type": "object",
+              "properties": {
                 "nodeId": {
-                    "type": "string",
-                    "description": "The ID of the node where the server endpoint resides."
+                  "type": "string",
+                  "description": "The ID of the node where the server endpoint resides."
                 },
                 "endpointId": {
-                    "type": "string",
-                    "description": "The ID of the server endpoint."
+                  "type": "string",
+                  "description": "The ID of the server endpoint."
                 }
-            },
-            "required": ["nodeId", "endpointId"]
+              },
+              "required": ["nodeId", "endpointId"]
+            }
           },
           "clients": {
             "type": "array",
@@ -151,7 +155,7 @@
             }
           }
         },
-        "required": ["name", "type", "maxClients", "pduSize", "server_endpoint", "clients"]
+        "required": ["name", "type", "maxClients", "pduSize", "server_endpoints", "clients"]
       }
     }
   },
