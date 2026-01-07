@@ -4,7 +4,7 @@
     "endpoints": [
         {
         "id": "server_ep_id",
-        "config_path": "configs/server_endpoint.json"
+        "config_path": "server_endpoint.json"
         }
     ]
     },
@@ -13,7 +13,7 @@
     "endpoints": [
         {
         "id": "client_ep_id",
-        "config_path": "configs/client_endpoint.json"
+        "config_path": "client_endpoint.json"
         }
     ]
     }

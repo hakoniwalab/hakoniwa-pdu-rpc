@@ -31,6 +31,9 @@ RpcServicesServer::~RpcServicesServer() {
 bool RpcServicesServer::initialize_services() {
     std::cout << "INFO: Initializing RPC Services Server for node: " << this->node_id_ << std::endl;
     std::cout << "INFO: service_config_path: " << this->service_config_path_ << std::endl;
+    fs::path file_path(this->service_config_path_);
+    fs::path parent_abs = fs::absolute(file_path.parent_path());
+    std::cout << "INFO: service_config_path parent: " << parent_abs << std::endl;
     std::ifstream ifs(service_config_path_);
     if (!ifs.is_open()) {
         std::cerr << "ERROR: Failed to open service config file: " << service_config_path_ << std::endl;
@@ -47,7 +50,7 @@ bool RpcServicesServer::initialize_services() {
     }
 
     try {
-        nlohmann::json endpoints_json = load_endpoints_json(json_config, this->service_config_path_);
+        nlohmann::json endpoints_json = load_endpoints_json(json_config, parent_abs);
         int pdu_meta_data_size = json_config.value("pduMetaDataSize", 8);
         // First, process all endpoints relevant to this server node
         for (const auto& node_entry : endpoints_json) {
@@ -64,7 +67,7 @@ bool RpcServicesServer::initialize_services() {
                 std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = 
                     std::make_shared<hakoniwa::pdu::Endpoint>(pdu_endpoint_name, HAKO_PDU_ENDPOINT_DIRECTION_INOUT);
                 
-                if (pdu_endpoint->open(config_path_for_endpoint) != HAKO_PDU_ERR_OK) {
+                if (pdu_endpoint->open( parent_abs.string() + "/" + config_path_for_endpoint) != HAKO_PDU_ERR_OK) {
                     std::cerr << "ERROR: Failed to open PDU endpoint config: " << config_path_for_endpoint << " for node '" << current_node_id << "' endpoint '" << endpoint_id << "'" << std::endl;
                     std::cout.flush();
                     stop_all_services();

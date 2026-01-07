@@ -8,10 +8,10 @@
 namespace hakoniwa::pdu::rpc {
 
 // Helper function to load endpoints configuration
-static inline nlohmann::json load_endpoints_json(const nlohmann::json& json_config, const std::string& base_path_str) {
+static inline nlohmann::json load_endpoints_json(const nlohmann::json& json_config, const std::string& parent_abs_path) {
     if (json_config.contains("endpoints_config_path")) {
         std::string endpoints_path = json_config["endpoints_config_path"].get<std::string>();
-        std::ifstream ifs(endpoints_path);
+        std::ifstream ifs(parent_abs_path + "/" + endpoints_path);
         if (!ifs.is_open()) {
             throw std::runtime_error("Failed to open endpoints config file: " + endpoints_path);
         }
