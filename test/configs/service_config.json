@@ -30,10 +30,12 @@
         "server": { "heapSize": 0, "baseSize": 296 },
         "client": { "heapSize": 0, "baseSize": 288 }
       },
-      "server_endpoint": {
-        "nodeId": "server_node",
-        "endpointId": "server_ep_id"
-      },
+      "server_endpoints": [
+        {
+          "nodeId": "server_node",
+          "endpointId": "server_ep_id"
+        }
+      ],
       "clients": [
         {
           "name": "TestClient",

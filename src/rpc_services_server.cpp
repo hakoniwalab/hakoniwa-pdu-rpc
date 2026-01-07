@@ -39,10 +39,14 @@ RpcServicesServer::~RpcServicesServer() {
 }
 
 bool RpcServicesServer::initialize_services() {
+    std::cout << "INFO: Initializing RPC Services Server for node: " << this->node_id_ << std::endl;
+    std::cout << "INFO: service_config_path: " << this->service_config_path_ << std::endl;
     std::ifstream ifs(service_config_path_);
     if (!ifs.is_open()) {
+        std::cerr << "ERROR: Failed to open service config file: " << service_config_path_ << std::endl;
         return false;
     }
+    std::cout << "INFO: Successfully opened service config file." << std::endl;
     nlohmann::json json_config;
     try {
         ifs >> json_config;
@@ -90,27 +94,45 @@ bool RpcServicesServer::initialize_services() {
 
         // Then, initialize services that are meant for this server
         for (const auto& service_entry : json_config["services"]) {
-            std::string server_node_id_in_config = service_entry["server_endpoint"]["nodeId"];
-
-            // Only initialize services that this RpcServicesServer instance is responsible for
-            if (server_node_id_in_config != this->node_id_) {
-                continue;
-            }
-
+            //std::cout << "DEBUG: Processing service entry: " << service_entry.dump() << std::endl;
             std::string service_name = service_entry["name"];
-            std::string server_endpoint_id = service_entry["server_endpoint"]["endpointId"];
-            
-            auto pdu_ep_key = std::make_pair(server_node_id_in_config, server_endpoint_id);
-            auto it = pdu_endpoints_.find(pdu_ep_key);
-            if (it == pdu_endpoints_.end()) {
+            std::cout << "DEBUG: Looking for server endpoint for service: " << service_name << std::endl;
+            bool found = false;
+            std::string server_endpoint_id;
+            // server_endpoints キーが存在するか、かつ配列であるかを確認
+            if (!service_entry.contains("server_endpoints") || !service_entry["server_endpoints"].is_array()) {
+                std::cerr << "ERROR: 'server_endpoints' section missing or not an array for service " << service_name << std::endl;
+                std::cout.flush();
+                stop_all_services();
+                return false;
+            }
+            for (const auto& server_ep : service_entry["server_endpoints"]) {
+                std::cout << "DEBUG: Checking server endpoint: " << server_ep.dump() << std::endl;
+                if (server_ep["nodeId"] != this->node_id_) {
+                    continue;
+                }
+                server_endpoint_id = server_ep["endpointId"];
+                found = true;
+                break;
+            }
+            if (!found) {
                 std::cerr << "ERROR: PDU Endpoint not found for service " << service_name 
-                          << " on node " << server_node_id_in_config << " with endpoint " << server_endpoint_id << ". Check 'endpoints' section in config." << std::endl;
+                          << " on node " << this->node_id_ << " with endpoint " << server_endpoint_id << ". Check 'endpoints' section in config." << std::endl;
                 std::cout.flush();
                 stop_all_services();
                 return false; // This is a configuration error
             }
+            
+            auto pdu_ep_key = std::make_pair(this->node_id_, server_endpoint_id);
+            auto it = pdu_endpoints_.find(pdu_ep_key);
+            if (it == pdu_endpoints_.end()) {
+                std::cerr << "ERROR: PDU Endpoint not found for service " << service_name 
+                          << " on node " << this->node_id_ << " with endpoint " << server_endpoint_id << ". Check 'endpoints' section in config." << std::endl;
+                std::cout.flush();
+                stop_all_services();
+                return false; // This is a configuration error
+            }            
             std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = it->second;
-
             std::shared_ptr<IRpcServerEndpoint> rpc_server_endpoint;
             if (impl_type_ == "RpcServerEndpointImpl") {
                 rpc_server_endpoint = std::make_shared<RpcServerEndpointImpl>(service_name, delta_time_usec_, pdu_endpoint, time_source_);

@@ -58,7 +58,7 @@ protected:
     static DirectoryChanger* dir_changer_;
 
     static void SetUpTestSuite() {
-        dir_changer_ = new DirectoryChanger("/Users/tmori/project/oss/work/hakoniwa-pdu-rpc/test");
+        dir_changer_ = new DirectoryChanger("../../test");
     }
 
     static void TearDownTestSuite() {
