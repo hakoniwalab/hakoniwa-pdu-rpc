@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hakoniwa/pdu/rpc/rpc_services_server.hpp"
+#include "hakoniwa/pdu/rpc/rpc_services_client.hpp"
 
 /** Shorthand macro to resolve PDU type */
 #define HAKO_RPC_SERVICE_SERVER_TYPE(type) hako::pdu::msgs::hako_srv_msgs::type
