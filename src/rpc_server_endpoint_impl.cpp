@@ -111,7 +111,7 @@ ServerEventType RpcServerEndpointImpl::poll(RpcRequest& request)
 {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (pending_requests_.empty()) {
-        std::cout << "INFO: No pending requests to process. : service_name=" << service_name_ << std::endl;
+        //std::cout << "INFO: No pending requests to process. : service_name=" << service_name_ << std::endl;
         return ServerEventType::NONE;
     }
     PendingRequest pending_request = std::move(pending_requests_.front());
@@ -218,6 +218,7 @@ ServerEventType RpcServerEndpointImpl::handle_request_in(RpcRequest& request) {
         std::cout << "INFO: Received request for client: " << request.header.client_name << std::endl;
         server_states_[request.header.client_name].state = ServerState::SERVER_STATE_RUNNING;
         server_states_[request.header.client_name].request_id = request.header.request_id;
+        request.client_name = request.header.client_name;
         return ServerEventType::REQUEST_IN;
     }
     else if (server_states_[request.header.client_name].state == ServerState::SERVER_STATE_RUNNING) {
