@@ -218,15 +218,11 @@ ClientEventType RpcClientEndpointImpl::handle_response_in(RpcResponse& response)
     }
     
     switch (response.header.result_code) {
-        case HAKO_SERVICE_RESULT_CODE_OK:
-            client_state_.state = CLIENT_STATE_IDLE;
-            return ClientEventType::RESPONSE_IN;
         case HAKO_SERVICE_RESULT_CODE_CANCELED:
             return handle_cancel_response(response);
         default:
-            std::cerr << "ERROR: RPC call failed with error code: " << response.header.result_code << std::endl;
             client_state_.state = CLIENT_STATE_IDLE;
-            return ClientEventType::NONE;
+            return ClientEventType::RESPONSE_IN;
     }
 }
 
