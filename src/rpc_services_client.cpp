@@ -14,6 +14,7 @@ namespace hakoniwa::pdu::rpc {
 RpcServicesClient::RpcServicesClient(const std::string& node_id, const std::string& client_name, const std::string& config_path, const std::string& impl_type, uint64_t delta_time_usec, std::string time_source_type)
     : node_id_(node_id), client_name_(client_name), config_path_(config_path), impl_type_(impl_type), delta_time_usec_(delta_time_usec) {
         time_source_ = hakoniwa::time_source::create_time_source(time_source_type, delta_time_usec);
+        std::cout << "DEBUG: node_id_: " << node_id_ << ", client_name_: " << client_name_ << ", config_path_: " << config_path_ << ", impl_type_: " << impl_type_ << ", delta_time_usec_: " << delta_time_usec_ << ", time_source_type: " << time_source_type << std::endl;
 }
 
 // Destructor: ensures all services are stopped cleanly
@@ -44,7 +45,36 @@ bool RpcServicesClient::initialize_services() {
             stop_all_services();
             return false;
         }
-        int pdu_meta_data_size = json_config.value("pduMetaDataSize", 8);
+        nlohmann::json endpoints_json = load_endpoints_json(json_config, parent_abs);
+        // First, process all endpoints relevant to this server node
+        for (const auto& node_entry : endpoints_json) {
+            std::string current_node_id = node_entry["nodeId"];
+            if (current_node_id != this->node_id_) {
+                continue; // Only process endpoints for this server's node
+            }
+
+            for (const auto& ep_entry : node_entry["endpoints"]) {
+                std::string endpoint_id = ep_entry["id"];
+                std::string config_path_for_endpoint = ep_entry["config_path"];
+
+                std::string pdu_endpoint_name = current_node_id + "-" + endpoint_id;
+                std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = 
+                    std::make_shared<hakoniwa::pdu::Endpoint>(pdu_endpoint_name, HAKO_PDU_ENDPOINT_DIRECTION_INOUT);
+                
+                if (pdu_endpoint->open( parent_abs.string() + "/" + config_path_for_endpoint) != HAKO_PDU_ERR_OK) {
+                    std::cerr << "ERROR: Failed to open PDU endpoint config: " << config_path_for_endpoint << " for node '" << current_node_id << "' endpoint '" << endpoint_id << "'" << std::endl;
+                    std::cout.flush();
+                    stop_all_services();
+                    return false;
+                }
+                pdu_endpoints_[{current_node_id, endpoint_id}] = pdu_endpoint;
+                std::cout << "INFO: Successfully initialized PDU endpoint '" << pdu_endpoint_name << "' with config '" << config_path_for_endpoint << "'" << std::endl;
+                std::cout.flush();
+            }
+        }
+
+
+        int pdu_meta_data_size = json_config.value("pduMetaDataSize", 24);
         for (const auto& service_entry : json_config["services"]) {
             std::string service_name = service_entry["name"];
             
@@ -57,6 +87,7 @@ bool RpcServicesClient::initialize_services() {
                 if (client_spec["name"] == this->client_name_) {
                     client_ep_node_id = client_spec["client_endpoint"]["nodeId"];
                     client_ep_id = client_spec["client_endpoint"]["endpointId"];
+                    std::cout << "DEBUG: Found matching client config for service " << service_name << ": nodeId=" << client_ep_node_id << ", endpointId=" << client_ep_id << std::endl;
                     client_config_found = true;
                     break;
                 }
@@ -69,7 +100,7 @@ bool RpcServicesClient::initialize_services() {
             if (client_ep_node_id != this->node_id_) {
                 continue;
             }
-
+            std::cout << "INFO: Initializing RPC client for service: " << service_name << " on node " << this->node_id_ << std::endl;
             // Find config_path for the low-level PDU Endpoint
             nlohmann::json endpoints_json = load_endpoints_json(json_config, parent_abs.string());
             std::string pdu_endpoint_config_path = find_endpoint_config_path(endpoints_json, client_ep_node_id, client_ep_id);
@@ -82,17 +113,13 @@ bool RpcServicesClient::initialize_services() {
 
             // Create low-level PDU endpoint
             std::string pdu_endpoint_name = client_ep_node_id + "-" + client_ep_id;
-            std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = 
-                std::make_shared<hakoniwa::pdu::Endpoint>(pdu_endpoint_name, HAKO_PDU_ENDPOINT_DIRECTION_INOUT);
-            
-            if (pdu_endpoint->open(parent_abs.string() + "/" + pdu_endpoint_config_path) != HAKO_PDU_ERR_OK) {
-                std::cerr << "ERROR: Failed to open PDU endpoint config: " << pdu_endpoint_config_path << " for service " << service_name << std::endl;
+            std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = pdu_endpoints_[{client_ep_node_id, client_ep_id}];
+            if (!pdu_endpoint) {
+                std::cerr << "ERROR: PDU Endpoint instance not found for node '" << client_ep_node_id << "' and endpoint '" << client_ep_id << "'" << std::endl;
                 std::cout.flush();
                 stop_all_services();
                 return false;
             }
-            pdu_endpoints_[{client_ep_node_id, client_ep_id}] = pdu_endpoint; // Keyed by (nodeId, endpointId)
-
             // Create high-level RPC client endpoint
             std::shared_ptr<IRpcClientEndpoint> rpc_client_endpoint = 
                 std::make_shared<RpcClientEndpointImpl>(service_name, client_name_, delta_time_usec_, pdu_endpoint, time_source_);

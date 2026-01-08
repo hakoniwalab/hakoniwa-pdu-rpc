@@ -121,7 +121,7 @@ TEST_F(AbnormalCaseTest, ClientServiceDefinitionMissing) {
         ],
         "services": [{
             "name": "TestService",
-            "server_endpoint": {"nodeId": "server_node", "endpointId": "ep1"},
+            "server_endpoints": [{"nodeId": "server_node", "endpointId": "ep1"}],
             "clients": [{"name": "AnotherClient", "client_endpoint": {"nodeId": "client_node", "endpointId": "ep1"}}]
         }]
     })");
