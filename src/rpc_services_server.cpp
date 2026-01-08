@@ -50,33 +50,10 @@ bool RpcServicesServer::initialize_services() {
     }
 
     try {
-        nlohmann::json endpoints_json = load_endpoints_json(json_config, parent_abs);
         int pdu_meta_data_size = json_config.value("pduMetaDataSize", 8);
-        // First, process all endpoints relevant to this server node
-        for (const auto& node_entry : endpoints_json) {
-            std::string current_node_id = node_entry["nodeId"];
-            if (current_node_id != this->node_id_) {
-                continue; // Only process endpoints for this server's node
-            }
-
-            for (const auto& ep_entry : node_entry["endpoints"]) {
-                std::string endpoint_id = ep_entry["id"];
-                std::string config_path_for_endpoint = ep_entry["config_path"];
-
-                std::string pdu_endpoint_name = current_node_id + "-" + endpoint_id;
-                std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = 
-                    std::make_shared<hakoniwa::pdu::Endpoint>(pdu_endpoint_name, HAKO_PDU_ENDPOINT_DIRECTION_INOUT);
-                
-                if (pdu_endpoint->open( parent_abs.string() + "/" + config_path_for_endpoint) != HAKO_PDU_ERR_OK) {
-                    std::cerr << "ERROR: Failed to open PDU endpoint config: " << config_path_for_endpoint << " for node '" << current_node_id << "' endpoint '" << endpoint_id << "'" << std::endl;
-                    std::cout.flush();
-                    stop_all_services();
-                    return false;
-                }
-                pdu_endpoints_[{current_node_id, endpoint_id}] = pdu_endpoint;
-                std::cout << "INFO: Successfully initialized PDU endpoint '" << pdu_endpoint_name << "' with config '" << config_path_for_endpoint << "'" << std::endl;
-                std::cout.flush();
-            }
+        if (!load_and_initialize_pdu_endpoints(this->node_id_, json_config, parent_abs, this->pdu_endpoints_)) {
+            stop_all_services();
+            return false;
         }
 
         // Then, initialize services that are meant for this server
