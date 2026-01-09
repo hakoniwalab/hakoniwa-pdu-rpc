@@ -15,11 +15,6 @@ RpcServerEndpointImpl::RpcServerEndpointImpl(
     const std::shared_ptr<hakoniwa::pdu::Endpoint>& endpoint, std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source)
  : IRpcServerEndpoint(service_name, delta_time_usec),
       endpoint_(endpoint), time_source_(time_source) {
-    if (endpoint_) {
-        endpoint_->set_on_recv_callback([this](const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) {
-            RpcServerEndpointImpl::pdu_recv_callback(resolved_pdu_key, data);
-        });
-    }
 }
 
 RpcServerEndpointImpl::~RpcServerEndpointImpl() {
@@ -77,6 +72,15 @@ bool RpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int
                 + pdu_meta_data_size;
             res_def.method_type = "RPC";
             pdu_def->add_definition(service_name, res_def);
+
+            //subscribe to request PDU
+            hakoniwa::pdu::PduResolvedKey pdu_resolved_key;
+            pdu_resolved_key.robot = service_name;
+            pdu_resolved_key.channel_id = req_def.channel_id;
+            endpoint_->subscribe_on_recv_callback(pdu_resolved_key,
+                [this](const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) {
+                    RpcServerEndpointImpl::pdu_recv_callback(resolved_pdu_key, data);
+            });
         }
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "ERROR: Failed to parse service config: " << e.what() << std::endl;

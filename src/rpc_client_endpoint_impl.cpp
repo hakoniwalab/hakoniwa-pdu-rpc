@@ -20,12 +20,6 @@ RpcClientEndpointImpl::RpcClientEndpointImpl(
     
     client_state_.state = CLIENT_STATE_IDLE;
     client_state_.request_id = 0;
-
-    if (endpoint_) {
-        endpoint_->set_on_recv_callback([](const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) {
-            RpcClientEndpointImpl::pdu_recv_callback(resolved_pdu_key, data);
-        });
-    }
 }
 
 
@@ -83,6 +77,16 @@ bool RpcClientEndpointImpl::initialize(const nlohmann::json& service_config, int
                     + pdu_meta_data_size;
                 res_def.method_type = "RPC";
                 pdu_def->add_definition(service_name_, res_def);
+
+                //subscribe to response PDU
+                hakoniwa::pdu::PduResolvedKey pdu_resolved_key;
+                pdu_resolved_key.robot = service_name_;
+                pdu_resolved_key.channel_id = res_def.channel_id;
+                endpoint_->subscribe_on_recv_callback(pdu_resolved_key,
+                    [this](const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) {
+                        RpcClientEndpointImpl::pdu_recv_callback(resolved_pdu_key, data);
+                });
+
                 break;
             }
         }
