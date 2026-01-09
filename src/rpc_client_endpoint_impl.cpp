@@ -51,7 +51,11 @@ bool RpcClientEndpointImpl::initialize(const nlohmann::json& service_config, int
             return false;
         }
 
-        auto& pdu_def = endpoint_->get_pdu_definition();
+        auto pdu_def = endpoint_->get_pdu_definition();
+        if (pdu_def == nullptr) {
+            std::cerr << "ERROR: PDU Definition is not available in the endpoint." << std::endl;
+            return false;
+        }
 
         bool client_found = false;
         for (const auto& client : service_config["clients"]) {
@@ -67,7 +71,7 @@ bool RpcClientEndpointImpl::initialize(const nlohmann::json& service_config, int
                     + service_config["pduSize"]["client"]["heapSize"].get<size_t>()
                     + pdu_meta_data_size;
                 req_def.method_type = "RPC";
-                pdu_def.add_definition(service_name_, req_def);
+                pdu_def->add_definition(service_name_, req_def);
 
                 // Response PDU
                 PduDef res_def;
@@ -78,7 +82,7 @@ bool RpcClientEndpointImpl::initialize(const nlohmann::json& service_config, int
                     + service_config["pduSize"]["server"]["heapSize"].get<size_t>()
                     + pdu_meta_data_size;
                 res_def.method_type = "RPC";
-                pdu_def.add_definition(service_name_, res_def);
+                pdu_def->add_definition(service_name_, res_def);
                 break;
             }
         }

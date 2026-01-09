@@ -28,7 +28,8 @@ RpcServicesServer::~RpcServicesServer() {
     stop_all_services();
 }
 
-bool RpcServicesServer::initialize_services() {
+bool RpcServicesServer::initialize_services(std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container) {
+    this->endpoint_container_ = endpoint_container;
     std::cout << "INFO: Initializing RPC Services Server for node: " << this->node_id_ << std::endl;
     std::cout << "INFO: service_config_path: " << this->service_config_path_ << std::endl;
     fs::path file_path(this->service_config_path_);
@@ -50,11 +51,7 @@ bool RpcServicesServer::initialize_services() {
     }
 
     try {
-        int pdu_meta_data_size = json_config.value("pduMetaDataSize", 8);
-        if (!load_and_initialize_pdu_endpoints(this->node_id_, json_config, parent_abs, this->pdu_endpoints_)) {
-            stop_all_services();
-            return false;
-        }
+        int pdu_meta_data_size = json_config.value("pduMetaDataSize", 24);
 
         // Then, initialize services that are meant for this server
         for (const auto& service_entry : json_config["services"]) {
@@ -84,17 +81,14 @@ bool RpcServicesServer::initialize_services() {
                 stop_all_services();
                 return false; // This is a configuration error
             }
-            
-            auto pdu_ep_key = std::make_pair(this->node_id_, server_endpoint_id);
-            auto it = pdu_endpoints_.find(pdu_ep_key);
-            if (it == pdu_endpoints_.end()) {
-                std::cerr << "ERROR: PDU Endpoint not found for service " << service_name 
+            std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = endpoint_container_->ref(server_endpoint_id);
+            if (!pdu_endpoint) {
+                std::cerr << "ERROR: PDU Endpoint instance not found for service " << service_name 
                           << " on node " << this->node_id_ << " with endpoint " << server_endpoint_id << ". Check 'endpoints' section in config." << std::endl;
                 std::cout.flush();
                 stop_all_services();
                 return false; // This is a configuration error
-            }            
-            std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = it->second;
+            }
             std::shared_ptr<IRpcServerEndpoint> rpc_server_endpoint;
             if (impl_type_ == "RpcServerEndpointImpl") {
                 rpc_server_endpoint = std::make_shared<RpcServerEndpointImpl>(service_name, delta_time_usec_, pdu_endpoint, time_source_);
@@ -125,25 +119,11 @@ bool RpcServicesServer::initialize_services() {
 }
 
 bool RpcServicesServer::start_all_services() {
-    for (auto& pdu_endpoint_pair : pdu_endpoints_) {
-        auto& pdu_endpoint = pdu_endpoint_pair.second;
-        if (pdu_endpoint->start() != HAKO_PDU_ERR_OK) {
-            std::cerr << "ERROR: Failed to start PDU endpoint for " << pdu_endpoint_pair.first.first << ":" << pdu_endpoint_pair.first.second << std::endl;
-            std::cout.flush();
-            return false;
-        } else {
-            std::cout << "INFO: Started PDU endpoint for " << pdu_endpoint_pair.first.first << ":" << pdu_endpoint_pair.first.second << std::endl;
-            std::cout.flush();
-        }
-    }
+    //nothing to do for now
     return true;
 }
 
 void RpcServicesServer::stop_all_services() {
-    for (auto& pdu_endpoint_pair : pdu_endpoints_) {
-        pdu_endpoint_pair.second->stop();
-        pdu_endpoint_pair.second->close();
-    }
     for (auto& endpoint_pair : rpc_endpoints_) {
         endpoint_pair.second->clear_pending_requests();
     }

@@ -2,6 +2,7 @@
 
 #include "rpc_server_endpoint.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
+#include "hakoniwa/pdu/endpoint_container.hpp"
 #include "hakoniwa/time_source/time_source_factory.hpp"
 #include <string>
 #include <memory>
@@ -20,21 +21,10 @@ public:
             time_source_ = hakoniwa::time_source::create_time_source(time_source_type, delta_time_usec);
         }
     virtual ~RpcServicesServer(); // Removed = default;
-    bool initialize_services();
+    bool initialize_services(std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container);
     bool start_all_services();
     void stop_all_services();
     void clear_all_instances();
-    bool is_pdu_end_point_running() {
-        for (auto& pdu_endpoint_pair : pdu_endpoints_) {
-            auto& pdu_endpoint = pdu_endpoint_pair.second;
-            bool running = false;
-            pdu_endpoint->is_running(running);
-            if (!running) {
-                return false;
-            }
-        }
-        return true;
-    }
     void create_reply_buffer(const HakoCpp_ServiceRequestHeader& header, Hako_uint8 status, Hako_int32 result_code, PduData& pdu) {
         auto it = rpc_endpoints_.find(header.service_name);
         if (it != rpc_endpoints_.end()) {
@@ -67,7 +57,7 @@ public:
 
 private:
     //(nodeId, endpointId), endpoint
-    std::map<std::pair<std::string, std::string>, std::shared_ptr<hakoniwa::pdu::Endpoint>> pdu_endpoints_;
+    //std::map<std::pair<std::string, std::string>, std::shared_ptr<hakoniwa::pdu::Endpoint>> pdu_endpoints_;
     //service_name, endpoint
     std::map<std::string, std::shared_ptr<IRpcServerEndpoint>> rpc_endpoints_;
     std::string node_id_;
@@ -75,6 +65,7 @@ private:
     std::string service_config_path_;
     uint64_t delta_time_usec_;
     std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container_;
 };
 
 } // namespace hakoniwa::pdu::rpc

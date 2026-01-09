@@ -22,7 +22,8 @@ RpcServicesClient::~RpcServicesClient() {
     stop_all_services();
 }
 
-bool RpcServicesClient::initialize_services() {
+bool RpcServicesClient::initialize_services(std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container) {
+    this->endpoint_container_ = endpoint_container;
     fs::path file_path(this->config_path_);
     fs::path parent_abs = fs::absolute(file_path.parent_path());
     std::cout << "INFO: service_config_path parent: " << parent_abs << std::endl;
@@ -42,10 +43,6 @@ bool RpcServicesClient::initialize_services() {
     try {
         if (!json_config.contains("endpoints") && !json_config.contains("endpoints_config_path")) {
             std::cerr << "ERROR: Service config missing 'endpoints' section." << std::endl;
-            stop_all_services();
-            return false;
-        }
-        if (!load_and_initialize_pdu_endpoints(this->node_id_, json_config, parent_abs, this->pdu_endpoints_)) {
             stop_all_services();
             return false;
         }
@@ -89,8 +86,7 @@ bool RpcServicesClient::initialize_services() {
             }
 
             // Create low-level PDU endpoint
-            std::string pdu_endpoint_name = client_ep_node_id + "-" + client_ep_id;
-            std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = pdu_endpoints_[{client_ep_node_id, client_ep_id}];
+            std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = endpoint_container_->ref(client_ep_id);
             if (!pdu_endpoint) {
                 std::cerr << "ERROR: PDU Endpoint instance not found for node '" << client_ep_node_id << "' and endpoint '" << client_ep_id << "'" << std::endl;
                 std::cout.flush();
@@ -121,25 +117,12 @@ bool RpcServicesClient::initialize_services() {
 }
 
 bool RpcServicesClient::start_all_services() {
-    for (auto& pdu_endpoint_pair : pdu_endpoints_) {
-        auto& pdu_endpoint = pdu_endpoint_pair.second;
-        if (pdu_endpoint->start() != HAKO_PDU_ERR_OK) {
-            std::cerr << "ERROR: Failed to start PDU endpoint for " << pdu_endpoint_pair.first.first << ":" << pdu_endpoint_pair.first.second << std::endl;
-            std::cout.flush();
-            return false;
-        } else {
-            std::cout << "INFO: Started PDU endpoint for " << pdu_endpoint_pair.first.first << ":" << pdu_endpoint_pair.first.second << std::endl;
-            std::cout.flush();
-        }
-    }
+    //nothing to do for now
     return true;
 }
 
 void RpcServicesClient::stop_all_services() {
-    for (auto& pdu_endpoint_pair : pdu_endpoints_) {
-        pdu_endpoint_pair.second->stop();
-        pdu_endpoint_pair.second->close();
-    }
+    //pdu_endpoints must be stop on caller's responsibility
     for (auto& endpoint_pair : rpc_endpoints_) {
         endpoint_pair.second->clear_pending_responses();
     }

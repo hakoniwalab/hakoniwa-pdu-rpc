@@ -1,20 +1,7 @@
 {
     "pduMetaDataSize": 24,
     "pdu_config_path": "examples/service/pdu_config.json",
-    "endpoints": [
-        {
-            "nodeId": "node1",
-            "endpoints": [
-                { "id": "n1-ep1", "config_path": "endpoint/n1-ep1.json" }
-            ]
-        },
-        {
-            "nodeId": "node2",
-            "endpoints": [
-                { "id": "n2-ep1", "config_path": "endpoint/n2-ep1.json" }
-            ]
-        }
-    ],
+    "endpoints_config_path": "endpoints.json",
     "services": [
         {
             "name": "Service/Add",

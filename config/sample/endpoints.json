@@ -1,0 +1,14 @@
+[
+    {
+        "nodeId": "node1",
+        "endpoints": [
+            { "id": "n1-ep1", "config_path": "endpoint/n1-ep1.json" }
+        ]
+    },
+    {
+        "nodeId": "node2",
+        "endpoints": [
+            { "id": "n2-ep1", "config_path": "endpoint/n2-ep1.json" }
+        ]
+    }
+]

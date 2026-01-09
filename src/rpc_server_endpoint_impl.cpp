@@ -42,7 +42,11 @@ bool RpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int
         max_clients_ = service_config["maxClients"].get<size_t>();
         std::string service_name = service_config["name"];
         std::string service_type = service_config["type"];
-        auto& pdu_def = endpoint_->get_pdu_definition();
+        auto pdu_def = endpoint_->get_pdu_definition();
+        if (pdu_def == nullptr) {
+            std::cerr << "ERROR: PDU Definition is not available in the endpoint." << std::endl;
+            return false;
+        }
 
         for (const auto& client : service_config["clients"]) {
             std::string client_name = client["name"];
@@ -61,7 +65,7 @@ bool RpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int
                 + service_config["pduSize"]["client"]["heapSize"].get<size_t>()
                 + pdu_meta_data_size;
             req_def.method_type = "RPC";
-            pdu_def.add_definition(service_name, req_def);
+            pdu_def->add_definition(service_name, req_def);
 
             // Response PDU
             PduDef res_def;
@@ -72,7 +76,7 @@ bool RpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int
                 + service_config["pduSize"]["server"]["heapSize"].get<size_t>()
                 + pdu_meta_data_size;
             res_def.method_type = "RPC";
-            pdu_def.add_definition(service_name, res_def);
+            pdu_def->add_definition(service_name, res_def);
         }
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "ERROR: Failed to parse service config: " << e.what() << std::endl;

@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "hakoniwa/pdu/endpoint_container.hpp"
 #include "hakoniwa/pdu/rpc/rpc_services_server.hpp"
 #include "hakoniwa/pdu/rpc/rpc_services_client.hpp"
 #include "hakoniwa/pdu/rpc/rpc_service_helper.hpp"
@@ -46,6 +47,7 @@ class RpcServicesTest : public ::testing::Test {
 protected:
     // Path to the unified service config file
     const std::string config_path_ = "configs/service_config.json";
+    const std::string endpoint_config_path_ = "configs/endpoints.json";
     // Node IDs from the config
     const std::string server_node_id_ = "server_node";
     const std::string client_node_id_ = "client_node";
@@ -83,17 +85,23 @@ DirectoryChanger* RpcServicesTest::dir_changer_ = nullptr;
 // Test case for configuration parsing
 TEST_F(RpcServicesTest, ConfigParsingTest) {
     // Initialize server
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> server_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("server_node", endpoint_config_path_);
+    ASSERT_EQ(server_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
     hakoniwa::pdu::rpc::RpcServicesServer server(server_node_id_, "RpcServerEndpointImpl", config_path_, 1000);
-    ASSERT_TRUE(server.initialize_services());
+    ASSERT_TRUE(server.initialize_services(server_endpoint_container));
+    server_endpoint_container->start_all();
+    server.start_all_services();
+
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> client_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("client_node", endpoint_config_path_);
+    ASSERT_EQ(client_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
 
     // Initialize client
     hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "RpcClientEndpointImpl", 1000);
-    ASSERT_TRUE(client.initialize_services());
-
-    server.start_all_services();
+    ASSERT_TRUE(client.initialize_services(client_endpoint_container));
+    client_endpoint_container->start_all();
     client.start_all_services();
 
-    while (!server.is_pdu_end_point_running() || !client.is_pdu_end_point_running()) {
+    while (!server_endpoint_container->is_running_all() || !client_endpoint_container->is_running_all()) {
         usleep(1000); // Wait for 1ms before checking again
     }
     HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
@@ -157,22 +165,30 @@ TEST_F(RpcServicesTest, ConfigParsingTest) {
         server.clear_all_instances();
         client.clear_all_instances();
     }
+    server_endpoint_container->stop_all();
+    client_endpoint_container->stop_all();
 }
-
 // Test case for RPC call timeout
 TEST_F(RpcServicesTest, RpcCallTimeoutTest) {
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> server_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("server_node", endpoint_config_path_);
+    ASSERT_EQ(server_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> client_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("client_node", endpoint_config_path_);
+    ASSERT_EQ(client_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
     // Initialize server
     hakoniwa::pdu::rpc::RpcServicesServer server(server_node_id_, "RpcServerEndpointImpl", config_path_, 1000);
-    ASSERT_TRUE(server.initialize_services());
+    ASSERT_TRUE(server.initialize_services(server_endpoint_container));
 
     // Initialize client
     hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "RpcClientEndpointImpl", 1000);
-    ASSERT_TRUE(client.initialize_services());
+    ASSERT_TRUE(client.initialize_services(client_endpoint_container));
+
+    server_endpoint_container->start_all();
+    client_endpoint_container->start_all();
 
     server.start_all_services();
     client.start_all_services();
 
-    while (!server.is_pdu_end_point_running() || !client.is_pdu_end_point_running()) {
+    while (!server_endpoint_container->is_running_all() || !client_endpoint_container->is_running_all()) {
         usleep(1000); // Wait for 1ms before checking again
     }
     HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
@@ -218,6 +234,9 @@ TEST_F(RpcServicesTest, RpcCallTimeoutTest) {
         ASSERT_EQ(service_name, service_name_);
         ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_TIMEOUT);
     }
+    server_endpoint_container->stop_all();
+    client_endpoint_container->stop_all();
+
     server.stop_all_services();
     client.stop_all_services();
     server.clear_all_instances();
@@ -226,18 +245,25 @@ TEST_F(RpcServicesTest, RpcCallTimeoutTest) {
 
 // Test case for multiple consecutive RPC calls
 TEST_F(RpcServicesTest, MultipleServiceCallsTest) {
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> server_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("server_node", endpoint_config_path_);
+    ASSERT_EQ(server_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> client_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("client_node", endpoint_config_path_);
+    ASSERT_EQ(client_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
     // Initialize server
     hakoniwa::pdu::rpc::RpcServicesServer server(server_node_id_, "RpcServerEndpointImpl", config_path_, 1000);
-    ASSERT_TRUE(server.initialize_services());
+    ASSERT_TRUE(server.initialize_services(server_endpoint_container));
 
     // Initialize client
     hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "RpcClientEndpointImpl", 1000);
-    ASSERT_TRUE(client.initialize_services());
+    ASSERT_TRUE(client.initialize_services(client_endpoint_container));
+
+    server_endpoint_container->start_all();
+    client_endpoint_container->start_all();
 
     server.start_all_services();
     client.start_all_services();
 
-    while (!server.is_pdu_end_point_running() || !client.is_pdu_end_point_running()) {
+    while (!server_endpoint_container->is_running_all() || !client_endpoint_container->is_running_all()) {
         usleep(1000); // Wait for 1ms before checking again
     }
     HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
@@ -328,6 +354,9 @@ TEST_F(RpcServicesTest, MultipleServiceCallsTest) {
         ASSERT_EQ(client_res_body.sum, 40);
     }
 
+    server_endpoint_container->stop_all();
+    client_endpoint_container->stop_all();
+
     server.stop_all_services();
     client.stop_all_services();
     server.clear_all_instances();
@@ -336,16 +365,24 @@ TEST_F(RpcServicesTest, MultipleServiceCallsTest) {
 
 // Test case for RPC call with infinite wait (timeout = 0)
 TEST_F(RpcServicesTest, RpcCallInfiniteWaitTest) {
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> server_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("server_node", endpoint_config_path_);
+    ASSERT_EQ(server_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> client_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("client_node", endpoint_config_path_);
+    ASSERT_EQ(client_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
+    // Initialize server
     hakoniwa::pdu::rpc::RpcServicesServer server(server_node_id_, "RpcServerEndpointImpl", config_path_, 1000);
-    ASSERT_TRUE(server.initialize_services());
+    ASSERT_TRUE(server.initialize_services(server_endpoint_container));
 
     hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "RpcClientEndpointImpl", 1000);
-    ASSERT_TRUE(client.initialize_services());
+    ASSERT_TRUE(client.initialize_services(client_endpoint_container));
+
+    server_endpoint_container->start_all();
+    client_endpoint_container->start_all();
 
     server.start_all_services();
     client.start_all_services();
 
-    while (!server.is_pdu_end_point_running() || !client.is_pdu_end_point_running()) {
+    while (!server_endpoint_container->is_running_all() || !client_endpoint_container->is_running_all()) {
         usleep(1000);
     }
     HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
@@ -409,6 +446,10 @@ TEST_F(RpcServicesTest, RpcCallInfiniteWaitTest) {
     ASSERT_EQ(client_res_body.sum, 100);
 
     // Cleanup
+
+    server_endpoint_container->stop_all();
+    client_endpoint_container->stop_all();
+
     server.stop_all_services();
     client.stop_all_services();
     server.clear_all_instances();
