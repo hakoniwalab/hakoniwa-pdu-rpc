@@ -56,7 +56,9 @@ bool RpcServicesServer::initialize_services(std::shared_ptr<hakoniwa::pdu::Endpo
         // Then, initialize services that are meant for this server
         for (const auto& service_entry : json_config["services"]) {
             std::string service_name = service_entry["name"];
+            #ifdef ENABLE_DEBUG_MESSAGES
             std::cout << "DEBUG: Looking for server endpoint for service: " << service_name << std::endl;
+            #endif
             bool found = false;
             std::string server_endpoint_id;
             if (!service_entry.contains("server_endpoints") || !service_entry["server_endpoints"].is_array()) {
@@ -66,7 +68,9 @@ bool RpcServicesServer::initialize_services(std::shared_ptr<hakoniwa::pdu::Endpo
                 return false;
             }
             for (const auto& server_ep : service_entry["server_endpoints"]) {
+                #ifdef ENABLE_DEBUG_MESSAGES
                 std::cout << "DEBUG: Checking server endpoint: " << server_ep.dump() << std::endl;
+                #endif
                 if (server_ep["nodeId"] != this->node_id_) {
                     continue;
                 }

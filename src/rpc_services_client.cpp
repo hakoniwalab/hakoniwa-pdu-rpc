@@ -14,7 +14,9 @@ namespace hakoniwa::pdu::rpc {
 RpcServicesClient::RpcServicesClient(const std::string& node_id, const std::string& client_name, const std::string& config_path, const std::string& impl_type, uint64_t delta_time_usec, std::string time_source_type)
     : node_id_(node_id), client_name_(client_name), config_path_(config_path), impl_type_(impl_type), delta_time_usec_(delta_time_usec) {
         time_source_ = hakoniwa::time_source::create_time_source(time_source_type, delta_time_usec);
+        #ifdef ENABLE_DEBUG_MESSAGES
         std::cout << "DEBUG: node_id_: " << node_id_ << ", client_name_: " << client_name_ << ", config_path_: " << config_path_ << ", impl_type_: " << impl_type_ << ", delta_time_usec_: " << delta_time_usec_ << ", time_source_type: " << time_source_type << std::endl;
+        #endif
 }
 
 // Destructor: ensures all services are stopped cleanly
@@ -61,7 +63,9 @@ bool RpcServicesClient::initialize_services(std::shared_ptr<hakoniwa::pdu::Endpo
                 if (client_spec["name"] == this->client_name_) {
                     client_ep_node_id = client_spec["client_endpoint"]["nodeId"];
                     client_ep_id = client_spec["client_endpoint"]["endpointId"];
+                    #ifdef ENABLE_DEBUG_MESSAGES
                     std::cout << "DEBUG: Found matching client config for service " << service_name << ": nodeId=" << client_ep_node_id << ", endpointId=" << client_ep_id << std::endl;
+                    #endif
                     client_config_found = true;
                     break;
                 }
