@@ -28,7 +28,7 @@ RpcServicesServer::~RpcServicesServer() {
     stop_all_services();
 }
 
-bool RpcServicesServer::initialize_services(std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container) {
+bool RpcServicesServer::initialize_services(std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container, std::optional<std::string> client_node_id) {
     this->endpoint_container_ = endpoint_container;
     std::cout << "INFO: Initializing RPC Services Server for node: " << this->node_id_ << std::endl;
     std::cout << "INFO: service_config_path: " << this->service_config_path_ << std::endl;
@@ -95,6 +95,7 @@ bool RpcServicesServer::initialize_services(std::shared_ptr<hakoniwa::pdu::Endpo
             }
             std::shared_ptr<IRpcServerEndpoint> rpc_server_endpoint;
             if (impl_type_ == "RpcServerEndpointImpl") {
+                //std::cout << "## endpoint_id: " << server_endpoint_id << std::endl;
                 rpc_server_endpoint = std::make_shared<RpcServerEndpointImpl>(service_name, delta_time_usec_, pdu_endpoint, time_source_);
             } else {
                 std::cerr << "ERROR: Unsupported RPC Server Endpoint Implementation Type: " << impl_type_ << std::endl;
@@ -102,7 +103,7 @@ bool RpcServicesServer::initialize_services(std::shared_ptr<hakoniwa::pdu::Endpo
                 stop_all_services();
                 return false;
             }
-            if (!rpc_server_endpoint->initialize(service_entry, pdu_meta_data_size)) {
+            if (!rpc_server_endpoint->initialize(service_entry, pdu_meta_data_size, client_node_id)) {
                 std::cerr << "ERROR: Failed to initialize RPC server endpoint for service " << service_name << std::endl;
                 std::cout.flush();
                 stop_all_services();

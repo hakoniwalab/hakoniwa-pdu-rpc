@@ -34,7 +34,7 @@ public:
     );
     virtual ~RpcServerEndpointImpl();
 
-    bool initialize(const nlohmann::json& service_config, int pdu_meta_data_size) override;
+    bool initialize(const nlohmann::json& service_config, int pdu_meta_data_size, std::optional<std::string> client_node_id = std::nullopt) override;
 
     ServerEventType poll(RpcRequest& request) override;
     void create_reply_buffer(const HakoCpp_ServiceRequestHeader& header, Hako_uint8 status, Hako_int32 result_code, PduData& pdu) override {

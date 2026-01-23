@@ -2,7 +2,7 @@
 #include "rpc_types.hpp"
 #include <string>
 #include <nlohmann/json_fwd.hpp>
-
+#include <optional>
 
 namespace hakoniwa::pdu::rpc {
 
@@ -10,7 +10,7 @@ class IRpcServerEndpoint {
 public:
     virtual ~IRpcServerEndpoint() = default;
 
-    virtual bool initialize(const nlohmann::json& service_config, int pdu_meta_data_size) = 0;
+    virtual bool initialize(const nlohmann::json& service_config, int pdu_meta_data_size, std::optional<std::string> client_node_id = std::nullopt) = 0;
 
     virtual ServerEventType poll(RpcRequest& request) = 0;
 

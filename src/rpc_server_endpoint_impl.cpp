@@ -26,7 +26,7 @@ RpcServerEndpointImpl::~RpcServerEndpointImpl() {
 }
 
 
-bool RpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int pdu_meta_data_size) {
+bool RpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int pdu_meta_data_size, std::optional<std::string> client_node_id) {
     if (!endpoint_) {
         std::cerr << "ERROR: Endpoint is not initialized." << std::endl;
         return false;
@@ -45,7 +45,18 @@ bool RpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int
 
         for (const auto& client : service_config["clients"]) {
             std::string client_name = client["name"];
-            // Register client
+            if (!client.contains("client_endpoint")) {
+                std::cerr << "ERROR: 'client_endpoint' is missing for client " << client_name << std::endl;
+                return false;
+            }
+            if (!client["client_endpoint"].contains("nodeId")) {
+                std::cerr << "ERROR: 'nodeId' is missing in 'client_endpoint' for client " << client_name << std::endl;
+                return false;
+            }
+            if (client_node_id.has_value() && client["client_endpoint"]["nodeId"] != client_node_id.value()) {
+                std::cout << "INFO: Skipping client " << client_name << " for nodeId " << client["client_endpoint"]["nodeId"] << std::endl;
+                continue;
+            }
             registered_clients_.push_back(client_name);
             // Initialize server state
             server_states_[client_name].state = SERVER_STATE_IDLE;
@@ -108,7 +119,7 @@ void RpcServerEndpointImpl::pdu_recv_callback(const hakoniwa::pdu::PduResolvedKe
         pdu_data.resize(data.size());
         std::memcpy(pdu_data.data(), data.data(), data.size());
         instance->put_pending_request(pdu_key, pdu_data);
-        //std::cout << "INFO: PDU stored for service: " << resolved_pdu_key.robot << std::endl;
+        //std::cout << "INFO: instance(" << instance->get_service_name() << ")PDU stored for service: " << resolved_pdu_key.robot << std::endl;
         return;
     }
     std::cerr << "WARNING: Received PDU for unknown service: " << resolved_pdu_key.robot << std::endl;

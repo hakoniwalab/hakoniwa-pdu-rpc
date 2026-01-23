@@ -21,7 +21,7 @@ public:
             time_source_ = hakoniwa::time_source::create_time_source(time_source_type, delta_time_usec);
         }
     virtual ~RpcServicesServer(); // Removed = default;
-    bool initialize_services(std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container);
+    bool initialize_services(std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container, std::optional<std::string> client_node_id = std::nullopt);
     bool start_all_services();
     void stop_all_services();
     void clear_all_instances();
