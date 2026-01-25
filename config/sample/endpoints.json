@@ -1,14 +1,14 @@
 [
     {
-        "nodeId": "node1",
+        "nodeId": "server_node",
         "endpoints": [
-            { "id": "n1-ep1", "config_path": "endpoint/n1-ep1.json" }
+            { "id": "server_ep_id", "config_path": "server_endpoint.json" }
         ]
     },
     {
-        "nodeId": "node2",
+        "nodeId": "client_node",
         "endpoints": [
-            { "id": "n2-ep1", "config_path": "endpoint/n2-ep1.json" }
+            { "id": "client_ep_id", "config_path": "client_endpoint.json" }
         ]
     }
 ]

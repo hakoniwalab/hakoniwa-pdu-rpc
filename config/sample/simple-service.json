@@ -1,6 +1,6 @@
 {
     "pduMetaDataSize": 24,
-    "pdu_config_path": "examples/service/pdu_config.json",
+    "pdu_config_path": "pdudef.json",
     "endpoints_config_path": "endpoints.json",
     "services": [
         {
@@ -19,19 +19,19 @@
             },
             "server_endpoints": [
                 {
-                    "nodeId": "node1",
-                    "endpointId": "n1-ep1"
+                    "nodeId": "server_node",
+                    "endpointId": "server_ep_id"
                 }
             ],
             "clients": [
                 {
-                    "name": "Client1",
+                    "name": "TestClient",
                     "comment": "org_name is {type} + Req/Res",
                     "requestChannelId": 1,
                     "responseChannelId": 2,
                     "client_endpoint": {
-                        "nodeId": "node2",
-                        "endpointId": "n2-ep1"
+                        "nodeId": "client_node",
+                        "endpointId": "client_ep_id"
                     }
                 }
             ]

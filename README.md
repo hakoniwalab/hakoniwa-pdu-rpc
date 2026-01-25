@@ -12,7 +12,7 @@ It provides a higher-level abstraction over the raw `hakoniwa-pdu-endpoint` libr
 
 *   **Service-Oriented RPC:** Define and manage multiple RPC services within a single server.
 *   **Multi-Client Support:** A single service can be called by multiple, uniquely-named clients.
-*   **Configuration-Driven:** Define all services, endpoints, PDUs, and communication channels in a single JSON file.
+*   **Configuration-Driven:** Define services in a single JSON file; endpoints can be inline or referenced via an external endpoints config.
 *   **Simplified Usage with Helpers:** A template-based helper (`HakoRpcServiceServerTemplateType`) is provided to automatically handle PDU packing/unpacking for specific ROS service types.
 *   **Transport Agnostic:** Leverages `hakoniwa-pdu-endpoint` to run over different transports (TCP, UDP, Shared Memory) without changing user code.
 
@@ -50,9 +50,10 @@ ctest
 A "service" is a remote procedure that a client can call. It has a unique name (e.g., `"Service/Add"`) and is defined by a request PDU and a response PDU. A server implements the logic for a service, and a client calls it.
 
 ### Configuration
-The entire RPC topology is defined in a central JSON file. This file specifies:
-1.  `endpoints`: The low-level communication endpoints (e.g., TCP server/client addresses).
-2.  `services`: The list of available RPC services, including their names, PDU types, PDU sizes, and which clients are allowed to call them.
+The entire RPC topology is defined in a service configuration JSON file. This file specifies:
+1.  `endpoints` or `endpoints_config_path`: The low-level communication endpoints (inline or external config).
+2.  `services`: The list of available RPC services, including their names, PDU sizes, and which clients are allowed to call them.
+3.  `pdu_config_path`: The PDU definition file path (used by the endpoint layer for name-based PDU resolution).
 
 ### RPC Service Helper
 To simplify development, the library provides a template helper class `HakoRpcServiceServerTemplateType`. When instantiated with a ROS service type (e.g., `HakoRpcServiceServerTemplateType(AddTwoInts)`), it provides methods to easily:
@@ -74,8 +75,8 @@ Manages the client side of one or more RPC services.
     *   `node_id`: The ID of the node this client is running on (must match an ID in the config).
     *   `client_name`: A unique name for this client instance (must match a client name in the config).
     *   `config_path`: Path to the service configuration JSON file.
-*   `bool initialize_services()`: Reads the config and initializes all services this client can call.
-*   `bool start_all_services()`: Starts the underlying PDU endpoints.
+*   `bool initialize_services(endpoint_container)`: Reads the config and initializes all services this client can call.
+*   `bool start_all_services()`: Starts RPC services (PDU endpoints are started via `EndpointContainer`).
 *   `bool call(service_name, request_pdu, timeout_usec)`: Makes an RPC call. (Note: Using the service helper is recommended over this).
 *   `ClientEventType poll(service_name, response_out)`: Polls for responses or other events.
 
@@ -84,46 +85,40 @@ Manages the server side of one or more RPC services.
 
 *   `RpcServicesServer(node_id, impl_type, config_path, ...)`: Constructor.
     *   `node_id`: The ID of the node this server is running on.
-*   `bool initialize_services()`: Reads the config and initializes all services this server is responsible for.
-*   `bool start_all_services()`: Starts the underlying PDU endpoints.
+*   `bool initialize_services(endpoint_container, client_node_id = std::nullopt)`: Reads the config and initializes all services this server is responsible for.
+*   `bool start_all_services()`: Starts RPC services (PDU endpoints are started via `EndpointContainer`).
 *   `ServerEventType poll(request_out)`: Polls for incoming requests from clients.
 *   `void send_reply(header, pdu)`: Sends a response PDU back to a client. (Note: Using the service helper is recommended).
 
 ## Configuration File Schema
 
-The service configuration is a JSON file with two main sections: `endpoints` and `services`.
+The service configuration is a JSON file with `services` and either `endpoints` or `endpoints_config_path`.
 
 ```json
 {
   "pduMetaDataSize": 24,
-  "endpoints": [
-    {
-      "nodeId": "server_node",
-      "endpoints": [
-        { "id": "server_ep_id", "config_path": "configs/server_endpoint.json" }
-      ]
-    },
-    {
-      "nodeId": "client_node",
-      "endpoints": [
-        { "id": "client_ep_id", "config_path": "configs/client_endpoint.json" }
-      ]
-    }
-  ],
+  "pdu_config_path": "pdudef.json",
+  "endpoints_config_path": "endpoints.json",
   "services": [
     {
       "name": "Service/Add",
-      "pdu_type_name_req": "hako_srv_msgs_AddTwoInts_req",
-      "pdu_type_name_res": "hako_srv_msgs_AddTwoInts_res",
-      "pdu_size_req": 16,
-      "pdu_size_res": 16,
-      "server_endpoint": {
-        "nodeId": "server_node",
-        "endpointId": "server_ep_id"
+      "type": "hako_srv_msgs/AddTwoInts",
+      "maxClients": 1,
+      "pduSize": {
+        "server": { "heapSize": 0, "baseSize": 296 },
+        "client": { "heapSize": 0, "baseSize": 288 }
       },
+      "server_endpoints": [
+        {
+          "nodeId": "server_node",
+          "endpointId": "server_ep_id"
+        }
+      ],
       "clients": [
         {
           "name": "TestClient",
+          "requestChannelId": 1,
+          "responseChannelId": 2,
           "client_endpoint": {
             "nodeId": "client_node",
             "endpointId": "client_ep_id"
@@ -134,14 +129,16 @@ The service configuration is a JSON file with two main sections: `endpoints` and
   ]
 }
 ```
+`endpoints_config_path` points to an EndpointContainer config file (see `hakoniwa-pdu-endpoint` for the schema and examples).
 *   **`pduMetaDataSize`**: The size of the metadata header in the PDU.
-*   **`endpoints`**: An array of nodes. Each node has a `nodeId` and a list of `endpoints`, each with a unique `id` and a `config_path` to its own PDU endpoint configuration file.
+*   **`pdu_config_path`**: Path to the PDU definition file.
+*   **`endpoints` / `endpoints_config_path`**: Inline endpoints or a separate endpoints config file.
 *   **`services`**: An array of service definitions.
     *   `name`: The unique name of the service.
-    *   `pdu_type_name_req`/`res`: The PDU type names for the request and response.
-    *   `pdu_size_req`/`res`: The PDU sizes for the request and response.
-    *   `server_endpoint`: Specifies which endpoint on which node acts as the server for this service.
-    *   `clients`: An array of clients allowed to call this service. Each client has a unique `name` and is mapped to a specific endpoint.
+    *   `type`: The ROS service type name (e.g., `hako_srv_msgs/AddTwoInts`).
+    *   `pduSize`: Base/heap PDU sizes for server and client.
+    *   `server_endpoints`: One or more server endpoints (nodeId + endpointId).
+    *   `clients`: An array of clients allowed to call this service. Each client has a unique `name`, channel IDs, and a mapped endpoint.
 
 ## Usage Example
 
@@ -159,16 +156,24 @@ int64 sum
 ```cpp
 #include "hakoniwa/pdu/rpc/rpc_services_server.hpp"
 #include "hakoniwa/pdu/rpc/rpc_service_helper.hpp"
+#include "hakoniwa/pdu/endpoint_container.hpp"
+#include "hakoniwa/pdu/endpoint_types.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoInts.hpp" // Generated from AddTwoInts.srv
 
 int main() {
-    // 1. Initialize the server for "server_node"
+    // 1. Initialize endpoint container for "server_node"
+    auto server_endpoints = std::make_shared<hakoniwa::pdu::EndpointContainer>(
+        "server_node", "endpoints.json");
+    assert(server_endpoints->initialize() == HAKO_PDU_ERR_OK);
+    assert(server_endpoints->start_all() == HAKO_PDU_ERR_OK);
+
+    // 2. Initialize the server for "server_node"
     hakoniwa::pdu::rpc::RpcServicesServer server(
         "server_node", "RpcServerEndpointImpl", "service_config.json", 1000);
-    assert(server.initialize_services());
+    assert(server.initialize_services(server_endpoints));
     assert(server.start_all_services());
 
-    // 2. Create a helper for the AddTwoInts service
+    // 3. Create a helper for the AddTwoInts service
     HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
 
     while (true) {
@@ -186,7 +191,10 @@ int main() {
             res_body.sum = req_body.a + req_body.b;
 
             // 6. Send the typed response back
-            service_helper.reply(server, server_request, res_body);
+            service_helper.reply(server, server_request,
+                hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE,
+                hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK,
+                res_body);
         }
     }
     return 0;
@@ -197,27 +205,35 @@ int main() {
 ```cpp
 #include "hakoniwa/pdu/rpc/rpc_services_client.hpp"
 #include "hakoniwa/pdu/rpc/rpc_service_helper.hpp"
+#include "hakoniwa/pdu/endpoint_container.hpp"
+#include "hakoniwa/pdu/endpoint_types.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoInts.hpp"
 
 int main() {
-    // 1. Initialize the client for "client_node" with a unique name "MyAdder"
+    // 1. Initialize endpoint container for "client_node"
+    auto client_endpoints = std::make_shared<hakoniwa::pdu::EndpointContainer>(
+        "client_node", "endpoints.json");
+    assert(client_endpoints->initialize() == HAKO_PDU_ERR_OK);
+    assert(client_endpoints->start_all() == HAKO_PDU_ERR_OK);
+
+    // 2. Initialize the client for "client_node" with a unique name "MyAdder"
     hakoniwa::pdu::rpc::RpcServicesClient client(
         "client_node", "MyAdder", "service_config.json", "RpcClientEndpointImpl", 1000);
-    assert(client.initialize_services());
+    assert(client.initialize_services(client_endpoints));
     assert(client.start_all_services());
 
-    // 2. Create a helper for the AddTwoInts service
+    // 3. Create a helper for the AddTwoInts service
     HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
 
-    // 3. Prepare the typed request
+    // 4. Prepare the typed request
     Hako_AddTwoInts_req client_req_body;
     client_req_body.a = 5;
     client_req_body.b = 7;
 
-    // 4. Call the service (sends the request)
+    // 5. Call the service (sends the request)
     service_helper.call(client, "Service/Add", client_req_body, 1000000); // 1 sec timeout for the entire transaction
 
-    // 5. Poll for the response
+    // 6. Poll for the response
     hakoniwa::pdu::rpc::RpcResponse client_response;
     hakoniwa::pdu::rpc::ClientEventType client_event;
     std::string service_name;
@@ -229,7 +245,7 @@ int main() {
     } while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE);
 
 
-    // 6. Check the result
+    // 7. Check the result
     if (client_event == hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN) {
         Hako_AddTwoInts_res client_res_body;
         if (service_helper.get_response_body(client_response, client_res_body)) {

@@ -1,0 +1,8 @@
+{
+  "type": "buffer",
+  "name": "default_queue_buffer",
+  "store": {
+    "mode": "queue",
+    "depth": 16
+  }
+}
