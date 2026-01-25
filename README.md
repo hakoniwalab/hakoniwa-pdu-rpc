@@ -58,6 +58,10 @@ Notes:
 * Add `--skip-endpoint-validation` to skip validating endpoint configs via `hakoniwa-pdu-endpoint`.
 * See `tools/README.md` for more details.
 
+## Tutorials
+
+* `docs/tutorials/rpc.md`: End-to-end RPC setup using the sample configs.
+
 ## Core Concepts
 
 ### Services
@@ -172,7 +176,8 @@ int64 sum
 #include "hakoniwa/pdu/rpc/rpc_service_helper.hpp"
 #include "hakoniwa/pdu/endpoint_container.hpp"
 #include "hakoniwa/pdu/endpoint_types.hpp"
-#include "hako_srv_msgs/pdu_cpptype_conv_AddTwoInts.hpp" // Generated from AddTwoInts.srv
+#include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp"
+#include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsResponsePacket.hpp"
 
 int main() {
     // 1. Initialize endpoint container for "server_node"
@@ -221,7 +226,8 @@ int main() {
 #include "hakoniwa/pdu/rpc/rpc_service_helper.hpp"
 #include "hakoniwa/pdu/endpoint_container.hpp"
 #include "hakoniwa/pdu/endpoint_types.hpp"
-#include "hako_srv_msgs/pdu_cpptype_conv_AddTwoInts.hpp"
+#include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp"
+#include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsResponsePacket.hpp"
 
 int main() {
     // 1. Initialize endpoint container for "client_node"

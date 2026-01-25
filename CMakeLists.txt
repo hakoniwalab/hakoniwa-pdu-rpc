@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Option to build tests, ON by default
 option(HAKO_PDU_RPC_BUILD_TESTS "Build tests for hakoniwa-pdu-rpc" ON)
+option(HAKO_PDU_RPC_BUILD_EXAMPLES "Build examples for hakoniwa-pdu-rpc" OFF)
 
 set(HAKONIWA_ROS2PDU_DIR "${CMAKE_CURRENT_SOURCE_DIR}/hakoniwa-ros2pdu")
 message(STATUS "HAKONIWA_ROS2PDU_DIR: ${HAKONIWA_ROS2PDU_DIR}"
@@ -16,4 +17,8 @@ add_subdirectory(src)
 if(HAKO_PDU_RPC_BUILD_TESTS)
   enable_testing()
   add_subdirectory(test)
+endif()
+
+if(HAKO_PDU_RPC_BUILD_EXAMPLES)
+  add_subdirectory(examples)
 endif()
