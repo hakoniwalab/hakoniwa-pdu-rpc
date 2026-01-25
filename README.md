@@ -44,6 +44,20 @@ make test
 ctest
 ```
 
+## Config Validation
+
+Use the config validator to check JSON schema compliance and referenced file existence. This tool also reuses the endpoint validator from `hakoniwa-pdu-endpoint`.
+
+```bash
+python tools/validate_configs.py config/sample/simple-service.json
+python tools/validate_configs.py test/configs/service_config.json
+```
+
+Notes:
+* Requires `jsonschema` (`pip install jsonschema`).
+* Add `--skip-endpoint-validation` to skip validating endpoint configs via `hakoniwa-pdu-endpoint`.
+* See `tools/README.md` for more details.
+
 ## Core Concepts
 
 ### Services
