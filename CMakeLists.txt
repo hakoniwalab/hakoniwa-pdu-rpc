@@ -7,8 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(HAKO_PDU_RPC_BUILD_TESTS "Build tests for hakoniwa-pdu-rpc" ON)
 option(HAKO_PDU_RPC_BUILD_EXAMPLES "Build examples for hakoniwa-pdu-rpc" OFF)
 
-set(HAKONIWA_ROS2PDU_DIR "${CMAKE_CURRENT_SOURCE_DIR}/hakoniwa-ros2pdu")
-message(STATUS "HAKONIWA_ROS2PDU_DIR: ${HAKONIWA_ROS2PDU_DIR}"
+set(HAKONIWA_PDU_REGISTRY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/hakoniwa-pdu-registry")
+message(STATUS "HAKONIWA_PDU_REGISTRY_DIR: ${HAKONIWA_PDU_REGISTRY_DIR}"
 )
 # Add src subdirectory
 add_subdirectory(src)

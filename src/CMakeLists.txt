@@ -8,7 +8,7 @@ add_library(hakoniwa_pdu_rpc
 target_include_directories(hakoniwa_pdu_rpc
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    ${HAKONIWA_ROS2PDU_DIR}/pdu/types
+    ${HAKONIWA_PDU_REGISTRY_DIR}/pdu/types
 )
 
 # Add the subdirectory for the endpoint, which will define the hakoniwa_pdu_endpoint target
