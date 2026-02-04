@@ -17,12 +17,9 @@ except ImportError:  # pragma: no cover - runtime dependency check
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SERVICE_SCHEMA = REPO_ROOT / "config" / "schema" / "service-schema.json"
 ENDPOINTS_SCHEMA = REPO_ROOT / "config" / "schema" / "endpoints-schema.json"
-ENDPOINT_SCHEMA = Path(
-    os.environ.get(
-        "HAKO_PDU_ENDPOINT_SCHEMA",
-        "/usr/local/hakoniwa/share/hakoniwa-pdu-endpoint/schema/endpoint_schema.json",
-    )
-)
+DEFAULT_ENDPOINT_SCHEMA = Path("/usr/local/hakoniwa/share/hakoniwa-pdu-endpoint/schema/endpoint_schema.json")
+ENDPOINT_SCHEMA_ENV = os.environ.get("HAKO_PDU_ENDPOINT_SCHEMA")
+ENDPOINT_SCHEMA = Path(ENDPOINT_SCHEMA_ENV) if ENDPOINT_SCHEMA_ENV else DEFAULT_ENDPOINT_SCHEMA
 ENDPOINT_VALIDATOR_MODULE = "hakoniwa_pdu_endpoint.validate_json"
 
 
@@ -76,6 +73,131 @@ def collect_endpoint_configs_from_endpoints(endpoints_json, base_dir: Path) -> l
             if isinstance(config_path, str):
                 configs.append(resolve_ref(base_dir, config_path))
     return configs
+
+
+def build_endpoint_index(endpoints_json) -> dict[str, set[str]]:
+    idx: dict[str, set[str]] = {}
+    if not isinstance(endpoints_json, list):
+        return idx
+    for i, node in enumerate(endpoints_json):
+        if not isinstance(node, dict):
+            continue
+        node_id = node.get("nodeId")
+        if not isinstance(node_id, str) or not node_id:
+            continue
+        idx.setdefault(node_id, set())
+        node_eps = node.get("endpoints")
+        if not isinstance(node_eps, list):
+            continue
+        for ep in node_eps:
+            if not isinstance(ep, dict):
+                continue
+            ep_id = ep.get("id")
+            if isinstance(ep_id, str) and ep_id:
+                idx[node_id].add(ep_id)
+    return idx
+
+
+def check_rpc_semantics(service_path: Path, service_json, endpoints_json) -> list[str]:
+    messages: list[str] = []
+
+    # pduMetaDataSize fixed value
+    metadata_size = service_json.get("pduMetaDataSize")
+    if isinstance(metadata_size, int):
+        if metadata_size != 24:
+            messages.append(f"{service_path}: rpc.pduMetaDataSize: must be 24")
+
+    endpoint_idx = build_endpoint_index(endpoints_json)
+
+    # services list checks
+    svcs = service_json.get("services")
+    if not isinstance(svcs, list):
+        return messages
+
+    service_names: set[str] = set()
+    for si, svc in enumerate(svcs):
+        if not isinstance(svc, dict):
+            continue
+
+        sname = svc.get("name")
+        if isinstance(sname, str) and sname:
+            if sname in service_names:
+                messages.append(f"{service_path}: rpc.services: duplicate service name '{sname}'")
+            service_names.add(sname)
+        else:
+            sname = f"<services[{si}]>"
+
+        max_clients = svc.get("maxClients")
+        clients = svc.get("clients")
+        if isinstance(max_clients, int) and isinstance(clients, list):
+            if len(clients) > max_clients:
+                messages.append(
+                    f"{service_path}: rpc.services[{si}] '{sname}': clients.length({len(clients)}) > maxClients({max_clients})"
+                )
+
+        # server endpoints
+        server_endpoints = svc.get("server_endpoints")
+        if server_endpoints is None:
+            server_endpoint = svc.get("server_endpoint")
+            server_endpoints = [server_endpoint] if isinstance(server_endpoint, dict) else None
+        if isinstance(server_endpoints, list):
+            for ei, se in enumerate(server_endpoints):
+                if not isinstance(se, dict):
+                    continue
+                snode = se.get("nodeId")
+                seid = se.get("endpointId")
+                if isinstance(snode, str) and isinstance(seid, str) and snode and seid:
+                    if snode not in endpoint_idx:
+                        messages.append(
+                            f"{service_path}: rpc.services[{si}] '{sname}': server_endpoints[{ei}]: "
+                            f"server nodeId '{snode}' not found in rpc.endpoints"
+                        )
+                    elif seid not in endpoint_idx[snode]:
+                        messages.append(
+                            f"{service_path}: rpc.services[{si}] '{sname}': server_endpoints[{ei}]: "
+                            f"server endpointId '{seid}' not found under node '{snode}'"
+                        )
+
+        # client endpoint + channel checks
+        if isinstance(clients, list):
+            used_channels: set[int] = set()
+            client_names: set[str] = set()
+            for ci, c in enumerate(clients):
+                if not isinstance(c, dict):
+                    continue
+                cname = c.get("name")
+                if isinstance(cname, str) and cname:
+                    if cname in client_names:
+                        messages.append(
+                            f"{service_path}: rpc.services[{si}] '{sname}': duplicate client name '{cname}'"
+                        )
+                    client_names.add(cname)
+
+                for key in ("requestChannelId", "responseChannelId"):
+                    channel_id = c.get(key)
+                    if isinstance(channel_id, int):
+                        if channel_id in used_channels:
+                            messages.append(
+                                f"{service_path}: rpc.services[{si}] '{sname}': channel collision: {channel_id} ({key})"
+                            )
+                        used_channels.add(channel_id)
+
+                ce = c.get("client_endpoint")
+                if isinstance(ce, dict):
+                    cnode = ce.get("nodeId")
+                    ceid = ce.get("endpointId")
+                    if isinstance(cnode, str) and isinstance(ceid, str) and cnode and ceid:
+                        if cnode not in endpoint_idx:
+                            messages.append(
+                                f"{service_path}: rpc.services[{si}] '{sname}': client nodeId '{cnode}' not found in rpc.endpoints"
+                            )
+                        elif ceid not in endpoint_idx[cnode]:
+                            messages.append(
+                                f"{service_path}: rpc.services[{si}] '{sname}': client endpointId '{ceid}' "
+                                f"not found under node '{cnode}'"
+                            )
+
+    return messages
 
 
 def check_service_config_paths(service_path: Path, service_json) -> list[str]:
@@ -140,11 +262,18 @@ def validate_endpoints_config(endpoints_path: Path) -> list[str]:
     return messages
 
 
-def validate_endpoint_config(endpoint_path: Path) -> list[str]:
-    if not ENDPOINT_SCHEMA.exists():
+def _resolve_endpoint_schema(endpoint_schema_path: str | None) -> Path:
+    if endpoint_schema_path:
+        return Path(endpoint_schema_path)
+    return ENDPOINT_SCHEMA
+
+
+def validate_endpoint_config(endpoint_path: Path, endpoint_schema_path: str | None) -> list[str]:
+    schema_path = _resolve_endpoint_schema(endpoint_schema_path)
+    if not schema_path.exists():
         return [
-            f"{ENDPOINT_SCHEMA}: endpoint schema not found",
-            "Set HAKO_PDU_ENDPOINT_SCHEMA to the installed endpoint schema path.",
+            f"{schema_path}: endpoint schema not found",
+            "Set HAKO_PDU_ENDPOINT_SCHEMA or pass --endpoint-schema.",
         ]
     if importlib.util.find_spec(ENDPOINT_VALIDATOR_MODULE) is None:
         return [
@@ -157,7 +286,7 @@ def validate_endpoint_config(endpoint_path: Path) -> list[str]:
         "-m",
         ENDPOINT_VALIDATOR_MODULE,
         "--schema",
-        str(ENDPOINT_SCHEMA),
+        str(schema_path),
         "--check-paths",
         str(endpoint_path),
     ]
@@ -198,6 +327,10 @@ def main():
         action="store_true",
         help="Skip validating endpoint configs via installed hakoniwa-pdu-endpoint validator.",
     )
+    parser.add_argument(
+        "--endpoint-schema",
+        help="Path to installed hakoniwa-pdu-endpoint endpoint_schema.json",
+    )
     args = parser.parse_args()
 
     had_error = False
@@ -232,15 +365,18 @@ def main():
                             endpoints_json, endpoints_path.parent
                         )
                         for endpoint_path in endpoint_configs:
-                            messages.extend(validate_endpoint_config(endpoint_path))
+                            messages.extend(validate_endpoint_config(endpoint_path, args.endpoint_schema))
+                        messages.extend(check_rpc_semantics(service_path, service_json, endpoints_json))
 
             endpoints_inline = service_json.get("endpoints")
-            if isinstance(endpoints_inline, list) and not args.skip_endpoint_validation:
-                endpoint_configs = collect_endpoint_configs_from_endpoints(
-                    endpoints_inline, service_path.parent
-                )
-                for endpoint_path in endpoint_configs:
-                    messages.extend(validate_endpoint_config(endpoint_path))
+            if isinstance(endpoints_inline, list):
+                if not args.skip_endpoint_validation:
+                    endpoint_configs = collect_endpoint_configs_from_endpoints(
+                        endpoints_inline, service_path.parent
+                    )
+                    for endpoint_path in endpoint_configs:
+                        messages.extend(validate_endpoint_config(endpoint_path, args.endpoint_schema))
+                messages.extend(check_rpc_semantics(service_path, service_json, endpoints_inline))
 
         if messages:
             had_error = True
