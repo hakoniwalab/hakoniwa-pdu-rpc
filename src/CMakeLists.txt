@@ -19,6 +19,7 @@ target_include_directories(hakoniwa_pdu_rpc
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${HAKONIWA_PDU_REGISTRY_DIR}/pdu/types
+    /usr/local/hakoniwa/include/hakoniwa
 )
 
 find_package(HakoniwaPduEndpoint REQUIRED)
