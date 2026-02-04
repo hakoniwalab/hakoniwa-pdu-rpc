@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
+import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,8 +17,13 @@ except ImportError:  # pragma: no cover - runtime dependency check
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SERVICE_SCHEMA = REPO_ROOT / "config" / "schema" / "service-schema.json"
 ENDPOINTS_SCHEMA = REPO_ROOT / "config" / "schema" / "endpoints-schema.json"
-ENDPOINT_SCHEMA = REPO_ROOT / "hakoniwa-pdu-endpoint" / "config" / "schema" / "endpoint_schema.json"
-ENDPOINT_VALIDATOR = REPO_ROOT / "hakoniwa-pdu-endpoint" / "tools" / "validate_json.py"
+ENDPOINT_SCHEMA = Path(
+    os.environ.get(
+        "HAKO_PDU_ENDPOINT_SCHEMA",
+        "/usr/local/hakoniwa/share/hakoniwa-pdu-endpoint/schema/endpoint_schema.json",
+    )
+)
+ENDPOINT_VALIDATOR_MODULE = "hakoniwa_pdu_endpoint.validate_json"
 
 
 def load_json(path: Path):
@@ -135,13 +142,20 @@ def validate_endpoints_config(endpoints_path: Path) -> list[str]:
 
 def validate_endpoint_config(endpoint_path: Path) -> list[str]:
     if not ENDPOINT_SCHEMA.exists():
-        return [f"{ENDPOINT_SCHEMA}: endpoint schema not found"]
-    if not ENDPOINT_VALIDATOR.exists():
-        return [f"{ENDPOINT_VALIDATOR}: validator script not found"]
+        return [
+            f"{ENDPOINT_SCHEMA}: endpoint schema not found",
+            "Set HAKO_PDU_ENDPOINT_SCHEMA to the installed endpoint schema path.",
+        ]
+    if importlib.util.find_spec(ENDPOINT_VALIDATOR_MODULE) is None:
+        return [
+            f"{ENDPOINT_VALIDATOR_MODULE}: module not found",
+            "Set PYTHONPATH to include /usr/local/hakoniwa/share/hakoniwa-pdu-endpoint/python.",
+        ]
 
     cmd = [
         sys.executable,
-        str(ENDPOINT_VALIDATOR),
+        "-m",
+        ENDPOINT_VALIDATOR_MODULE,
         "--schema",
         str(ENDPOINT_SCHEMA),
         "--check-paths",
@@ -182,7 +196,7 @@ def main():
     parser.add_argument(
         "--skip-endpoint-validation",
         action="store_true",
-        help="Skip validating endpoint configs via hakoniwa-pdu-endpoint.",
+        help="Skip validating endpoint configs via installed hakoniwa-pdu-endpoint validator.",
     )
     args = parser.parse_args()
 

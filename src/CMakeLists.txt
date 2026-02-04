@@ -1,3 +1,13 @@
+include(FetchContent)
+
+FetchContent_Declare(
+  nlohmann_json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG v3.11.3
+)
+
+FetchContent_MakeAvailable(nlohmann_json)
+
 add_library(hakoniwa_pdu_rpc
     rpc_server_endpoint_impl.cpp
     rpc_services_server.cpp
@@ -11,11 +21,11 @@ target_include_directories(hakoniwa_pdu_rpc
     ${HAKONIWA_PDU_REGISTRY_DIR}/pdu/types
 )
 
-# Add the subdirectory for the endpoint, which will define the hakoniwa_pdu_endpoint target
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../hakoniwa-pdu-endpoint ${CMAKE_BINARY_DIR}/hakoniwa-pdu-endpoint)
+find_package(HakoniwaPduEndpoint REQUIRED)
 
-# Link our library against the endpoint library
+# Link our library against the endpoint library (installed)
 target_link_libraries(hakoniwa_pdu_rpc
   PUBLIC
     hakoniwa_pdu_endpoint
+    nlohmann_json::nlohmann_json
 )

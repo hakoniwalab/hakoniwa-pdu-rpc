@@ -12,7 +12,7 @@ This tutorial shows how to wire up a simple RPC server/client pair using the sam
 From the repository root:
 
 ```bash
-cmake -S . -B build
+cmake -S . -B build -DHAKO_PDU_ENDPOINT_PREFIX=/usr/local/hakoniwa
 cmake --build build
 ```
 

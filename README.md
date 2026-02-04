@@ -16,19 +16,74 @@ It provides a higher-level abstraction over the raw `hakoniwa-pdu-endpoint` libr
 *   **Simplified Usage with Helpers:** A template-based helper (`HakoRpcServiceServerTemplateType`) is provided to automatically handle PDU packing/unpacking for specific ROS service types.
 *   **Transport Agnostic:** Leverages `hakoniwa-pdu-endpoint` to run over different transports (TCP, UDP, Shared Memory) without changing user code.
 
-## How to Build
+## Build
 
-This project uses CMake.
+### Dependencies
+
+- C++20 compiler (GCC/Clang)
+- CMake 3.16+
+- Hakoniwa core library (installed under `/usr/local/hakoniwa`)
+- Installed `hakoniwa-pdu-endpoint` library and headers
+
+### hakoniwa-pdu-endpoint install layout
+
+This project expects the following layout for `hakoniwa-pdu-endpoint`:
+
+```
+<prefix>/
+  include/hakoniwa/pdu/endpoint.hpp
+  lib/libhakoniwa_pdu_endpoint.(a|so|dylib)
+```
+
+Default prefix is `/usr/local/hakoniwa`. You can override it with:
 
 ```bash
-# Create a build directory
-mkdir build
-cd build
-
-# Generate makefiles and build
-cmake ..
-make
+cmake -S . -B build -DHAKO_PDU_ENDPOINT_PREFIX=/path/to/prefix
 ```
+
+If your layout is non-standard, set these explicitly:
+
+```bash
+cmake -S . -B build \
+  -DHAKO_PDU_ENDPOINT_INCLUDE_DIR=/path/to/include \
+  -DHAKO_PDU_ENDPOINT_LIBRARY=/path/to/libhakoniwa_pdu_endpoint.so
+```
+
+Note: `hakoniwa-pdu-endpoint` depends on Hakoniwa core libs (`assets`, `shakoc`). Ensure they are in your library path, typically:
+
+```
+/usr/local/hakoniwa/lib
+```
+
+### Steps
+
+```bash
+# 1. out-of-source build
+cmake -S . -B build \
+  -DHAKO_PDU_ENDPOINT_PREFIX=/usr/local/hakoniwa
+
+# 2. build
+cmake --build build
+```
+
+The library `build/src/libhakoniwa_pdu_rpc.(a|so|dylib)` will be generated.
+
+To build the example programs:
+
+```bash
+cmake -S . -B build -DHAKO_PDU_RPC_BUILD_EXAMPLES=ON
+cmake --build build
+```
+
+### Hakoniwa core install notes
+
+- Headers: `/usr/local/hakoniwa/include/hakoniwa`
+- Libraries: `/usr/local/hakoniwa/lib`
+- `hakoniwa-pdu-endpoint` default search prefix: `/usr/local/hakoniwa`
+  - Header auto-detect target: `hakoniwa/pdu/endpoint.hpp`
+  - Library auto-detect target: `libhakoniwa_pdu_endpoint.*`
+
+If shared libraries are not found at runtime, add `LD_LIBRARY_PATH` (Linux) or `DYLD_LIBRARY_PATH` (macOS).
 
 ## How to Test
 
@@ -55,8 +110,14 @@ python tools/validate_configs.py test/configs/service_config.json
 
 Notes:
 * Requires `jsonschema` (`pip install jsonschema`).
-* Add `--skip-endpoint-validation` to skip validating endpoint configs via `hakoniwa-pdu-endpoint`.
+* The endpoint validator is expected to be installed with `hakoniwa-pdu-endpoint`.
+* Set `PYTHONPATH` to include `/usr/local/hakoniwa/share/hakoniwa-pdu-endpoint/python`.
+* If the endpoint schema is not found, set `HAKO_PDU_ENDPOINT_SCHEMA` to the installed schema path.
+* Add `--skip-endpoint-validation` to skip validating endpoint configs via the installed endpoint validator.
 * See `tools/README.md` for more details.
+
+Planned:
+* Provide an installer for this repository similar to `hakoniwa-pdu-endpoint`.
 
 ## Tutorials
 
