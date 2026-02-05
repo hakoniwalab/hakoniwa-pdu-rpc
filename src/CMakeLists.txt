@@ -19,10 +19,11 @@ target_include_directories(hakoniwa_pdu_rpc
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${HAKONIWA_PDU_REGISTRY_DIR}/pdu/types
+    /usr/local/hakoniwa/include
     /usr/local/hakoniwa/include/hakoniwa
 )
 
-find_package(HakoniwaPduEndpoint REQUIRED)
+ find_package(hakoniwa_pdu_endpoint CONFIG REQUIRED)
 
 # Link our library against the endpoint library (installed)
 target_link_libraries(hakoniwa_pdu_rpc
