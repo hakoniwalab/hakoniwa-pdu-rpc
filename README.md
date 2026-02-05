@@ -68,6 +68,59 @@ cmake --build build
 
 The library `build/src/libhakoniwa_pdu_rpc.(a|so|dylib)` will be generated.
 
+### Install
+
+You can install this library (headers and CMake package files) so that
+`find_package(hakoniwa_pdu_rpc)` works in downstream projects.
+
+```bash
+# Configure, build, install (default prefix: /usr/local/hakoniwa)
+./build.bash
+./install.bash
+```
+
+Default install locations:
+- Headers: `/usr/local/hakoniwa/include`
+- Libraries: `/usr/local/hakoniwa/lib`
+
+To uninstall:
+
+```bash
+./uninstall.bash
+```
+
+If you want to override the install prefix:
+
+```bash
+PREFIX=/path/to/prefix ./install.bash
+```
+
+To skip installing the bundled nlohmann_json dependency:
+
+```bash
+cmake -S . -B build -DHAKO_PDU_RPC_INSTALL_NLOHMANN_JSON=OFF
+```
+
+### Downstream CMake usage
+
+```cmake
+find_package(hakoniwa_pdu_rpc REQUIRED)
+
+add_executable(my_app main.cpp)
+target_link_libraries(my_app PRIVATE hakoniwa_pdu_rpc::hakoniwa_pdu_rpc)
+```
+
+Note: `hakoniwa-pdu-registry` must be installed and available on your include path,
+because `hakoniwa-pdu-rpc` headers include registry headers.
+
+If installed into a non-standard prefix, set one of:
+
+```bash
+cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/prefix
+# or
+export CMAKE_PREFIX_PATH=/path/to/prefix
+```
+
 To build the example programs:
 
 ```bash
