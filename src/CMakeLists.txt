@@ -23,7 +23,7 @@ target_include_directories(hakoniwa_pdu_rpc
     /usr/local/hakoniwa/include/hakoniwa
 )
 
- find_package(hakoniwa_pdu_endpoint CONFIG REQUIRED)
+find_package(hakoniwa_pdu_endpoint REQUIRED)
 
 # Link our library against the endpoint library (installed)
 target_link_libraries(hakoniwa_pdu_rpc
