@@ -5,7 +5,6 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
-#include "endpoints_loader.hpp"
 
 namespace hakoniwa::pdu::rpc {
 
@@ -43,13 +42,6 @@ bool RpcServicesClient::initialize_services(std::shared_ptr<hakoniwa::pdu::Endpo
     }
 
     try {
-        if (!json_config.contains("endpoints") && !json_config.contains("endpoints_config_path")) {
-            std::cerr << "ERROR: Service config missing 'endpoints' section." << std::endl;
-            stop_all_services();
-            return false;
-        }
-
-
         int pdu_meta_data_size = json_config.value("pduMetaDataSize", 24);
         for (const auto& service_entry : json_config["services"]) {
             std::string service_name = service_entry["name"];
@@ -79,16 +71,6 @@ bool RpcServicesClient::initialize_services(std::shared_ptr<hakoniwa::pdu::Endpo
                 continue;
             }
             std::cout << "INFO: Initializing RPC client for service: " << service_name << " on node " << this->node_id_ << std::endl;
-            // Find config_path for the low-level PDU Endpoint
-            nlohmann::json endpoints_json = load_endpoints_json(json_config, parent_abs.string());
-            std::string pdu_endpoint_config_path = find_endpoint_config_path(endpoints_json, client_ep_node_id, client_ep_id);
-            if (pdu_endpoint_config_path.empty()) {
-                std::cerr << "ERROR: PDU Endpoint config_path not found for node '" << client_ep_node_id << "' and endpoint '" << client_ep_id << "'" << std::endl;
-                std::cout.flush();
-                stop_all_services();
-                return false;
-            }
-
             // Create low-level PDU endpoint
             std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = endpoint_container_->ref(client_ep_id);
             if (!pdu_endpoint) {

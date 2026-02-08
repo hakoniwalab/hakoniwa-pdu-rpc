@@ -13,7 +13,6 @@
 #include <memory>
 #include <filesystem>
 
-#include "endpoints_loader.hpp"
 
 namespace hakoniwa::pdu::rpc {
 

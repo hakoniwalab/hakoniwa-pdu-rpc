@@ -14,9 +14,10 @@ except ImportError:  # pragma: no cover - runtime dependency check
     sys.exit(2)
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SERVICE_SCHEMA = REPO_ROOT / "config" / "schema" / "service-schema.json"
-ENDPOINTS_SCHEMA = REPO_ROOT / "config" / "schema" / "endpoints-schema.json"
+MODULE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = MODULE_DIR.parents[2]
+SCHEMA_DIR = MODULE_DIR / "schema"
+SERVICE_SCHEMA = (SCHEMA_DIR / "service-schema.json") if (SCHEMA_DIR / "service-schema.json").exists() else (REPO_ROOT / "config" / "schema" / "service-schema.json")
 DEFAULT_ENDPOINT_SCHEMA = Path("/usr/local/hakoniwa/share/hakoniwa-pdu-endpoint/schema/endpoint_schema.json")
 ENDPOINT_SCHEMA_ENV = os.environ.get("HAKO_PDU_ENDPOINT_SCHEMA")
 ENDPOINT_SCHEMA = Path(ENDPOINT_SCHEMA_ENV) if ENDPOINT_SCHEMA_ENV else DEFAULT_ENDPOINT_SCHEMA
@@ -79,7 +80,7 @@ def build_endpoint_index(endpoints_json) -> dict[str, set[str]]:
     idx: dict[str, set[str]] = {}
     if not isinstance(endpoints_json, list):
         return idx
-    for i, node in enumerate(endpoints_json):
+    for node in endpoints_json:
         if not isinstance(node, dict):
             continue
         node_id = node.get("nodeId")
@@ -108,6 +109,7 @@ def check_rpc_semantics(service_path: Path, service_json, endpoints_json) -> lis
             messages.append(f"{service_path}: rpc.pduMetaDataSize: must be 24")
 
     endpoint_idx = build_endpoint_index(endpoints_json)
+    have_endpoints = bool(endpoint_idx)
 
     # services list checks
     svcs = service_json.get("services")
@@ -137,10 +139,7 @@ def check_rpc_semantics(service_path: Path, service_json, endpoints_json) -> lis
 
         # server endpoints
         server_endpoints = svc.get("server_endpoints")
-        if server_endpoints is None:
-            server_endpoint = svc.get("server_endpoint")
-            server_endpoints = [server_endpoint] if isinstance(server_endpoint, dict) else None
-        if isinstance(server_endpoints, list):
+        if have_endpoints and isinstance(server_endpoints, list):
             for ei, se in enumerate(server_endpoints):
                 if not isinstance(se, dict):
                     continue
@@ -183,7 +182,7 @@ def check_rpc_semantics(service_path: Path, service_json, endpoints_json) -> lis
                         used_channels.add(channel_id)
 
                 ce = c.get("client_endpoint")
-                if isinstance(ce, dict):
+                if have_endpoints and isinstance(ce, dict):
                     cnode = ce.get("nodeId")
                     ceid = ce.get("endpointId")
                     if isinstance(cnode, str) and isinstance(ceid, str) and cnode and ceid:
@@ -204,61 +203,18 @@ def check_service_config_paths(service_path: Path, service_json) -> list[str]:
     messages = []
     base_dir = service_path.parent
 
-    endpoints_json = None
     endpoint_config_paths = []
-
-    endpoints_config_path = service_json.get("endpoints_config_path")
-    if isinstance(endpoints_config_path, str):
-        resolved = resolve_ref(base_dir, endpoints_config_path)
-        if not resolved.exists():
-            messages.append(f"{service_path}: missing referenced file: {endpoints_config_path}")
-        else:
-            try:
-                endpoints_json = load_json(resolved)
-                endpoint_config_paths.extend(
-                    collect_endpoint_configs_from_endpoints(endpoints_json, resolved.parent)
-                )
-            except json.JSONDecodeError as e:
-                messages.append(f"{resolved}: JSON parse error: {e}")
-            except OSError as e:
-                messages.append(f"{resolved}: read error: {e}")
 
     endpoints_inline = service_json.get("endpoints")
     if isinstance(endpoints_inline, list):
-        endpoints_json = endpoints_inline
         endpoint_config_paths.extend(
             collect_endpoint_configs_from_endpoints(endpoints_inline, base_dir)
         )
-
-    pdu_config_path = service_json.get("pdu_config_path")
-    if isinstance(pdu_config_path, str):
-        resolved = resolve_ref(base_dir, pdu_config_path)
-        if not resolved.exists():
-            messages.append(f"{service_path}: missing referenced file: {pdu_config_path}")
 
     for config_path in endpoint_config_paths:
         if not config_path.exists():
             messages.append(f"{service_path}: missing referenced file: {config_path}")
 
-    return messages
-
-
-def validate_endpoints_config(endpoints_path: Path) -> list[str]:
-    messages = validate_schema(ENDPOINTS_SCHEMA, endpoints_path)
-    if messages:
-        return messages
-
-    try:
-        endpoints_json = load_json(endpoints_path)
-    except json.JSONDecodeError as e:
-        return [f"{endpoints_path}: JSON parse error: {e}"]
-    except OSError as e:
-        return [f"{endpoints_path}: read error: {e}"]
-
-    endpoint_configs = collect_endpoint_configs_from_endpoints(endpoints_json, endpoints_path.parent)
-    for config_path in endpoint_configs:
-        if not config_path.exists():
-            messages.append(f"{endpoints_path}: missing referenced file: {config_path}")
     return messages
 
 
@@ -350,24 +306,6 @@ def main():
         if service_json is not None:
             messages.extend(check_service_config_paths(service_path, service_json))
 
-            endpoints_config_path = service_json.get("endpoints_config_path")
-            if isinstance(endpoints_config_path, str):
-                endpoints_path = resolve_ref(service_path.parent, endpoints_config_path)
-                messages.extend(validate_endpoints_config(endpoints_path))
-
-                if not args.skip_endpoint_validation:
-                    try:
-                        endpoints_json = load_json(endpoints_path)
-                    except Exception:
-                        endpoints_json = None
-                    if endpoints_json:
-                        endpoint_configs = collect_endpoint_configs_from_endpoints(
-                            endpoints_json, endpoints_path.parent
-                        )
-                        for endpoint_path in endpoint_configs:
-                            messages.extend(validate_endpoint_config(endpoint_path, args.endpoint_schema))
-                        messages.extend(check_rpc_semantics(service_path, service_json, endpoints_json))
-
             endpoints_inline = service_json.get("endpoints")
             if isinstance(endpoints_inline, list):
                 if not args.skip_endpoint_validation:
@@ -377,6 +315,8 @@ def main():
                     for endpoint_path in endpoint_configs:
                         messages.extend(validate_endpoint_config(endpoint_path, args.endpoint_schema))
                 messages.extend(check_rpc_semantics(service_path, service_json, endpoints_inline))
+            else:
+                messages.extend(check_rpc_semantics(service_path, service_json, []))
 
         if messages:
             had_error = True

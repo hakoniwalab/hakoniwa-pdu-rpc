@@ -1,7 +1,5 @@
 {
   "pduMetaDataSize": 24,
-  "pdu_config_path": "pdudef.json",
-  "endpoints_config_path": "endpoints.json",
   "services": [
     {
       "name": "Service/Add",

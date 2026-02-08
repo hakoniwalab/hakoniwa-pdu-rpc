@@ -8,10 +8,6 @@
       "type": "integer",
       "description": "Metadata size for PDU."
     },
-    "pdu_config_path": {
-      "type": "string",
-      "description": "Path to the PDU configuration file."
-    },
     "endpoints": {
       "type": "array",
       "description": "List of endpoint configurations (inline definition).",
@@ -43,10 +39,6 @@
         },
         "required": ["nodeId", "endpoints"]
       }
-    },
-    "endpoints_config_path": {
-      "type": "string",
-      "description": "Path to the external endpoints configuration file."
     },
     "services": {
       "type": "array",
@@ -163,19 +155,5 @@
       }
     }
   },
-  "required": ["services"],
-  "oneOf": [
-    {
-      "required": ["endpoints"],
-      "not": {
-        "required": ["endpoints_config_path"]
-      }
-    },
-    {
-      "required": ["endpoints_config_path"],
-      "not": {
-        "required": ["endpoints"]
-      }
-    }
-  ]
+  "required": ["services"]
 }

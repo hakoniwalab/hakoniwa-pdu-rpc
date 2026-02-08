@@ -12,7 +12,7 @@ It provides a higher-level abstraction over the raw `hakoniwa-pdu-endpoint` libr
 
 *   **Service-Oriented RPC:** Define and manage multiple RPC services within a single server.
 *   **Multi-Client Support:** A single service can be called by multiple, uniquely-named clients.
-*   **Configuration-Driven:** Define services in a single JSON file; endpoints can be inline or referenced via an external endpoints config.
+*   **Configuration-Driven:** Define services in a single JSON file.
 *   **Simplified Usage with Helpers:** A template-based helper (`HakoRpcServiceServerTemplateType`) is provided to automatically handle PDU packing/unpacking for specific ROS service types.
 *   **Transport Agnostic:** Leverages `hakoniwa-pdu-endpoint` to run over different transports (TCP, UDP, Shared Memory) without changing user code.
 
@@ -154,11 +154,12 @@ ctest
 
 ## Config Validation
 
-Use the config validator to check JSON schema compliance and referenced file existence. This tool also reuses the endpoint validator from `hakoniwa-pdu-endpoint`.
+Use the config validator to check JSON schema compliance. If you include `endpoints` inline in the service config, it will also validate referenced endpoint configs via `hakoniwa-pdu-endpoint`.
 
 ```bash
-python tools/validate_configs.py config/sample/simple-service.json
-python tools/validate_configs.py test/configs/service_config.json
+export PYTHONPATH="/usr/local/hakoniwa/share/hakoniwa-pdu-rpc/python:$PYTHONPATH"
+python -m hakoniwa_pdu_rpc.validate_configs config/sample/simple-service.json
+python -m hakoniwa_pdu_rpc.validate_configs test/configs/service_config.json
 ```
 
 Notes:
@@ -167,7 +168,6 @@ Notes:
 * Set `PYTHONPATH` to include `/usr/local/hakoniwa/share/hakoniwa-pdu-endpoint/python`.
 * If the endpoint schema is not found, set `HAKO_PDU_ENDPOINT_SCHEMA` to the installed schema path.
 * Add `--skip-endpoint-validation` to skip validating endpoint configs via the installed endpoint validator.
-* See `tools/README.md` for more details.
 
 Planned:
 * Provide an installer for this repository similar to `hakoniwa-pdu-endpoint`.
@@ -183,9 +183,9 @@ A "service" is a remote procedure that a client can call. It has a unique name (
 
 ### Configuration
 The entire RPC topology is defined in a service configuration JSON file. This file specifies:
-1.  `endpoints` or `endpoints_config_path`: The low-level communication endpoints (inline or external config).
-2.  `services`: The list of available RPC services, including their names, PDU sizes, and which clients are allowed to call them.
-3.  `pdu_config_path`: The PDU definition file path (used by the endpoint layer for name-based PDU resolution).
+1.  `services`: The list of available RPC services, including their names, PDU sizes, and which clients are allowed to call them.
+
+Endpoint configs are managed separately and passed to `EndpointContainer` by the user. The service config only references endpoint IDs (`server_endpoints`, `client_endpoint`) and does not contain endpoint definitions.
 
 ### RPC Service Helper
 To simplify development, the library provides a template helper class `HakoRpcServiceServerTemplateType`. When instantiated with a ROS service type (e.g., `HakoRpcServiceServerTemplateType(AddTwoInts)`), it provides methods to easily:
@@ -224,13 +224,11 @@ Manages the server side of one or more RPC services.
 
 ## Configuration File Schema
 
-The service configuration is a JSON file with `services` and either `endpoints` or `endpoints_config_path`.
+The service configuration is a JSON file with `services`.
 
 ```json
 {
   "pduMetaDataSize": 24,
-  "pdu_config_path": "pdudef.json",
-  "endpoints_config_path": "endpoints.json",
   "services": [
     {
       "name": "Service/Add",
@@ -261,10 +259,7 @@ The service configuration is a JSON file with `services` and either `endpoints` 
   ]
 }
 ```
-`endpoints_config_path` points to an EndpointContainer config file (see `hakoniwa-pdu-endpoint` for the schema and examples).
 *   **`pduMetaDataSize`**: The size of the metadata header in the PDU.
-*   **`pdu_config_path`**: Path to the PDU definition file.
-*   **`endpoints` / `endpoints_config_path`**: Inline endpoints or a separate endpoints config file.
 *   **`services`**: An array of service definitions.
     *   `name`: The unique name of the service.
     *   `type`: The ROS service type name (e.g., `hako_srv_msgs/AddTwoInts`).
