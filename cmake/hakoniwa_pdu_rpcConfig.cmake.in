@@ -1,0 +1,15 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+
+find_package(hakoniwa_pdu_endpoint QUIET)
+if(NOT hakoniwa_pdu_endpoint_FOUND)
+  find_package(HakoniwaPduEndpoint REQUIRED)
+endif()
+find_dependency(nlohmann_json)
+
+include("${CMAKE_CURRENT_LIST_DIR}/hakoniwa_pdu_rpcTargets.cmake")
+
+check_required_components(hakoniwa_pdu_rpc)
