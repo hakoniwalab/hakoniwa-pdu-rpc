@@ -15,7 +15,7 @@ except ImportError:  # pragma: no cover - runtime dependency check
 
 
 MODULE_DIR = Path(__file__).resolve().parent
-REPO_ROOT = MODULE_DIR.parents[2]
+REPO_ROOT = MODULE_DIR.parents[1]
 SCHEMA_DIR = MODULE_DIR / "schema"
 SERVICE_SCHEMA = (SCHEMA_DIR / "service-schema.json") if (SCHEMA_DIR / "service-schema.json").exists() else (REPO_ROOT / "config" / "schema" / "service-schema.json")
 DEFAULT_ENDPOINT_SCHEMA = Path("/usr/local/hakoniwa/share/hakoniwa-pdu-endpoint/schema/endpoint_schema.json")

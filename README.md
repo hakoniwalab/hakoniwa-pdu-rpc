@@ -1,20 +1,117 @@
 # Hakoniwa PDU-RPC
 
-`hakoniwa-pdu-rpc` is a C++ library that provides a framework for remote procedure calls (RPC) built on Hakoniwa's PDU (Protocol Data Unit) communication layer. It is designed for scenarios where reliable, request-response style communication is needed between distributed components in the Hakoniwa ecosystem.
+`hakoniwa-pdu-rpc` is a C++ RPC layer for Hakoniwa built on the PDU communication model.
+It provides request/response semantics that align with Hakoniwa endpoint configuration and PDU definitions.
+It is intentionally narrow in scope: deterministic integration and explicit topology are prioritized over general-purpose RPC features.
+If you are building Hakoniwa-native control-plane RPC in C++, this is the intended layer.
 
-## Overview
+## Positioning (What This Is / Isn't)
 
-This library allows a "server" component to offer one or more services and "client" components to invoke those services. Communication is defined by a central JSON configuration file, and the data structures (PDUs) for requests and responses are based on ROS-compatible message definitions.
+**This is:**
+- A PDU-native request/response layer for Hakoniwa execution and endpoint semantics.
+- A config-driven RPC integration model that reuses Hakoniwa endpoint topology.
+- A thin abstraction over `hakoniwa-pdu-endpoint` with explicit call/poll behavior.
 
-It provides a higher-level abstraction over the raw `hakoniwa-pdu-endpoint` library, handling the boilerplate of request IDs, timeouts, and state management for RPC calls.
+**This is not:**
+- A general-purpose RPC framework (for example, gRPC).
+- A dynamic service mesh with runtime discovery, auth, tracing, and streaming semantics.
+
+Design intent:
+- **Explicit semantics:** Request IDs, channels, and timeout behavior are visible in config/API.
+- **Config-driven topology:** RPC wiring follows Hakoniwa node/endpoint definitions.
+- **Minimal hidden assumptions:** No hidden scheduler/threading policy is imposed by default.
+- **API consistency:** Service/client APIs align with existing Endpoint/Bridge usage patterns.
+
+## Links
+
+- Examples: `examples/README.md`
+- Tutorial: `docs/tutorials/rpc.md`
+- Minimal config set: `config/sample/minimal/README.md`
+- JSON schema: `config/schema/service-schema.json`
+- Config validator (recommended first step):
+  - `PYTHONPATH=python:$PYTHONPATH python -m hakoniwa_pdu_rpc.validate_configs config/sample/simple-service.json --skip-endpoint-validation`
+
+## When To Use / Not Use
+
+| Use when | Not for |
+|---|---|
+| Hakoniwa ecosystem integration is primary | Polyglot public APIs across many languages |
+| Request/response control-plane communication | Web-service style APIs |
+| PDU-native data model and transport reuse are required | Streaming RPC workloads |
+| Deterministic or tick-driven integration loops are required | Full auth/observability stack requirements |
+| C++ applications with existing Hakoniwa config assets | Dynamic service discovery-centric architectures |
 
 ## Features
 
-*   **Service-Oriented RPC:** Define and manage multiple RPC services within a single server.
-*   **Multi-Client Support:** A single service can be called by multiple, uniquely-named clients.
-*   **Configuration-Driven:** Define services in a single JSON file.
-*   **Simplified Usage with Helpers:** A template-based helper (`HakoRpcServiceServerTemplateType`) is provided to automatically handle PDU packing/unpacking for specific ROS service types.
-*   **Transport Agnostic:** Leverages `hakoniwa-pdu-endpoint` to run over different transports (TCP, UDP, Shared Memory) without changing user code.
+- **Service-Oriented RPC:** Define and manage multiple RPC services within a single server.
+- **Multi-Client Support:** A single service can be called by multiple uniquely named clients.
+- **Configuration-Driven:** Define services in a JSON file.
+- **Typed Helper API:** `HakoRpcServiceServerTemplateType` handles PDU pack/unpack for ROS service types.
+- **Transport Agnostic at RPC Layer:** Reuses `hakoniwa-pdu-endpoint` transports (TCP/UDP/Shared Memory) without changing RPC user code.
+
+## Quick Start (5 min)
+
+If you want one working RPC pair first, use the bundled samples.
+
+```bash
+# 1) Build examples
+cmake -S . -B build \
+  -DHAKO_PDU_ENDPOINT_PREFIX=/usr/local/hakoniwa \
+  -DHAKO_PDU_RPC_BUILD_EXAMPLES=ON
+cmake --build build
+
+# 2) Validate config first (recommended)
+PYTHONPATH=python:$PYTHONPATH \
+python -m hakoniwa_pdu_rpc.validate_configs config/sample/simple-service.json --skip-endpoint-validation
+```
+
+Validation catches schema and RPC consistency errors early (for example: required fields, duplicate names, channel collisions). If endpoint validation is enabled, referenced endpoint config issues are also checked.
+
+Run in two terminals:
+
+```bash
+# terminal A
+build/examples/hakoniwa_pdu_rpc_server
+```
+
+```bash
+# terminal B
+build/examples/hakoniwa_pdu_rpc_client 1000000
+# then type: 5 7
+# expected: sum=12
+```
+
+If it fails, check these first:
+- Server is started before client.
+- `nodeId`/client name in config matches what server/client constructors use.
+- `endpointId` values match endpoint config mappings.
+- Both sides use the same TCP port (`54001`) and reachable addresses.
+- Runtime library path includes Hakoniwa libs (`LD_LIBRARY_PATH` or `DYLD_LIBRARY_PATH` as needed).
+
+Reference files used by this path:
+- `examples/rpc_server.cpp`
+- `examples/rpc_client.cpp`
+- `examples/README.md`
+- `config/sample/simple-service.json`
+- `config/sample/endpoints.json`
+- `config/sample/minimal/` (compact equivalent config set)
+
+## Why Config Is Explicit (and Validated)
+
+"Static JSON is brittle" is a valid concern when IDs drift. This repository uses explicit config plus validation to make those failures visible before runtime.
+
+What is validated:
+- Service config schema (`config/schema/service-schema.json`).
+- RPC-level consistency checks (for example: duplicate service/client names, channel collisions, `maxClients` bounds).
+- Optional endpoint validation through `hakoniwa-pdu-endpoint` validator (when installed/available).
+
+Common pitfalls:
+- `nodeId` or client name mismatch between code and service config.
+- `endpointId` mismatch with endpoint mapping (`endpoints.json`).
+- `pduSize` mismatch (base/heap) against generated registry definitions.
+- Request/response channel ID collisions.
+
+Explicit config keeps timing, routing, and delivery assumptions reviewable in code review and reproducible in CI.
 
 ## Build
 
@@ -22,26 +119,26 @@ It provides a higher-level abstraction over the raw `hakoniwa-pdu-endpoint` libr
 
 - C++20 compiler (GCC/Clang)
 - CMake 3.16+
-- Hakoniwa core library (installed under `/usr/local/hakoniwa`)
+- Hakoniwa core library (typically under `/usr/local/hakoniwa`)
 - Installed `hakoniwa-pdu-endpoint` library and headers
 
-### hakoniwa-pdu-endpoint install layout
+### `hakoniwa-pdu-endpoint` install layout
 
-This project expects the following layout for `hakoniwa-pdu-endpoint`:
+This project expects:
 
-```
+```text
 <prefix>/
   include/hakoniwa/pdu/endpoint.hpp
   lib/libhakoniwa_pdu_endpoint.(a|so|dylib)
 ```
 
-Default prefix is `/usr/local/hakoniwa`. You can override it with:
+Default prefix is `/usr/local/hakoniwa`. Override if needed:
 
 ```bash
 cmake -S . -B build -DHAKO_PDU_ENDPOINT_PREFIX=/path/to/prefix
 ```
 
-If your layout is non-standard, set these explicitly:
+If layout is non-standard, set explicitly:
 
 ```bash
 cmake -S . -B build \
@@ -49,32 +146,31 @@ cmake -S . -B build \
   -DHAKO_PDU_ENDPOINT_LIBRARY=/path/to/libhakoniwa_pdu_endpoint.so
 ```
 
-Note: `hakoniwa-pdu-endpoint` depends on Hakoniwa core libs (`assets`, `shakoc`). Ensure they are in your library path, typically:
+Note: `hakoniwa-pdu-endpoint` depends on Hakoniwa core libs (`assets`, `shakoc`). Ensure library path includes:
 
-```
+```text
 /usr/local/hakoniwa/lib
 ```
 
-### Steps
+### Build steps
 
 ```bash
-# 1. out-of-source build
+# 1. Configure
 cmake -S . -B build \
   -DHAKO_PDU_ENDPOINT_PREFIX=/usr/local/hakoniwa
 
-# 2. build
+# 2. Build
 cmake --build build
 ```
 
-The library `build/src/libhakoniwa_pdu_rpc.(a|so|dylib)` will be generated.
+Generated library:
+- `build/src/libhakoniwa_pdu_rpc.(a|so|dylib)`
 
 ### Install
 
-You can install this library (headers and CMake package files) so that
-`find_package(hakoniwa_pdu_rpc)` works in downstream projects.
+Install headers/libraries/CMake package:
 
 ```bash
-# Configure, build, install (default prefix: /usr/local/hakoniwa)
 ./build.bash
 ./install.bash
 ```
@@ -83,22 +179,16 @@ Default install locations:
 - Headers: `/usr/local/hakoniwa/include`
 - Libraries: `/usr/local/hakoniwa/lib`
 
-To uninstall:
+Uninstall:
 
 ```bash
 ./uninstall.bash
 ```
 
-If you want to override the install prefix:
+Override install prefix:
 
 ```bash
 PREFIX=/path/to/prefix ./install.bash
-```
-
-To skip installing the bundled nlohmann_json dependency:
-
-```bash
-cmake -S . -B build -DHAKO_PDU_RPC_INSTALL_NLOHMANN_JSON=OFF
 ```
 
 ### Downstream CMake usage
@@ -110,10 +200,9 @@ add_executable(my_app main.cpp)
 target_link_libraries(my_app PRIVATE hakoniwa_pdu_rpc::hakoniwa_pdu_rpc)
 ```
 
-Note: `hakoniwa-pdu-registry` must be installed and available on your include path,
-because `hakoniwa-pdu-rpc` headers include registry headers.
+Note: `hakoniwa-pdu-registry` must be installed and visible on include path because `hakoniwa-pdu-rpc` headers include registry headers.
 
-If installed into a non-standard prefix, set one of:
+If installed to non-standard prefix:
 
 ```bash
 cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/prefix
@@ -121,7 +210,7 @@ cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/prefix
 export CMAKE_PREFIX_PATH=/path/to/prefix
 ```
 
-To build the example programs:
+Build examples:
 
 ```bash
 cmake -S . -B build -DHAKO_PDU_RPC_BUILD_EXAMPLES=ON
@@ -133,28 +222,33 @@ cmake --build build
 - Headers: `/usr/local/hakoniwa/include/hakoniwa`
 - Libraries: `/usr/local/hakoniwa/lib`
 - `hakoniwa-pdu-endpoint` default search prefix: `/usr/local/hakoniwa`
-  - Header auto-detect target: `hakoniwa/pdu/endpoint.hpp`
-  - Library auto-detect target: `libhakoniwa_pdu_endpoint.*`
+  - Header target: `hakoniwa/pdu/endpoint.hpp`
+  - Library target: `libhakoniwa_pdu_endpoint.*`
 
 If shared libraries are not found at runtime, add `LD_LIBRARY_PATH` (Linux) or `DYLD_LIBRARY_PATH` (macOS).
 
-## How to Test
+## How To Test
 
-This project uses [Google Test](https://github.com/google/googletest) for unit testing. After building the project, tests can be executed using either `make test` or `ctest` from the build directory.
+This project uses GoogleTest. After build:
 
 ```bash
-# Navigate to the build directory
 cd build
-
-# Run all tests
 make test
 # or
 ctest
 ```
 
-## Config Validation
+## Config Validation Commands
 
-Use the config validator to check JSON schema compliance. If you include `endpoints` inline in the service config, it will also validate referenced endpoint configs via `hakoniwa-pdu-endpoint`.
+From repository root:
+
+```bash
+export PYTHONPATH="python:$PYTHONPATH"
+python -m hakoniwa_pdu_rpc.validate_configs config/sample/simple-service.json --skip-endpoint-validation
+python -m hakoniwa_pdu_rpc.validate_configs test/configs/service_config.json --skip-endpoint-validation
+```
+
+If installed under `/usr/local/hakoniwa`, this also works:
 
 ```bash
 export PYTHONPATH="/usr/local/hakoniwa/share/hakoniwa-pdu-rpc/python:$PYTHONPATH"
@@ -163,68 +257,89 @@ python -m hakoniwa_pdu_rpc.validate_configs test/configs/service_config.json
 ```
 
 Notes:
-* Requires `jsonschema` (`pip install jsonschema`).
-* The endpoint validator is expected to be installed with `hakoniwa-pdu-endpoint`.
-* Set `PYTHONPATH` to include `/usr/local/hakoniwa/share/hakoniwa-pdu-endpoint/python`.
-* If the endpoint schema is not found, set `HAKO_PDU_ENDPOINT_SCHEMA` to the installed schema path.
-* Add `--skip-endpoint-validation` to skip validating endpoint configs via the installed endpoint validator.
+- Requires `jsonschema` (`pip install jsonschema`).
+- Endpoint validator is provided by `hakoniwa-pdu-endpoint`.
+- If endpoint schema is not found, set `HAKO_PDU_ENDPOINT_SCHEMA`.
+- Use `--skip-endpoint-validation` to skip endpoint-side checks.
 
-Planned:
-* Provide an installer for this repository similar to `hakoniwa-pdu-endpoint`.
+## Tutorials and Examples
 
-## Tutorials
-
-* `docs/tutorials/rpc.md`: End-to-end RPC setup using the sample configs.
+- `docs/tutorials/rpc.md`: End-to-end RPC setup using sample configs.
+- `examples/README.md`: Fastest path to run bundled server/client examples.
+- `config/sample/minimal/README.md`: Compact JSON set with field notes.
 
 ## Core Concepts
 
 ### Services
-A "service" is a remote procedure that a client can call. It has a unique name (e.g., `"Service/Add"`) and is defined by a request PDU and a response PDU. A server implements the logic for a service, and a client calls it.
+A service is a remote procedure (for example, `Service/Add`) with request/response PDU definitions and allowed clients.
 
 ### Configuration
-The entire RPC topology is defined in a service configuration JSON file. This file specifies:
-1.  `services`: The list of available RPC services, including their names, PDU sizes, and which clients are allowed to call them.
-
-Endpoint configs are managed separately and passed to `EndpointContainer` by the user. The service config only references endpoint IDs (`server_endpoints`, `client_endpoint`) and does not contain endpoint definitions.
+RPC topology is defined in a service configuration JSON file (`services`).
+Endpoint configs are managed separately via `EndpointContainer`; service config references endpoint IDs (`server_endpoints`, `client_endpoint`).
 
 ### RPC Service Helper
-To simplify development, the library provides a template helper class `HakoRpcServiceServerTemplateType`. When instantiated with a ROS service type (e.g., `HakoRpcServiceServerTemplateType(AddTwoInts)`), it provides methods to easily:
-*   `call()`: Send a typed C++ request structure from the client.
-*   `get_request_body()`: Extract a typed C++ request structure on the server.
-*   `reply()`: Send a typed C++ response structure from the server.
-*   `get_response_body()`: Extract a typed C++ response structure on the client.
+`HakoRpcServiceServerTemplateType` (for example `HakoRpcServiceServerTemplateType(AddTwoInts)`) provides typed helpers:
+- `call()`
+- `get_request_body()`
+- `reply()`
+- `get_response_body()`
 
-This avoids the need for manual byte-level PDU manipulation.
+This avoids manual byte-level PDU handling in application code.
 
 ## API Reference
 
-The primary entry points for user applications are the `RpcServicesServer` and `RpcServicesClient` classes.
+Primary entry points are `RpcServicesServer` and `RpcServicesClient`.
 
 ### `RpcServicesClient`
-Manages the client side of one or more RPC services.
 
-*   `RpcServicesClient(node_id, client_name, config_path, ...)`: Constructor.
-    *   `node_id`: The ID of the node this client is running on (must match an ID in the config).
-    *   `client_name`: A unique name for this client instance (must match a client name in the config).
-    *   `config_path`: Path to the service configuration JSON file.
-*   `bool initialize_services(endpoint_container)`: Reads the config and initializes all services this client can call.
-*   `bool start_all_services()`: Starts RPC services (PDU endpoints are started via `EndpointContainer`).
-*   `bool call(service_name, request_pdu, timeout_usec)`: Makes an RPC call. (Note: Using the service helper is recommended over this).
-*   `ClientEventType poll(service_name, response_out)`: Polls for responses or other events.
+- `RpcServicesClient(node_id, client_name, config_path, ...)`
+  - `node_id`: node ID for this client (must match config)
+  - `client_name`: unique client name (must match config)
+  - `config_path`: service config path
+- `bool initialize_services(endpoint_container)`
+- `bool start_all_services()`
+- `bool call(service_name, request_pdu, timeout_usec)`
+- `ClientEventType poll(service_name, response_out)`
 
 ### `RpcServicesServer`
-Manages the server side of one or more RPC services.
 
-*   `RpcServicesServer(node_id, impl_type, config_path, ...)`: Constructor.
-    *   `node_id`: The ID of the node this server is running on.
-*   `bool initialize_services(endpoint_container, client_node_id = std::nullopt)`: Reads the config and initializes all services this server is responsible for.
-*   `bool start_all_services()`: Starts RPC services (PDU endpoints are started via `EndpointContainer`).
-*   `ServerEventType poll(request_out)`: Polls for incoming requests from clients.
-*   `void send_reply(header, pdu)`: Sends a response PDU back to a client. (Note: Using the service helper is recommended).
+- `RpcServicesServer(node_id, impl_type, config_path, ...)`
+  - `node_id`: node ID for this server
+- `bool initialize_services(endpoint_container, client_node_id = std::nullopt)`
+- `bool start_all_services()`
+- `ServerEventType poll(request_out)`
+- `void send_reply(header, pdu)`
+
+## Why Polling?
+
+The API uses explicit `poll()` loops by design:
+- Integration-friendly for deterministic/tick-driven main loops.
+- Avoids hidden threads and timer behavior in the RPC layer.
+- Lets applications choose scheduling policy (tight loop, sleep interval, frame/tick alignment).
+
+## Most Users Only Need These Entry Points
+
+- `RpcServicesServer` and `RpcServicesClient` for server/client lifecycle and call flow.
+- `HakoRpcServiceServerTemplateType` for typed request/response conversion.
+- `config/sample/minimal/` as the baseline wiring model.
+
+Endpoint interface layer usage (`IRpcServerEndpoint` / `IRpcClientEndpoint`) is an extension point for custom behavior. Most users can ignore it.
+
+## Why Not gRPC?
+
+This library is not a gRPC replacement; it is a Hakoniwa-native control-plane RPC layer.
+
+- Hakoniwa deployments can face build/versioning constraints across platforms; keeping stack depth lower is operationally simpler.
+- PDU-native semantics are first-class here, and transport abstraction is already provided by `hakoniwa-pdu-endpoint`.
+- Control-plane RPC and PDU data paths are explicitly separable for deterministic simulation integration concerns.
+- Existing ROS IDL + PDU registry assets are reused directly; no additional IDL/runtime stack is required.
+- API shape remains consistent with existing Hakoniwa Endpoint/Bridge usage patterns.
+
+If you need polyglot clients, streaming, auth, or tracing, gRPC is a better fit.
 
 ## Configuration File Schema
 
-The service configuration is a JSON file with `services`.
+Service configuration example:
 
 ```json
 {
@@ -259,138 +374,17 @@ The service configuration is a JSON file with `services`.
   ]
 }
 ```
-*   **`pduMetaDataSize`**: The size of the metadata header in the PDU.
-*   **`services`**: An array of service definitions.
-    *   `name`: The unique name of the service.
-    *   `type`: The ROS service type name (e.g., `hako_srv_msgs/AddTwoInts`).
-    *   `pduSize`: Base/heap PDU sizes for server and client.
-    *   `server_endpoints`: One or more server endpoints (nodeId + endpointId).
-    *   `clients`: An array of clients allowed to call this service. Each client has a unique `name`, channel IDs, and a mapped endpoint.
 
-## Usage Example
-
-This example shows a simple server that provides an "Add" service and a client that calls it.
-
-### 1. Service Definition (ROS `AddTwoInts.srv`)
-```
-int64 a
-int64 b
----
-int64 sum
-```
-
-### 2. Server Implementation (`my_server.cpp`)
-```cpp
-#include "hakoniwa/pdu/rpc/rpc_services_server.hpp"
-#include "hakoniwa/pdu/rpc/rpc_service_helper.hpp"
-#include "hakoniwa/pdu/endpoint_container.hpp"
-#include "hakoniwa/pdu/endpoint_types.hpp"
-#include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp"
-#include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsResponsePacket.hpp"
-
-int main() {
-    // 1. Initialize endpoint container for "server_node"
-    auto server_endpoints = std::make_shared<hakoniwa::pdu::EndpointContainer>(
-        "server_node", "endpoints.json");
-    assert(server_endpoints->initialize() == HAKO_PDU_ERR_OK);
-    assert(server_endpoints->start_all() == HAKO_PDU_ERR_OK);
-
-    // 2. Initialize the server for "server_node"
-    hakoniwa::pdu::rpc::RpcServicesServer server(
-        "server_node", "RpcServerEndpointImpl", "service_config.json", 1000);
-    assert(server.initialize_services(server_endpoints));
-    assert(server.start_all_services());
-
-    // 3. Create a helper for the AddTwoInts service
-    HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
-
-    while (true) {
-        // 3. Poll for incoming requests
-        hakoniwa::pdu::rpc::RpcRequest server_request;
-        auto event = server.poll(server_request);
-
-        if (event == hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN) {
-            // 4. Extract the typed request data
-            Hako_AddTwoInts_req req_body;
-            service_helper.get_request_body(server_request, req_body);
-
-            // 5. Process the request and prepare the response
-            Hako_AddTwoInts_res res_body;
-            res_body.sum = req_body.a + req_body.b;
-
-            // 6. Send the typed response back
-            service_helper.reply(server, server_request,
-                hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE,
-                hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK,
-                res_body);
-        }
-    }
-    return 0;
-}
-```
-
-### 3. Client Implementation (`my_client.cpp`)
-```cpp
-#include "hakoniwa/pdu/rpc/rpc_services_client.hpp"
-#include "hakoniwa/pdu/rpc/rpc_service_helper.hpp"
-#include "hakoniwa/pdu/endpoint_container.hpp"
-#include "hakoniwa/pdu/endpoint_types.hpp"
-#include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp"
-#include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsResponsePacket.hpp"
-
-int main() {
-    // 1. Initialize endpoint container for "client_node"
-    auto client_endpoints = std::make_shared<hakoniwa::pdu::EndpointContainer>(
-        "client_node", "endpoints.json");
-    assert(client_endpoints->initialize() == HAKO_PDU_ERR_OK);
-    assert(client_endpoints->start_all() == HAKO_PDU_ERR_OK);
-
-    // 2. Initialize the client for "client_node" with a unique name "MyAdder"
-    hakoniwa::pdu::rpc::RpcServicesClient client(
-        "client_node", "MyAdder", "service_config.json", "RpcClientEndpointImpl", 1000);
-    assert(client.initialize_services(client_endpoints));
-    assert(client.start_all_services());
-
-    // 3. Create a helper for the AddTwoInts service
-    HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
-
-    // 4. Prepare the typed request
-    Hako_AddTwoInts_req client_req_body;
-    client_req_body.a = 5;
-    client_req_body.b = 7;
-
-    // 5. Call the service (sends the request)
-    service_helper.call(client, "Service/Add", client_req_body, 1000000); // 1 sec timeout for the entire transaction
-
-    // 6. Poll for the response
-    hakoniwa::pdu::rpc::RpcResponse client_response;
-    hakoniwa::pdu::rpc::ClientEventType client_event;
-    std::string service_name;
-
-    do {
-        client_event = client.poll(service_name, client_response);
-        // A small delay can be added here if running in a tight loop
-        // std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    } while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE);
-
-
-    // 7. Check the result
-    if (client_event == hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN) {
-        Hako_AddTwoInts_res client_res_body;
-        if (service_helper.get_response_body(client_response, client_res_body)) {
-            std::cout << "Response received: " << client_res_body.sum << std::endl;
-            assert(client_res_body.sum == 12);
-        }
-    } else {
-        std::cerr << "RPC call failed or timed out (event: " << client_event << ")" << std::endl;
-    }
-    return 0;
-}
-```
+Key fields:
+- `pduMetaDataSize`: metadata header size.
+- `services`: service definitions.
+  - `name`: unique service name.
+  - `type`: ROS service type (for example `hako_srv_msgs/AddTwoInts`).
+  - `pduSize`: base/heap PDU sizes for server/client.
+  - `server_endpoints`: server endpoint mappings.
+  - `clients`: allowed clients and channel mappings.
 
 ## Architecture
-
-The library is structured into the following main layers:
 
 ```mermaid
 flowchart TB
@@ -409,7 +403,7 @@ flowchart TB
         RpcClientEndpoint["IRpcClientEndpoint"]
         RpcServerEndpoint["IRpcServerEndpoint"]
     end
-    
+
     subgraph EndpointImplLayer["Endpoint Implementation"]
         RpcClientEndpointImpl["RpcClientEndpointImpl"]
         RpcServerEndpointImpl["RpcServerEndpointImpl"]
@@ -424,7 +418,7 @@ flowchart TB
 
     RpcServicesClient --> RpcClientEndpoint
     RpcServicesServer --> RpcServerEndpoint
-    
+
     RpcClientEndpoint <--- RpcClientEndpointImpl
     RpcServerEndpoint <--- RpcServerEndpointImpl
 
@@ -432,14 +426,8 @@ flowchart TB
     RpcServerEndpointImpl --> PduEndpoint
 ```
 
-*   **`RpcServicesServer` / `RpcServicesClient` (Service Layer)**: Manages a collection of RPC services and is the main entry point for users.
-*   **`IRpcServerEndpoint` / `IRpcClientEndpoint` (Endpoint Interface Layer)**: Defines the interface for a single RPC service.
-*   **`RpcServerEndpointImpl` / `RpcClientEndpointImpl` (Endpoint Implementation Layer)**: The concrete implementation that handles PDU communication.
-*   **`hakoniwa::pdu::Endpoint` (PDU Layer)**: The underlying PDU transport library.
-
-## Design Philosophy
-
-*   **Avoid gRPC**: We chose not to use gRPC to avoid potential build and versioning complexities across different platforms and to maintain a design that is more native to the Hakoniwa ecosystem.
-*   **API Consistency**: The API is designed to be consistent with existing Hakoniwa components.
-*   **Decoupling Control and Data Planes**: The design encourages separating reliable control signals (a good fit for this RPC library over TCP) from high-throughput PDU data (which might use UDP or shared memory).
-*   **Leverage Existing Assets**: The RPC service definitions (PDUs) are based on existing ROS IDL specifications, allowing for maximum reuse of established data structures.
+Layer responsibilities:
+- `RpcServicesServer` / `RpcServicesClient`: primary application entry points.
+- `IRpcServerEndpoint` / `IRpcClientEndpoint`: extension interfaces.
+- `RpcServerEndpointImpl` / `RpcClientEndpointImpl`: default endpoint implementations.
+- `hakoniwa::pdu::Endpoint`: underlying transport/data-plane interface.

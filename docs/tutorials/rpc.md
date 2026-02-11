@@ -38,10 +38,16 @@ This tutorial uses the sample configs in `config/sample/`:
   - `config/sample/tcp_client_inout_comm.json`
 - PDU definitions: `config/sample/pdudef.json`
 
+Minimal variant:
+
+- `config/sample/minimal/` contains a compact equivalent set.
+- See `config/sample/minimal/README.md` for file-by-file notes.
+
 Validate configs before running:
 
 ```bash
-python tools/validate_configs.py config/sample/simple-service.json
+PYTHONPATH=python:$PYTHONPATH \
+python -m hakoniwa_pdu_rpc.validate_configs config/sample/simple-service.json --skip-endpoint-validation
 ```
 
 ## Server Example

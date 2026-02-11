@@ -1,0 +1,7 @@
+{
+  "name": "client_endpoint",
+  "pdu_def_path": "../pdudef.json",
+  "cache": "queue.json",
+  "comm": "tcp_client_inout_comm.json"
+}
+
