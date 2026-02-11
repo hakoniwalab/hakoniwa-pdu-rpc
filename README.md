@@ -28,8 +28,7 @@ Design intent:
 - Tutorial: `docs/tutorials/rpc.md`
 - Minimal config set: `config/sample/minimal/README.md`
 - JSON schema: `config/schema/service-schema.json`
-- Config validator (recommended first step):
-  - `PYTHONPATH=python:$PYTHONPATH python -m hakoniwa_pdu_rpc.validate_configs config/sample/simple-service.json --skip-endpoint-validation`
+- Config validator: `PYTHONPATH=python:$PYTHONPATH python -m hakoniwa_pdu_rpc.validate_configs config/sample/simple-service.json --skip-endpoint-validation`
 
 ## When To Use / Not Use
 
@@ -316,6 +315,7 @@ The API uses explicit `poll()` loops by design:
 - Integration-friendly for deterministic/tick-driven main loops.
 - Avoids hidden threads and timer behavior in the RPC layer.
 - Lets applications choose scheduling policy (tight loop, sleep interval, frame/tick alignment).
+- Q: Is polling inefficient? A: Polling is explicit for deterministic/tick-driven integration; callers choose their loop and sleep/backoff policy (no hidden threads).
 
 ## Most Users Only Need These Entry Points
 
@@ -336,6 +336,12 @@ This library is not a gRPC replacement; it is a Hakoniwa-native control-plane RP
 - API shape remains consistent with existing Hakoniwa Endpoint/Bridge usage patterns.
 
 If you need polyglot clients, streaming, auth, or tracing, gRPC is a better fit.
+A hybrid approach is also valid: use gRPC for the control-plane and keep Hakoniwa PDU for the data-plane.
+Trade-off of the hybrid:
+- Two independent middleware stacks (build, dependencies, lifecycle).
+- Two debugging toolchains and mental models.
+- Integration drift between RPC semantics and Hakoniwa-native topology/config.
+This is a deliberate trade-off: broader RPC features are traded for reproducibility and tight Hakoniwa-native integration.
 
 ## Configuration File Schema
 
