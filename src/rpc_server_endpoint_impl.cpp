@@ -88,9 +88,19 @@ bool RpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int
             hakoniwa::pdu::PduResolvedKey pdu_resolved_key;
             pdu_resolved_key.robot = service_name;
             pdu_resolved_key.channel_id = req_def.channel_id;
+            auto weak_self = weak_from_this();
             endpoint_->subscribe_on_recv_callback(pdu_resolved_key,
-                [this](const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) {
-                    RpcServerEndpointImpl::pdu_recv_callback(resolved_pdu_key, data);
+                [weak_self](const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) {
+                    auto self = weak_self.lock();
+                    if (!self || !self->endpoint_) {
+                        return;
+                    }
+                    std::string pdu_name = self->endpoint_->get_pdu_name(resolved_pdu_key);
+                    hakoniwa::pdu::PduKey pdu_key = {resolved_pdu_key.robot, pdu_name};
+                    PduData pdu_data = {};
+                    pdu_data.resize(data.size());
+                    std::memcpy(pdu_data.data(), data.data(), data.size());
+                    self->put_pending_request(pdu_key, pdu_data);
             });
         }
     } catch (const nlohmann::json::exception& e) {
