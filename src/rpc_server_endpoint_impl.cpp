@@ -42,6 +42,44 @@ bool RpcServerEndpointImpl::initialize(const nlohmann::json& service_config, int
             std::cerr << "ERROR: PDU Definition is not available in the endpoint." << std::endl;
             return false;
         }
+        dynamic_client_ = service_config.value("dynamicClient", false);
+        if (dynamic_client_) {
+            dynamic_request_channel_id_ = service_config["requestChannelId"];
+            dynamic_response_channel_id_ = service_config["responseChannelId"];
+            dynamic_request_pdu_size_ = service_config["pduSize"]["server"]["baseSize"].get<size_t>()
+                + service_config["pduSize"]["client"]["heapSize"].get<size_t>()
+                + pdu_meta_data_size;
+            dynamic_response_pdu_size_ = service_config["pduSize"]["client"]["baseSize"].get<size_t>()
+                + service_config["pduSize"]["server"]["heapSize"].get<size_t>()
+                + pdu_meta_data_size;
+
+            PduDef req_def;
+            req_def.org_name = "Req";
+            req_def.name = service_name + "_Req";
+            req_def.channel_id = dynamic_request_channel_id_;
+            req_def.pdu_size = dynamic_request_pdu_size_;
+            req_def.method_type = "RPC";
+            pdu_def->add_definition(service_name, req_def);
+
+            hakoniwa::pdu::PduResolvedKey pdu_resolved_key;
+            pdu_resolved_key.robot = service_name;
+            pdu_resolved_key.channel_id = req_def.channel_id;
+            auto weak_self = weak_from_this();
+            endpoint_->subscribe_on_recv_callback(pdu_resolved_key,
+                [weak_self](const hakoniwa::pdu::PduResolvedKey& resolved_pdu_key, std::span<const std::byte> data) {
+                    auto self = weak_self.lock();
+                    if (!self || !self->endpoint_) {
+                        return;
+                    }
+                    std::string pdu_name = self->endpoint_->get_pdu_name(resolved_pdu_key);
+                    hakoniwa::pdu::PduKey pdu_key = {resolved_pdu_key.robot, pdu_name};
+                    PduData pdu_data = {};
+                    pdu_data.resize(data.size());
+                    std::memcpy(pdu_data.data(), data.data(), data.size());
+                    self->put_pending_request(pdu_key, pdu_data);
+            });
+            return true;
+        }
 
         for (const auto& client : service_config["clients"]) {
             std::string client_name = client["name"];
@@ -230,6 +268,9 @@ bool RpcServerEndpointImpl::validate_header(HakoCpp_ServiceRequestHeader& header
         std::cerr << "ERROR: service_name is invalid: " << header.service_name << std::endl;
         return false;
     }
+    if (dynamic_client_) {
+        return ensure_dynamic_client(header.client_name);
+    }
     if (std::find(registered_clients_.begin(), registered_clients_.end(), header.client_name) == registered_clients_.end()) {
         std::cerr << "ERROR: client_name is invalid: " << header.client_name << std::endl;
         return false;
@@ -240,6 +281,47 @@ bool RpcServerEndpointImpl::validate_header(HakoCpp_ServiceRequestHeader& header
     }
     return true;
 } 
+
+bool RpcServerEndpointImpl::ensure_dynamic_client(const std::string& client_name)
+{
+    if (client_name.empty()) {
+        std::cerr << "ERROR: client_name is empty." << std::endl;
+        return false;
+    }
+    if (server_states_.find(client_name) != server_states_.end()) {
+        return true;
+    }
+    if (registered_clients_.size() >= max_clients_) {
+        std::cerr << "ERROR: dynamic client limit reached for service: " << service_name_ << std::endl;
+        return false;
+    }
+    auto pdu_def = endpoint_->get_pdu_definition();
+    if (pdu_def == nullptr) {
+        std::cerr << "ERROR: PDU Definition is not available in the endpoint." << std::endl;
+        return false;
+    }
+
+    PduDef req_def;
+    req_def.org_name = client_name + "Req";
+    req_def.name = service_name_ + "_" + req_def.org_name;
+    req_def.channel_id = dynamic_request_channel_id_;
+    req_def.pdu_size = dynamic_request_pdu_size_;
+    req_def.method_type = "RPC";
+    pdu_def->add_definition(service_name_, req_def);
+
+    PduDef res_def;
+    res_def.org_name = client_name + "Res";
+    res_def.name = service_name_ + "_" + res_def.org_name;
+    res_def.channel_id = dynamic_response_channel_id_;
+    res_def.pdu_size = dynamic_response_pdu_size_;
+    res_def.method_type = "RPC";
+    pdu_def->add_definition(service_name_, res_def);
+
+    registered_clients_.push_back(client_name);
+    server_states_[client_name].state = SERVER_STATE_IDLE;
+    server_states_[client_name].request_id = 0;
+    return true;
+}
 
 
 ServerEventType RpcServerEndpointImpl::handle_request_in(RpcRequest& request) {

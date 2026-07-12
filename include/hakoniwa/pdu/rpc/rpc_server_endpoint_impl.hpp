@@ -83,6 +83,11 @@ private:
     std::vector<std::string> registered_clients_;
     std::vector<PendingRequest> pending_requests_;
     size_t max_clients_;
+    bool dynamic_client_ = false;
+    HakoPduChannelIdType dynamic_request_channel_id_ = 0;
+    HakoPduChannelIdType dynamic_response_channel_id_ = 0;
+    size_t dynamic_request_pdu_size_ = 0;
+    size_t dynamic_response_pdu_size_ = 0;
     hako::pdu::PduConvertor<HakoCpp_ServiceRequestHeader, hako::pdu::msgs::hako_srv_msgs::ServiceRequestHeader> convertor_request_;
     hako::pdu::PduConvertor<HakoCpp_ServiceResponseHeader, hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader> convertor_response_;
     
@@ -91,6 +96,7 @@ private:
 
 
     bool validate_header(HakoCpp_ServiceRequestHeader& header);
+    bool ensure_dynamic_client(const std::string& client_name);
     ServerEventType handle_request_in(RpcRequest& request);
     ServerEventType handle_cancel_request(RpcRequest& request);
 };
