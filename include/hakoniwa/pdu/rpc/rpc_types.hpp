@@ -75,6 +75,7 @@ enum HakoServiceResultCode {
     HAKO_SERVICE_RESULT_CODE_CANCELED,      // Request was canceled by client
     HAKO_SERVICE_RESULT_CODE_INVALID,       // Request was malformed or in invalid state
     HAKO_SERVICE_RESULT_CODE_BUSY,          // Server is busy processing another request
+    HAKO_SERVICE_RESULT_CODE_NOT_SUPPORTED, // Requested operation or service is not supported
     HAKO_SERVICE_RESULT_CODE_NUM
 };
 
