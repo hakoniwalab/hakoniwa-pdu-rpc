@@ -241,6 +241,10 @@ def test_timeout_cancel(ctx: Context) -> None:
     run_test_target(ctx, "hakoniwa_pdu_rpc_timeout_cancel_test", "hakoniwa_pdu_rpc_timeout_cancel_test")
 
 
+def test_cancel_race(ctx: Context) -> None:
+    run_test_target(ctx, "hakoniwa_pdu_rpc_cancel_race_test", "hakoniwa_pdu_rpc_cancel_race_test")
+
+
 def test(ctx: Context) -> None:
     # Legacy aggregate tests remain available for audit but are not the phased
     # cross-platform gates.
@@ -294,6 +298,7 @@ def main() -> int:
             "test-basic",
             "test-infinite-wait",
             "test-timeout-cancel",
+            "test-cancel-race",
             "test",
             "install",
             "package-test",
@@ -325,6 +330,8 @@ def main() -> int:
         test_infinite_wait(ctx)
     elif args.command == "test-timeout-cancel":
         test_timeout_cancel(ctx)
+    elif args.command == "test-cancel-race":
+        test_cancel_race(ctx)
     elif args.command == "test":
         test(ctx)
     elif args.command == "install":
