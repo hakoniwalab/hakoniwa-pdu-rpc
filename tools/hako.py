@@ -246,9 +246,39 @@ def test_cancel_race(ctx: Context) -> None:
 
 
 def test(ctx: Context) -> None:
-    # Legacy aggregate tests remain available for audit but are not the phased
-    # cross-platform gates.
-    run_test_target(ctx, "hakoniwa_pdu_rpc_test", "hakoniwa_pdu_rpc_test")
+    configure(ctx, tests=True)
+    reviewed_targets = [
+        "hakoniwa_pdu_rpc_basic_test",
+        "hakoniwa_pdu_rpc_infinite_wait_test",
+        "hakoniwa_pdu_rpc_timeout_cancel_test",
+        "hakoniwa_pdu_rpc_cancel_race_test",
+    ]
+    run(
+        [
+            "cmake",
+            "--build",
+            str(ctx.build_dir),
+            "--config",
+            ctx.build_type,
+            "--target",
+            *reviewed_targets,
+            "--parallel",
+        ],
+        cwd=ctx.repo_root,
+    )
+    run(
+        [
+            "ctest",
+            "--test-dir",
+            str(ctx.build_dir),
+            "-C",
+            ctx.build_type,
+            "--output-on-failure",
+            "-R",
+            "^hakoniwa_pdu_rpc_(basic|infinite_wait|timeout_cancel|cancel_race)_test$",
+        ],
+        cwd=ctx.repo_root,
+    )
 
 
 def package_test(ctx: Context) -> None:
