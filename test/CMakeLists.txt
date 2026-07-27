@@ -59,6 +59,22 @@ set_tests_properties(hakoniwa_pdu_rpc_timeout_cancel_test PROPERTIES
   TIMEOUT 30
 )
 
+# Phase 4: after explicit cancellation, a normal response may still win before
+# the server processes the CANCEL. A late CANCEL must be harmless.
+add_executable(hakoniwa_pdu_rpc_cancel_race_test
+  rpc_cancel_race_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_rpc_cancel_race_test
+  PRIVATE
+    hakoniwa_pdu_rpc::rpc
+    GTest::gtest_main
+)
+add_test(NAME hakoniwa_pdu_rpc_cancel_race_test COMMAND hakoniwa_pdu_rpc_cancel_race_test)
+set_tests_properties(hakoniwa_pdu_rpc_cancel_race_test PROPERTIES
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  TIMEOUT 30
+)
+
 # Legacy aggregate tests are intentionally preserved unchanged for audit.
 # They are not part of the phased cross-platform gates.
 add_executable(hakoniwa_pdu_rpc_test
