@@ -2,6 +2,7 @@ find_package(GTest REQUIRED)
 
 add_executable(hakoniwa_pdu_rpc_test
     hakoniwa_pdu_rpc_test.cpp
+    rpc_timeout_cancel_semantics_test.cpp
     #abnormal_case_test.cpp
 )
 if(APPLE)
