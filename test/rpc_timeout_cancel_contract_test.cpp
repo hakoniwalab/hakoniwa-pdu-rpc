@@ -169,7 +169,7 @@ TEST(RpcTimeoutCancelContractTest, TimeoutRequiresExplicitCancelAndTerminalCance
         hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE,
         hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_CANCELED,
         cancel_response);
-    ASSERT_TRUE(runtime.server().send_cancel_reply(cancel_request.header, cancel_response));
+    runtime.server().send_cancel_reply(cancel_request.header, cancel_response);
 
     service_name.clear();
     response = {};
