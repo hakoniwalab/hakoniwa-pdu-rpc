@@ -42,7 +42,7 @@ private:
 };
 
 class RpcTimeoutCancelSemanticsTest : public ::testing::Test {
-protected:
+public:
     static void SetUpTestSuite()
     {
         cwd_ = std::make_unique<ScopedCurrentPath>("../../test");
