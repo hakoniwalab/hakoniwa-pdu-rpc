@@ -1,16 +1,18 @@
 include(FetchContent)
 
-option(HAKO_PDU_RPC_INSTALL_NLOHMANN_JSON "Install bundled nlohmann_json when installing hakoniwa-pdu-rpc" ON)
-if(HAKO_PDU_RPC_INSTALL_NLOHMANN_JSON)
-  set(JSON_Install ON CACHE INTERNAL "")
-endif()
+if(NOT TARGET nlohmann_json::nlohmann_json)
+  option(HAKO_PDU_RPC_INSTALL_NLOHMANN_JSON "Install bundled nlohmann_json when installing hakoniwa-pdu-rpc" ON)
+  if(HAKO_PDU_RPC_INSTALL_NLOHMANN_JSON)
+    set(JSON_Install ON CACHE INTERNAL "")
+  endif()
 
-FetchContent_Declare(
-  nlohmann_json
-  GIT_REPOSITORY https://github.com/nlohmann/json.git
-  GIT_TAG v3.11.3
-)
-FetchContent_MakeAvailable(nlohmann_json)
+  FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+  )
+  FetchContent_MakeAvailable(nlohmann_json)
+endif()
 
 add_library(hakoniwa_pdu_rpc
   rpc_server_endpoint_impl.cpp
