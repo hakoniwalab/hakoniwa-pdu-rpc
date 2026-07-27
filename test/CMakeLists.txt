@@ -24,14 +24,6 @@ target_link_libraries(hakoniwa_pdu_rpc_test
     GTest::gtest_main
 )
 
-# The legacy test file still includes <unistd.h>. Keep the production library
-# fully portable and isolate the small MSVC compatibility shim to this test only.
-if(WIN32)
-  target_include_directories(hakoniwa_pdu_rpc_test PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/compat"
-  )
-endif()
-
 add_test(NAME hakoniwa_pdu_rpc_test COMMAND hakoniwa_pdu_rpc_test)
 set_tests_properties(hakoniwa_pdu_rpc_test PROPERTIES
   WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
