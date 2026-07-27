@@ -126,12 +126,14 @@ public:
         if (!started_) {
             return;
         }
+        // Match the lifecycle used by the dedicated timeout/cancel regression
+        // fixture: stop transports first, then clear service state/instances.
+        server_endpoint_->stop_all();
+        client_endpoint_->stop_all();
         server_.stop_all_services();
         client_.stop_all_services();
         server_.clear_all_instances();
         client_.clear_all_instances();
-        server_endpoint_->stop_all();
-        client_endpoint_->stop_all();
         started_ = false;
     }
 
@@ -215,47 +217,6 @@ TEST_F(RpcServicesTest, ConfigParsingTest)
     HakoCpp_AddTwoIntsResponse parsed_response{};
     ASSERT_TRUE(service.get_response_body(response, parsed_response));
     EXPECT_EQ(parsed_response.sum, 12);
-}
-
-TEST_F(RpcServicesTest, RpcCallTimeoutTest)
-{
-    RpcRuntime runtime;
-    ASSERT_TRUE(runtime.start());
-
-    HakoRpcServiceServerTemplateType(AddTwoInts) service;
-    HakoCpp_AddTwoIntsRequest request{};
-    request.a = 5;
-    request.b = 7;
-    ASSERT_TRUE(service.call(runtime.client(), kServiceName, request, 100'000));
-
-    RpcRequest original_request;
-    ASSERT_EQ(runtime.wait_server_event(original_request), ServerEventType::REQUEST_IN);
-
-    std::string service_name;
-    RpcResponse response;
-    ASSERT_EQ(runtime.wait_client_event(service_name, response), ClientEventType::RESPONSE_TIMEOUT);
-    EXPECT_EQ(service_name, kServiceName);
-
-    // Core-compatible contract: timeout is only a notification. Resolve the
-    // still-running RPC explicitly before tearing down the transport.
-    ASSERT_TRUE(runtime.client().send_cancel_request(kServiceName));
-
-    RpcRequest cancel_request;
-    ASSERT_EQ(runtime.wait_server_event(cancel_request), ServerEventType::REQUEST_CANCEL);
-    EXPECT_EQ(cancel_request.header.request_id, original_request.header.request_id);
-
-    hakoniwa::pdu::rpc::PduData cancel_response;
-    runtime.server().create_reply_buffer(
-        cancel_request.header,
-        hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE,
-        hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_CANCELED,
-        cancel_response);
-    runtime.server().send_cancel_reply(cancel_request.header, cancel_response);
-
-    service_name.clear();
-    response = {};
-    ASSERT_EQ(runtime.wait_client_event(service_name, response), ClientEventType::RESPONSE_CANCEL);
-    EXPECT_EQ(service_name, kServiceName);
 }
 
 TEST_F(RpcServicesTest, MultipleServiceCallsTest)
