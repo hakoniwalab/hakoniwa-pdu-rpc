@@ -8,6 +8,7 @@
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsResponsePacket.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -42,7 +43,7 @@ private:
 };
 
 class RpcServicesTest : public ::testing::Test {
-protected:
+public:
     static void SetUpTestSuite()
     {
         cwd_ = std::make_unique<ScopedCurrentPath>("../../test");
