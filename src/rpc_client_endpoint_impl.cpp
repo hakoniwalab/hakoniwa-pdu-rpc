@@ -170,22 +170,20 @@ ClientEventType RpcClientEndpointImpl::poll(RpcResponse& response) {
         return ClientEventType::NONE;
     }
 
-    if (client_state_.state == CLIENT_STATE_RUNNING || client_state_.state == CLIENT_STATE_CANCELLING) {
-        // Timeout check
+    if (client_state_.state == CLIENT_STATE_RUNNING) {
+        // Match hakoniwa-core-pro semantics: a timeout is an event. The caller
+        // decides whether to issue an explicit cancel request. Keeping the
+        // client RUNNING here also preserves the race where a normal response
+        // can arrive after the timeout event but before cancellation is sent.
         if (current_timeout_usec_ > 0) {
             if (time_source_->get_microseconds() - request_start_time_usec_ > current_timeout_usec_) {
                 std::cerr << "ERROR: RPC call timed out" << std::endl;
-                if (send_cancel_request()) {
-                    client_state_.state = CLIENT_STATE_CANCELLING;
-                    std::cout << "INFO: Sent cancel request due to timeout." << std::endl;
-                } else {
-                    client_state_.state = CLIENT_STATE_IDLE;
-                    std::cerr << "ERROR: Failed to send cancel request after timeout." << std::endl;
-                }
                 return ClientEventType::RESPONSE_TIMEOUT;
             }
         }
+    }
 
+    if (client_state_.state == CLIENT_STATE_RUNNING || client_state_.state == CLIENT_STATE_CANCELLING) {
         // Response check
         auto it = pending_responses_.begin();
         while (it != pending_responses_.end()) {
@@ -201,7 +199,6 @@ ClientEventType RpcClientEndpointImpl::poll(RpcResponse& response) {
             ++it;
         }
     }
-    // Add handling for CANCELLING state if needed
     return ClientEventType::NONE;
 }
 
