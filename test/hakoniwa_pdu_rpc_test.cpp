@@ -1,457 +1,344 @@
 #include <gtest/gtest.h>
+
 #include "hakoniwa/pdu/endpoint_container.hpp"
-#include "hakoniwa/pdu/rpc/rpc_services_server.hpp"
-#include "hakoniwa/pdu/rpc/rpc_services_client.hpp"
 #include "hakoniwa/pdu/rpc/rpc_service_helper.hpp"
+#include "hakoniwa/pdu/rpc/rpc_services_client.hpp"
+#include "hakoniwa/pdu/rpc/rpc_services_server.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsResponsePacket.hpp"
-#include "pdu_convertor.hpp"
-#include <fstream>
-#include <iostream>
-#include <unistd.h> // For chdir, getcwd
-#include <cstdlib>  // For free
+
+#include <chrono>
+#include <filesystem>
+#include <memory>
+#include <string>
 #include <thread>
 
-// Ensure the working directory is set to the project root for tests
-class DirectoryChanger {
-public:
-    DirectoryChanger(const std::string& target_dir) {
-        char* current_dir = getcwd(NULL, 0);
-        if (current_dir) {
-            original_dir_ = current_dir;
-        } else {
-            original_dir_ = strdup(""); // Fallback in case getcwd fails
-            std::cerr << "WARNING: Failed to get current working directory." << std::endl;
-        }
+namespace {
 
-        if (chdir(target_dir.c_str()) != 0) {
-            std::cerr << "ERROR: Failed to change directory to " << target_dir << std::endl;
-            // Handle error appropriately, maybe throw exception
-            throw std::runtime_error("Failed to change directory.");
-        }
+using namespace std::chrono_literals;
+using hakoniwa::pdu::rpc::ClientEventType;
+using hakoniwa::pdu::rpc::RpcRequest;
+using hakoniwa::pdu::rpc::RpcResponse;
+using hakoniwa::pdu::rpc::RpcServicesClient;
+using hakoniwa::pdu::rpc::RpcServicesServer;
+using hakoniwa::pdu::rpc::ServerEventType;
+
+class ScopedCurrentPath {
+public:
+    explicit ScopedCurrentPath(const std::filesystem::path& target)
+        : original_(std::filesystem::current_path())
+    {
+        std::filesystem::current_path(target);
     }
 
-    ~DirectoryChanger() {
-        if (chdir(original_dir_) != 0) {
-            std::cerr << "ERROR: Failed to restore directory to " << original_dir_ << std::endl;
-        }
-        free(original_dir_);
+    ~ScopedCurrentPath()
+    {
+        std::error_code ec;
+        std::filesystem::current_path(original_, ec);
     }
 
 private:
-    char* original_dir_;
+    std::filesystem::path original_;
 };
 
-// Test fixture for RPC services
 class RpcServicesTest : public ::testing::Test {
 protected:
-    // Path to the unified service config file
-    const std::string config_path_ = "configs/service_config.json";
-    const std::string endpoint_config_path_ = "configs/endpoints.json";
-    // Node IDs from the config
-    const std::string server_node_id_ = "server_node";
-    const std::string client_node_id_ = "client_node";
-    // Client name for the RpcServicesClient instance
-    const std::string rpc_client_instance_name_ = "TestClient";
-    // Service name used in config
-    const std::string service_name_ = "Service/Add";
-
-    // Static object to change directory once for all tests in this fixture
-    static DirectoryChanger* dir_changer_;
-
-    static void SetUpTestSuite() {
-        dir_changer_ = new DirectoryChanger("../../test");
+    static void SetUpTestSuite()
+    {
+        cwd_ = std::make_unique<ScopedCurrentPath>("../../test");
     }
 
-    static void TearDownTestSuite() {
-        delete dir_changer_;
-        dir_changer_ = nullptr;
+    static void TearDownTestSuite()
+    {
+        cwd_.reset();
     }
 
-    // Set up objects for each test
-    void SetUp() override {
-        // Individual test setup if needed
-    }
+    static inline std::unique_ptr<ScopedCurrentPath> cwd_;
 
-    // Clean up objects after each test
-    void TearDown() override {
-        // Individual test cleanup if necessary
-    }
+    static constexpr const char* kConfigPath = "configs/service_config.json";
+    static constexpr const char* kEndpointConfigPath = "configs/endpoints.json";
+    static constexpr const char* kServerNodeId = "server_node";
+    static constexpr const char* kClientNodeId = "client_node";
+    static constexpr const char* kClientName = "TestClient";
+    static constexpr const char* kServiceName = "Service/Add";
 };
 
-// Initialize static member
-DirectoryChanger* RpcServicesTest::dir_changer_ = nullptr;
-
-// Test case for configuration parsing
-TEST_F(RpcServicesTest, ConfigParsingTest) {
-    // Initialize server
-    std::shared_ptr<hakoniwa::pdu::EndpointContainer> server_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("server_node", endpoint_config_path_);
-    ASSERT_EQ(server_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
-    hakoniwa::pdu::rpc::RpcServicesServer server(server_node_id_, "RpcServerEndpointImpl", config_path_, 1000);
-    ASSERT_TRUE(server.initialize_services(server_endpoint_container));
-    server_endpoint_container->start_all();
-    server.start_all_services();
-
-    std::shared_ptr<hakoniwa::pdu::EndpointContainer> client_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("client_node", endpoint_config_path_);
-    ASSERT_EQ(client_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
-
-    // Initialize client
-    hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "RpcClientEndpointImpl", 1000);
-    ASSERT_TRUE(client.initialize_services(client_endpoint_container));
-    client_endpoint_container->start_all();
-    client.start_all_services();
-
-    while (!server_endpoint_container->is_running_all() || !client_endpoint_container->is_running_all()) {
-        usleep(1000); // Wait for 1ms before checking again
-    }
-    HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
-
-    // Client side: send request
+class RpcRuntime {
+public:
+    RpcRuntime()
+        : server_endpoint_(std::make_shared<hakoniwa::pdu::EndpointContainer>(
+              RpcServicesTest::kServerNodeId,
+              RpcServicesTest::kEndpointConfigPath))
+        , client_endpoint_(std::make_shared<hakoniwa::pdu::EndpointContainer>(
+              RpcServicesTest::kClientNodeId,
+              RpcServicesTest::kEndpointConfigPath))
+        , server_(
+              RpcServicesTest::kServerNodeId,
+              "RpcServerEndpointImpl",
+              RpcServicesTest::kConfigPath,
+              1000)
+        , client_(
+              RpcServicesTest::kClientNodeId,
+              RpcServicesTest::kClientName,
+              RpcServicesTest::kConfigPath,
+              "RpcClientEndpointImpl",
+              1000)
     {
-        HakoCpp_AddTwoIntsRequest client_req_body;
-        client_req_body.a = 5;
-        client_req_body.b = 7;
-        ASSERT_TRUE(service_helper.call(client, service_name_, client_req_body, 1000000)); // 1 second timeout
     }
 
-    // Server side: Poll for request
+    ~RpcRuntime()
     {
-        hakoniwa::pdu::rpc::RpcRequest server_request;
-        hakoniwa::pdu::rpc::ServerEventType server_event = hakoniwa::pdu::rpc::ServerEventType::NONE;
-        while (server_event == hakoniwa::pdu::rpc::ServerEventType::NONE) {
-            usleep(1000); // Wait for 1ms before polling again
-            server_event = server.poll(server_request);
+        stop();
+    }
+
+    bool start()
+    {
+        if (server_endpoint_->initialize() != HAKO_PDU_ERR_OK ||
+            client_endpoint_->initialize() != HAKO_PDU_ERR_OK) {
+            return false;
         }
-        ASSERT_EQ(server_event, hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN);
-
-        // get HakoCpp_AddTwoIntsRequest from packet
-        HakoCpp_AddTwoIntsRequest req_body;
-        bool got_req_body = service_helper.get_request_body(server_request, req_body);
-        ASSERT_TRUE(got_req_body);
-        ASSERT_EQ(req_body.a, 5);
-        ASSERT_EQ(req_body.b, 7);
-
-        // set reply data
-        HakoCpp_AddTwoIntsResponse res_body;
-        res_body.sum = req_body.a + req_body.b;
-
-        // get pdu data for response buffer
-        ASSERT_TRUE(service_helper.reply(server, server_request, 
-            hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE, 
-            hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK, 
-            res_body));
-    }
-
-    // Client side: Poll for response
-    {
-        hakoniwa::pdu::rpc::RpcResponse client_response;
-        hakoniwa::pdu::rpc::ClientEventType client_event = hakoniwa::pdu::rpc::ClientEventType::NONE;
-        std::string service_name;
-        while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE) {
-            usleep(1000); // Wait for 1ms before polling again
-            client_event = client.poll(service_name, client_response);
+        if (!server_.initialize_services(server_endpoint_) ||
+            !client_.initialize_services(client_endpoint_)) {
+            return false;
         }
-        ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN);
-        ASSERT_EQ(service_name, service_name_);
+        if (server_endpoint_->start_all() != HAKO_PDU_ERR_OK ||
+            client_endpoint_->start_all() != HAKO_PDU_ERR_OK) {
+            return false;
+        }
+        if (!server_.start_all_services() || !client_.start_all_services()) {
+            return false;
+        }
 
-        HakoCpp_AddTwoIntsResponse client_res_body;
-        bool got_res_body = service_helper.get_response_body(client_response, client_res_body);
-        ASSERT_TRUE(got_res_body);
-        ASSERT_EQ(client_res_body.sum, 12);
-
-        server.stop_all_services();
-        client.stop_all_services();
-
-        server.clear_all_instances();
-        client.clear_all_instances();
-    }
-    server_endpoint_container->stop_all();
-    client_endpoint_container->stop_all();
-}
-// Test case for RPC call timeout
-TEST_F(RpcServicesTest, RpcCallTimeoutTest) {
-    std::shared_ptr<hakoniwa::pdu::EndpointContainer> server_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("server_node", endpoint_config_path_);
-    ASSERT_EQ(server_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
-    std::shared_ptr<hakoniwa::pdu::EndpointContainer> client_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("client_node", endpoint_config_path_);
-    ASSERT_EQ(client_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
-    // Initialize server
-    hakoniwa::pdu::rpc::RpcServicesServer server(server_node_id_, "RpcServerEndpointImpl", config_path_, 1000);
-    ASSERT_TRUE(server.initialize_services(server_endpoint_container));
-
-    // Initialize client
-    hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "RpcClientEndpointImpl", 1000);
-    ASSERT_TRUE(client.initialize_services(client_endpoint_container));
-
-    server_endpoint_container->start_all();
-    client_endpoint_container->start_all();
-
-    server.start_all_services();
-    client.start_all_services();
-
-    while (!server_endpoint_container->is_running_all() || !client_endpoint_container->is_running_all()) {
-        usleep(1000); // Wait for 1ms before checking again
-    }
-    HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
-
-    // Client side: send request and expect timeout
-    {
-        HakoCpp_AddTwoIntsRequest client_req_body;
-        client_req_body.a = 5;
-        client_req_body.b = 7;
-        // Expect call to fail due to timeout (100ms)
-        ASSERT_TRUE(service_helper.call(client, service_name_, client_req_body, 100000)); // 100ms timeout
-    }
-
-    // Server side: Poll for request, but do not reply
-    {
-        hakoniwa::pdu::rpc::RpcRequest server_request;
-        hakoniwa::pdu::rpc::ServerEventType server_event = hakoniwa::pdu::rpc::ServerEventType::NONE;
-        // Wait a bit longer than client timeout to ensure request arrives
-        for (int i = 0; i < 200; ++i) { 
-            server_event = server.poll(server_request);
-            if (server_event == hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN) {
-                break;
+        const auto deadline = std::chrono::steady_clock::now() + 3s;
+        while (!server_endpoint_->is_running_all() || !client_endpoint_->is_running_all()) {
+            if (std::chrono::steady_clock::now() >= deadline) {
+                return false;
             }
-            usleep(1000);
+            std::this_thread::sleep_for(1ms);
         }
-        // Verify that the server did receive the request
-        ASSERT_EQ(server_event, hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN);
-
-        // Intentionally DO NOT send a reply to cause a timeout on the client
-        std::cout << "Server received request, but will not reply, causing a timeout." << std::endl;
+        started_ = true;
+        return true;
     }
 
-    // Client side: Poll should not receive a response
+    void stop()
     {
-        hakoniwa::pdu::rpc::RpcResponse client_response;
-        hakoniwa::pdu::rpc::ClientEventType client_event = hakoniwa::pdu::rpc::ClientEventType::NONE;
-        std::string service_name;
-        while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE) {
-            usleep(1000); // Wait for 1ms before polling again
-            client_event = client.poll(service_name, client_response);
+        if (!started_) {
+            return;
         }
-        // Expect no response event
-        ASSERT_EQ(service_name, service_name_);
-        ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_TIMEOUT);
+        server_.stop_all_services();
+        client_.stop_all_services();
+        server_.clear_all_instances();
+        client_.clear_all_instances();
+        server_endpoint_->stop_all();
+        client_endpoint_->stop_all();
+        started_ = false;
     }
-    server_endpoint_container->stop_all();
-    client_endpoint_container->stop_all();
 
-    server.stop_all_services();
-    client.stop_all_services();
-    server.clear_all_instances();
-    client.clear_all_instances();
+    ServerEventType wait_server_event(RpcRequest& request, std::chrono::milliseconds timeout = 2s)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        for (;;) {
+            const auto event = server_.poll(request);
+            if (event != ServerEventType::NONE) {
+                return event;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                return ServerEventType::NONE;
+            }
+            std::this_thread::sleep_for(1ms);
+        }
+    }
+
+    ClientEventType wait_client_event(
+        std::string& service_name,
+        RpcResponse& response,
+        std::chrono::milliseconds timeout = 2s)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        for (;;) {
+            const auto event = client_.poll(service_name, response);
+            if (event != ClientEventType::NONE) {
+                return event;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                return ClientEventType::NONE;
+            }
+            std::this_thread::sleep_for(1ms);
+        }
+    }
+
+    RpcServicesServer& server() { return server_; }
+    RpcServicesClient& client() { return client_; }
+
+private:
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> server_endpoint_;
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> client_endpoint_;
+    RpcServicesServer server_;
+    RpcServicesClient client_;
+    bool started_ = false;
+};
+
+TEST_F(RpcServicesTest, ConfigParsingTest)
+{
+    RpcRuntime runtime;
+    ASSERT_TRUE(runtime.start());
+
+    HakoRpcServiceServerTemplateType(AddTwoInts) service;
+    HakoCpp_AddTwoIntsRequest request{};
+    request.a = 5;
+    request.b = 7;
+    ASSERT_TRUE(service.call(runtime.client(), kServiceName, request, 1'000'000));
+
+    RpcRequest server_request;
+    ASSERT_EQ(runtime.wait_server_event(server_request), ServerEventType::REQUEST_IN);
+
+    HakoCpp_AddTwoIntsRequest parsed_request{};
+    ASSERT_TRUE(service.get_request_body(server_request, parsed_request));
+    EXPECT_EQ(parsed_request.a, 5);
+    EXPECT_EQ(parsed_request.b, 7);
+
+    HakoCpp_AddTwoIntsResponse response_body{};
+    response_body.sum = parsed_request.a + parsed_request.b;
+    ASSERT_TRUE(service.reply(
+        runtime.server(),
+        server_request,
+        hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE,
+        hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK,
+        response_body));
+
+    std::string service_name;
+    RpcResponse response;
+    ASSERT_EQ(runtime.wait_client_event(service_name, response), ClientEventType::RESPONSE_IN);
+    EXPECT_EQ(service_name, kServiceName);
+
+    HakoCpp_AddTwoIntsResponse parsed_response{};
+    ASSERT_TRUE(service.get_response_body(response, parsed_response));
+    EXPECT_EQ(parsed_response.sum, 12);
 }
 
-// Test case for multiple consecutive RPC calls
-TEST_F(RpcServicesTest, MultipleServiceCallsTest) {
-    std::shared_ptr<hakoniwa::pdu::EndpointContainer> server_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("server_node", endpoint_config_path_);
-    ASSERT_EQ(server_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
-    std::shared_ptr<hakoniwa::pdu::EndpointContainer> client_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("client_node", endpoint_config_path_);
-    ASSERT_EQ(client_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
-    // Initialize server
-    hakoniwa::pdu::rpc::RpcServicesServer server(server_node_id_, "RpcServerEndpointImpl", config_path_, 1000);
-    ASSERT_TRUE(server.initialize_services(server_endpoint_container));
+TEST_F(RpcServicesTest, RpcCallTimeoutTest)
+{
+    RpcRuntime runtime;
+    ASSERT_TRUE(runtime.start());
 
-    // Initialize client
-    hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "RpcClientEndpointImpl", 1000);
-    ASSERT_TRUE(client.initialize_services(client_endpoint_container));
+    HakoRpcServiceServerTemplateType(AddTwoInts) service;
+    HakoCpp_AddTwoIntsRequest request{};
+    request.a = 5;
+    request.b = 7;
+    ASSERT_TRUE(service.call(runtime.client(), kServiceName, request, 100'000));
 
-    server_endpoint_container->start_all();
-    client_endpoint_container->start_all();
+    RpcRequest original_request;
+    ASSERT_EQ(runtime.wait_server_event(original_request), ServerEventType::REQUEST_IN);
 
-    server.start_all_services();
-    client.start_all_services();
+    std::string service_name;
+    RpcResponse response;
+    ASSERT_EQ(runtime.wait_client_event(service_name, response), ClientEventType::RESPONSE_TIMEOUT);
+    EXPECT_EQ(service_name, kServiceName);
 
-    while (!server_endpoint_container->is_running_all() || !client_endpoint_container->is_running_all()) {
-        usleep(1000); // Wait for 1ms before checking again
-    }
-    HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
+    // Core-compatible contract: timeout is only a notification. Resolve the
+    // still-running RPC explicitly before tearing down the transport.
+    ASSERT_TRUE(runtime.client().send_cancel_request(kServiceName));
 
-    // --- First RPC Call ---
-    {
-        // Client side: send request 1
-        HakoCpp_AddTwoIntsRequest client_req_body;
-        client_req_body.a = 10;
-        client_req_body.b = 20;
-        ASSERT_TRUE(service_helper.call(client, service_name_, client_req_body, 1000000)); // 1 second timeout
+    RpcRequest cancel_request;
+    ASSERT_EQ(runtime.wait_server_event(cancel_request), ServerEventType::REQUEST_CANCEL);
+    EXPECT_EQ(cancel_request.header.request_id, original_request.header.request_id);
 
-        // Server side: Poll for request 1
-        hakoniwa::pdu::rpc::RpcRequest server_request;
-        hakoniwa::pdu::rpc::ServerEventType server_event = hakoniwa::pdu::rpc::ServerEventType::NONE;
-        while (server_event == hakoniwa::pdu::rpc::ServerEventType::NONE) {
-            usleep(1000);
-            server_event = server.poll(server_request);
-        }
-        ASSERT_EQ(server_event, hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN);
+    hakoniwa::pdu::rpc::PduData cancel_response;
+    runtime.server().create_reply_buffer(
+        cancel_request.header,
+        hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE,
+        hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_CANCELED,
+        cancel_response);
+    runtime.server().send_cancel_reply(cancel_request.header, cancel_response);
 
-        HakoCpp_AddTwoIntsRequest req_body;
-        service_helper.get_request_body(server_request, req_body);
-        ASSERT_EQ(req_body.a, 10);
-        ASSERT_EQ(req_body.b, 20);
-
-        // set reply data 1
-        HakoCpp_AddTwoIntsResponse res_body;
-        res_body.sum = req_body.a + req_body.b;
-        ASSERT_TRUE(service_helper.reply(server, server_request, hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE, hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK, res_body));
-
-        // Client side: Poll for response 1
-        hakoniwa::pdu::rpc::RpcResponse client_response;
-        hakoniwa::pdu::rpc::ClientEventType client_event = hakoniwa::pdu::rpc::ClientEventType::NONE;
-        std::string service_name;
-        while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE) {
-            usleep(1000);
-            client_event = client.poll(service_name, client_response);
-        }
-        ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN);
-        ASSERT_EQ(service_name, service_name_);
-
-        HakoCpp_AddTwoIntsResponse client_res_body;
-        service_helper.get_response_body(client_response, client_res_body);
-        ASSERT_EQ(client_res_body.sum, 30);
-    }
-
-    // --- Second RPC Call ---
-    {
-        // Client side: send request 2
-        HakoCpp_AddTwoIntsRequest client_req_body;
-        client_req_body.a = 15;
-        client_req_body.b = 25;
-        ASSERT_TRUE(service_helper.call(client, service_name_, client_req_body, 1000000)); // 1 second timeout
-
-        // Server side: Poll for request 2
-        hakoniwa::pdu::rpc::RpcRequest server_request;
-        hakoniwa::pdu::rpc::ServerEventType server_event = hakoniwa::pdu::rpc::ServerEventType::NONE;
-        while (server_event == hakoniwa::pdu::rpc::ServerEventType::NONE) {
-            usleep(1000);
-            server_event = server.poll(server_request);
-        }
-        ASSERT_EQ(server_event, hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN);
-
-        HakoCpp_AddTwoIntsRequest req_body;
-        service_helper.get_request_body(server_request, req_body);
-        ASSERT_EQ(req_body.a, 15);
-        ASSERT_EQ(req_body.b, 25);
-
-        // set reply data 2
-        HakoCpp_AddTwoIntsResponse res_body;
-        res_body.sum = req_body.a + req_body.b;
-        ASSERT_TRUE(service_helper.reply(server, server_request, hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE, hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK, res_body));
-
-        // Client side: Poll for response 2
-        hakoniwa::pdu::rpc::RpcResponse client_response;
-        hakoniwa::pdu::rpc::ClientEventType client_event = hakoniwa::pdu::rpc::ClientEventType::NONE;
-        std::string service_name;
-        while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE) {
-            usleep(1000);
-            client_event = client.poll(service_name, client_response);
-        }
-        ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN);
-        ASSERT_EQ(service_name, service_name_);
-
-        HakoCpp_AddTwoIntsResponse client_res_body;
-        service_helper.get_response_body(client_response, client_res_body);
-        ASSERT_EQ(client_res_body.sum, 40);
-    }
-
-    server_endpoint_container->stop_all();
-    client_endpoint_container->stop_all();
-
-    server.stop_all_services();
-    client.stop_all_services();
-    server.clear_all_instances();
-    client.clear_all_instances();
+    service_name.clear();
+    response = {};
+    ASSERT_EQ(runtime.wait_client_event(service_name, response), ClientEventType::RESPONSE_CANCEL);
+    EXPECT_EQ(service_name, kServiceName);
 }
 
-// Test case for RPC call with infinite wait (timeout = 0)
-TEST_F(RpcServicesTest, RpcCallInfiniteWaitTest) {
-    std::shared_ptr<hakoniwa::pdu::EndpointContainer> server_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("server_node", endpoint_config_path_);
-    ASSERT_EQ(server_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
-    std::shared_ptr<hakoniwa::pdu::EndpointContainer> client_endpoint_container = std::make_shared<hakoniwa::pdu::EndpointContainer>("client_node", endpoint_config_path_);
-    ASSERT_EQ(client_endpoint_container->initialize(), HAKO_PDU_ERR_OK);
-    // Initialize server
-    hakoniwa::pdu::rpc::RpcServicesServer server(server_node_id_, "RpcServerEndpointImpl", config_path_, 1000);
-    ASSERT_TRUE(server.initialize_services(server_endpoint_container));
+TEST_F(RpcServicesTest, MultipleServiceCallsTest)
+{
+    RpcRuntime runtime;
+    ASSERT_TRUE(runtime.start());
 
-    hakoniwa::pdu::rpc::RpcServicesClient client(client_node_id_, rpc_client_instance_name_, config_path_, "RpcClientEndpointImpl", 1000);
-    ASSERT_TRUE(client.initialize_services(client_endpoint_container));
+    HakoRpcServiceServerTemplateType(AddTwoInts) service;
 
-    server_endpoint_container->start_all();
-    client_endpoint_container->start_all();
+    const auto round_trip = [&](std::int64_t a, std::int64_t b, std::int64_t expected) {
+        HakoCpp_AddTwoIntsRequest request{};
+        request.a = a;
+        request.b = b;
+        ASSERT_TRUE(service.call(runtime.client(), kServiceName, request, 1'000'000));
 
-    server.start_all_services();
-    client.start_all_services();
+        RpcRequest server_request;
+        ASSERT_EQ(runtime.wait_server_event(server_request), ServerEventType::REQUEST_IN);
 
-    while (!server_endpoint_container->is_running_all() || !client_endpoint_container->is_running_all()) {
-        usleep(1000);
-    }
-    HakoRpcServiceServerTemplateType(AddTwoInts) service_helper;
+        HakoCpp_AddTwoIntsRequest parsed_request{};
+        ASSERT_TRUE(service.get_request_body(server_request, parsed_request));
+        EXPECT_EQ(parsed_request.a, a);
+        EXPECT_EQ(parsed_request.b, b);
 
-    // Client sends request with timeout = 0 (infinite wait)
-    HakoCpp_AddTwoIntsRequest client_req_body;
-    client_req_body.a = 99;
-    client_req_body.b = 1;
-    ASSERT_TRUE(service_helper.call(client, service_name_, client_req_body, 0)); // Infinite timeout
+        HakoCpp_AddTwoIntsResponse response_body{};
+        response_body.sum = parsed_request.a + parsed_request.b;
+        ASSERT_TRUE(service.reply(
+            runtime.server(),
+            server_request,
+            hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE,
+            hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK,
+            response_body));
 
-    // Server thread to handle the request after a delay
-    std::thread server_thread([&]() {
-        hakoniwa::pdu::rpc::RpcRequest server_request;
-        hakoniwa::pdu::rpc::ServerEventType server_event = hakoniwa::pdu::rpc::ServerEventType::NONE;
+        std::string service_name;
+        RpcResponse response;
+        ASSERT_EQ(runtime.wait_client_event(service_name, response), ClientEventType::RESPONSE_IN);
+        EXPECT_EQ(service_name, kServiceName);
 
-        // Wait until request is received
-        while (server_event == hakoniwa::pdu::rpc::ServerEventType::NONE) {
-            server_event = server.poll(server_request);
-            usleep(1000);
-        }
-        ASSERT_EQ(server_event, hakoniwa::pdu::rpc::ServerEventType::REQUEST_IN);
+        HakoCpp_AddTwoIntsResponse parsed_response{};
+        ASSERT_TRUE(service.get_response_body(response, parsed_response));
+        EXPECT_EQ(parsed_response.sum, expected);
+    };
 
-        // Simulate processing time (longer than the standard timeout test)
-        usleep(200000); // 200ms
-
-        HakoCpp_AddTwoIntsRequest req_body;
-        ASSERT_TRUE(service_helper.get_request_body(server_request, req_body));
-        ASSERT_EQ(req_body.a, 99);
-        ASSERT_EQ(req_body.b, 1);
-
-        HakoCpp_AddTwoIntsResponse res_body;
-        res_body.sum = req_body.a + req_body.b;
-        ASSERT_TRUE(service_helper.reply(server, server_request, hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE, hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK, res_body));
-    });
-
-    // Client polls for response
-    hakoniwa::pdu::rpc::RpcResponse client_response;
-    hakoniwa::pdu::rpc::ClientEventType client_event = hakoniwa::pdu::rpc::ClientEventType::NONE;
-    std::string received_service_name;
-    int loop_count = 0;
-    const int max_loops = 400; // Wait for up to 400ms
-
-    while (client_event == hakoniwa::pdu::rpc::ClientEventType::NONE && loop_count < max_loops) {
-        client_event = client.poll(received_service_name, client_response);
-        usleep(1000); // Poll every 1ms
-        loop_count++;
-    }
-
-    // Join server thread
-    server_thread.join();
-    
-    // We must receive RESPONSE_IN, not TIMEOUT
-    ASSERT_NE(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_TIMEOUT);
-    ASSERT_EQ(client_event, hakoniwa::pdu::rpc::ClientEventType::RESPONSE_IN);
-    ASSERT_EQ(received_service_name, service_name_);
-
-    // Verify response body
-    HakoCpp_AddTwoIntsResponse client_res_body;
-    bool got_res_body = service_helper.get_response_body(client_response, client_res_body);
-    ASSERT_TRUE(got_res_body);
-    ASSERT_EQ(client_res_body.sum, 100);
-
-    // Cleanup
-
-    server_endpoint_container->stop_all();
-    client_endpoint_container->stop_all();
-
-    server.stop_all_services();
-    client.stop_all_services();
-    server.clear_all_instances();
-    client.clear_all_instances();
+    round_trip(10, 20, 30);
+    round_trip(15, 25, 40);
 }
+
+TEST_F(RpcServicesTest, RpcCallInfiniteWaitTest)
+{
+    RpcRuntime runtime;
+    ASSERT_TRUE(runtime.start());
+
+    HakoRpcServiceServerTemplateType(AddTwoInts) service;
+    HakoCpp_AddTwoIntsRequest request{};
+    request.a = 99;
+    request.b = 1;
+    ASSERT_TRUE(service.call(runtime.client(), kServiceName, request, 0));
+
+    RpcRequest server_request;
+    ASSERT_EQ(runtime.wait_server_event(server_request), ServerEventType::REQUEST_IN);
+
+    std::this_thread::sleep_for(200ms);
+
+    HakoCpp_AddTwoIntsRequest parsed_request{};
+    ASSERT_TRUE(service.get_request_body(server_request, parsed_request));
+    EXPECT_EQ(parsed_request.a, 99);
+    EXPECT_EQ(parsed_request.b, 1);
+
+    HakoCpp_AddTwoIntsResponse response_body{};
+    response_body.sum = parsed_request.a + parsed_request.b;
+    ASSERT_TRUE(service.reply(
+        runtime.server(),
+        server_request,
+        hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE,
+        hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK,
+        response_body));
+
+    std::string service_name;
+    RpcResponse response;
+    ASSERT_EQ(runtime.wait_client_event(service_name, response), ClientEventType::RESPONSE_IN);
+    EXPECT_EQ(service_name, kServiceName);
+
+    HakoCpp_AddTwoIntsResponse parsed_response{};
+    ASSERT_TRUE(service.get_response_body(response, parsed_response));
+    EXPECT_EQ(parsed_response.sum, 100);
+}
+
+} // namespace
