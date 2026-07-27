@@ -170,21 +170,11 @@ ClientEventType RpcClientEndpointImpl::poll(RpcResponse& response) {
         return ClientEventType::NONE;
     }
 
-    if (client_state_.state == CLIENT_STATE_RUNNING) {
-        // Match hakoniwa-core-pro semantics: a timeout is an event. The caller
-        // decides whether to issue an explicit cancel request. Keeping the
-        // client RUNNING here also preserves the race where a normal response
-        // can arrive after the timeout event but before cancellation is sent.
-        if (current_timeout_usec_ > 0) {
-            if (time_source_->get_microseconds() - request_start_time_usec_ > current_timeout_usec_) {
-                std::cerr << "ERROR: RPC call timed out" << std::endl;
-                return ClientEventType::RESPONSE_TIMEOUT;
-            }
-        }
-    }
-
     if (client_state_.state == CLIENT_STATE_RUNNING || client_state_.state == CLIENT_STATE_CANCELLING) {
-        // Response check
+        // Always inspect an already-arrived response before reporting timeout.
+        // This is the Core-compatible race rule: even after a timeout was
+        // observed by the caller, a matching normal response may still win
+        // before cancellation is issued or completed.
         auto it = pending_responses_.begin();
         while (it != pending_responses_.end()) {
             HakoCpp_ServiceResponseHeader response_header;
@@ -192,13 +182,23 @@ ClientEventType RpcClientEndpointImpl::poll(RpcResponse& response) {
             if (response_header.request_id == client_state_.request_id) {
                 response.pdu = std::move(it->pdu_data);
                 response.header = response_header;
-                pending_responses_.erase(it); // Remove the PDU from the queue BEFORE calling handle_response_in
-
+                pending_responses_.erase(it);
                 return handle_response_in(response);
             }
             ++it;
         }
     }
+
+    if (client_state_.state == CLIENT_STATE_RUNNING) {
+        // Timeout is only a notification; it does not change the request state
+        // or implicitly cancel it. The caller decides whether to send CANCEL.
+        if (current_timeout_usec_ > 0 &&
+            time_source_->get_microseconds() - request_start_time_usec_ > current_timeout_usec_) {
+            std::cerr << "ERROR: RPC call timed out" << std::endl;
+            return ClientEventType::RESPONSE_TIMEOUT;
+        }
+    }
+
     return ClientEventType::NONE;
 }
 
