@@ -142,7 +142,6 @@ def print_summary(ctx: Context, errors: list[str]) -> None:
     print(f"  Install prefix : {ctx.install_dir}")
     print(f"  Endpoint root  : {ctx.endpoint_root or 'not resolved'}")
     print("  Examples       : ON")
-    print("  Tests in build : OFF")
     if ctx.platform_name == "windows":
         print(f"  vcpkg          : {ctx.vcpkg_root or 'not resolved'}")
     if errors:
@@ -200,17 +199,46 @@ def install(ctx: Context) -> None:
     )
 
 
+def test_basic(ctx: Context) -> None:
+    configure(ctx, tests=True)
+    run(
+        [
+            "cmake",
+            "--build",
+            str(ctx.build_dir),
+            "--config",
+            ctx.build_type,
+            "--target",
+            "hakoniwa_pdu_rpc_basic_test",
+            "--parallel",
+        ],
+        cwd=ctx.repo_root,
+    )
+    run(
+        [
+            "ctest",
+            "--test-dir",
+            str(ctx.build_dir),
+            "-C",
+            ctx.build_type,
+            "--output-on-failure",
+            "-R",
+            "^hakoniwa_pdu_rpc_basic_test$",
+        ],
+        cwd=ctx.repo_root,
+    )
+
+
 def test(ctx: Context) -> None:
-    # Legacy RPC tests are intentionally a separate concern from the package
-    # contract. Reconfigure explicitly with tests enabled when this command is
-    # requested; cross-platform CI does not gate package-contract work on it.
+    # Legacy aggregate tests remain available for audit but are not the phase-1
+    # cross-platform gate.
     configure(ctx, tests=True)
     run(
         ["cmake", "--build", str(ctx.build_dir), "--config", ctx.build_type, "--target", "hakoniwa_pdu_rpc_test", "--parallel"],
         cwd=ctx.repo_root,
     )
     run(
-        ["ctest", "--test-dir", str(ctx.build_dir), "-C", ctx.build_type, "--output-on-failure"],
+        ["ctest", "--test-dir", str(ctx.build_dir), "-C", ctx.build_type, "--output-on-failure", "-R", "^hakoniwa_pdu_rpc_test$"],
         cwd=ctx.repo_root,
     )
 
@@ -253,7 +281,10 @@ def package_test(ctx: Context) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Hakoniwa PDU RPC cross-platform build driver")
-    parser.add_argument("command", choices=["doctor", "configure", "build", "test", "install", "package-test"])
+    parser.add_argument(
+        "command",
+        choices=["doctor", "configure", "build", "test-basic", "test", "install", "package-test"],
+    )
     parser.add_argument("--build-dir", default="build")
     parser.add_argument("--install-dir", default=".hako/install")
     parser.add_argument("--build-type", default="Release")
@@ -274,6 +305,8 @@ def main() -> int:
         configure(ctx, dry_run=args.dry_run, tests=False)
     elif args.command == "build":
         build(ctx)
+    elif args.command == "test-basic":
+        test_basic(ctx)
     elif args.command == "test":
         test(ctx)
     elif args.command == "install":
