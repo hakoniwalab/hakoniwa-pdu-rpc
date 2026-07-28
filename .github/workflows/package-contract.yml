@@ -34,27 +34,35 @@ jobs:
           - name: Ubuntu x64 / default
             os: ubuntu-latest
             config: hakoniwa-build.yaml
+            build_type: Release
           - name: Ubuntu x64 / alternate
             os: ubuntu-latest
             config: test/fixtures/alternate-build.yaml
+            build_type: Debug
           - name: Ubuntu ARM64 / default
             os: ubuntu-24.04-arm
             config: hakoniwa-build.yaml
+            build_type: Release
           - name: Ubuntu ARM64 / alternate
             os: ubuntu-24.04-arm
             config: test/fixtures/alternate-build.yaml
+            build_type: Debug
           - name: macOS / default
             os: macos-15
             config: hakoniwa-build.yaml
+            build_type: Release
           - name: macOS / alternate
             os: macos-15
             config: test/fixtures/alternate-build.yaml
+            build_type: Debug
           - name: Windows x64 / default
             os: windows-2025
             config: hakoniwa-build.yaml
+            build_type: Release
           - name: Windows x64 / alternate
             os: windows-2025
             config: test/fixtures/alternate-build.yaml
+            build_type: Debug
 
     steps:
       - name: Checkout with Registry submodule
@@ -96,7 +104,7 @@ jobs:
         run: |
           git clone https://github.com/hakoniwalab/hakoniwa-pdu-endpoint.git endpoint
           cmake -S endpoint -B endpoint/build \
-            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_BUILD_TYPE="${{ matrix.build_type }}" \
             -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/endpoint-install" \
             -DHAKO_PDU_ENDPOINT_ENABLE_HAKONIWA_CORE=OFF \
             -DHAKO_PDU_ENDPOINT_BUILD_TESTS=OFF \
@@ -104,8 +112,8 @@ jobs:
             -DHAKO_PDU_ENDPOINT_BUILD_TOOLS=OFF \
             -DHAKO_PDU_ENDPOINT_BUILD_BENCHMARKS=OFF \
             -DHAKO_PDU_ENDPOINT_INSTALL=ON
-          cmake --build endpoint/build --config Release --target hakoniwa_pdu_endpoint --parallel
-          cmake --install endpoint/build --config Release --prefix "${GITHUB_WORKSPACE}/endpoint-install"
+          cmake --build endpoint/build --config "${{ matrix.build_type }}" --target hakoniwa_pdu_endpoint --parallel
+          cmake --install endpoint/build --config "${{ matrix.build_type }}" --prefix "${GITHUB_WORKSPACE}/endpoint-install"
           echo "HAKO_PDU_ENDPOINT_ROOT=${GITHUB_WORKSPACE}/endpoint-install" >> "$GITHUB_ENV"
 
       - name: Build and install Core-free Endpoint package on Windows
@@ -114,6 +122,7 @@ jobs:
         run: |
           git clone https://github.com/hakoniwalab/hakoniwa-pdu-endpoint.git endpoint
           cmake -S endpoint -B endpoint/build -A x64 `
+            -DCMAKE_BUILD_TYPE="${{ matrix.build_type }}" `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE/endpoint-install" `
@@ -123,8 +132,8 @@ jobs:
             -DHAKO_PDU_ENDPOINT_BUILD_TOOLS=OFF `
             -DHAKO_PDU_ENDPOINT_BUILD_BENCHMARKS=OFF `
             -DHAKO_PDU_ENDPOINT_INSTALL=ON
-          cmake --build endpoint/build --config Release --target hakoniwa_pdu_endpoint --parallel
-          cmake --install endpoint/build --config Release --prefix "$env:GITHUB_WORKSPACE/endpoint-install"
+          cmake --build endpoint/build --config "${{ matrix.build_type }}" --target hakoniwa_pdu_endpoint --parallel
+          cmake --install endpoint/build --config "${{ matrix.build_type }}" --prefix "$env:GITHUB_WORKSPACE/endpoint-install"
           "HAKO_PDU_ENDPOINT_ROOT=$env:GITHUB_WORKSPACE/endpoint-install" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Doctor
