@@ -34,6 +34,11 @@ The package/build contract is executed with both the repository default
 resolver tests additionally fix CLI/manifest/environment precedence and the
 operation-specific tests ON/OFF behavior.
 
+The actual `hako.py test` operation runs with the default manifest on every
+supported platform and with the alternate manifest on Ubuntu x64. This verifies
+that the four reviewed RPC test targets are built with tests enabled and pass
+through CTest.
+
 Supported CI platforms:
 
 - Ubuntu x64

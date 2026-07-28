@@ -141,3 +141,7 @@ jobs:
 
       - name: Installed package consumer
         run: python tools/hako.py package-test --config "${{ matrix.config }}"
+
+      - name: Reviewed RPC contract tests
+        if: matrix.config == 'hakoniwa-build.yaml' || matrix.os == 'ubuntu-latest'
+        run: python tools/hako.py test --config "${{ matrix.config }}"
