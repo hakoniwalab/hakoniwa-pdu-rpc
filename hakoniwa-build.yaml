@@ -1,0 +1,12 @@
+# User-facing build intent for hakoniwa-pdu-rpc.
+# Empty dependency paths preserve the existing environment/automatic discovery.
+version: 1
+
+build:
+  type: Release
+  dir: build
+  install_dir: .hako/install
+
+paths:
+  pdu_endpoint_root: ""
+  vcpkg_root: ""

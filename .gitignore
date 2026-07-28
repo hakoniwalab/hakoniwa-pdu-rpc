@@ -1,5 +1,8 @@
 # Prerequisites
 *.d
+.hako/
+build/
+build-*/
 .DS_Store
 
 # Compiled Object files

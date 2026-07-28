@@ -21,12 +21,18 @@ This layer is independent from RPC runtime semantics.
 Required checks:
 
 ```text
+python -m unittest tools/test_hako.py -v
 python tools/hako.py doctor
 python tools/hako.py configure --dry-run
 python tools/hako.py build
 python tools/hako.py install
 python tools/hako.py package-test
 ```
+
+The package/build contract is executed with both the repository default
+`hakoniwa-build.yaml` and `test/fixtures/alternate-build.yaml`. The manifest
+resolver tests additionally fix CLI/manifest/environment precedence and the
+operation-specific tests ON/OFF behavior.
 
 Supported CI platforms:
 

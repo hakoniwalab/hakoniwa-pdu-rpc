@@ -109,6 +109,7 @@ git submodule update --init --recursive
 
 Required:
 
+- Python 3.12 or newer for `tools/hako.py`.
 - C++20 compiler.
 - CMake 3.16 or newer.
 - Installed `hakoniwa-pdu-endpoint` CMake package.
@@ -120,16 +121,100 @@ On Windows, the build driver uses vcpkg when required by Endpoint dependencies.
 
 ## Recommended Build Interface: `tools/hako.py`
 
-The repository provides one cross-platform build driver so callers do not need to reproduce platform-specific CMake details.
+The repository provides one cross-platform build driver so callers do not need to reproduce platform-specific CMake details. Its user-facing build intent is defined by the repository-root [`hakoniwa-build.yaml`](hakoniwa-build.yaml).
 
 ```bash
-python tools/hako.py doctor --endpoint-root /path/to/endpoint/install
-python tools/hako.py build --endpoint-root /path/to/endpoint/install
+python tools/hako.py doctor
+python tools/hako.py build
 ```
 
 `doctor` checks the host platform, CMake/Git availability, Registry submodule, Endpoint installation, and Windows vcpkg prerequisites.
 
-The Endpoint prefix can also be supplied through:
+### Build manifest
+
+The default manifest reproduces the behavior that predates manifest support:
+
+```yaml
+version: 1
+
+build:
+  type: Release
+  dir: build
+  install_dir: .hako/install
+
+paths:
+  pdu_endpoint_root: ""
+  vcpkg_root: ""
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | `1` | Manifest schema version |
+| `build.type` | `Release` | CMake build configuration |
+| `build.dir` | `build` | Build directory, relative to the repository when not absolute |
+| `build.install_dir` | `.hako/install` | Local install prefix used by `hako.py` |
+| `paths.pdu_endpoint_root` | `""` | Installed Endpoint package root; empty enables environment/automatic discovery |
+| `paths.vcpkg_root` | `""` | Windows vcpkg root; empty enables environment/automatic discovery |
+
+All keys are required in schema v1. Unknown keys, missing keys, unsupported build types, and invalid value types are rejected before CMake runs.
+Relative `build.*` and manifest `paths.*` values are resolved from the repository root. Relative paths supplied explicitly through CLI options retain the existing current-directory-relative behavior.
+
+When `--config` is omitted, `hako.py` always uses the repository-root `hakoniwa-build.yaml`, regardless of the current directory. An explicitly supplied relative path is resolved from the current directory:
+
+```bash
+python tools/hako.py doctor --config test/fixtures/alternate-build.yaml
+python tools/hako.py build --config test/fixtures/alternate-build.yaml
+```
+
+The selected manifest is only an input layer. The existing operation semantics remain unchanged:
+
+```text
+build
+  -> tests OFF
+  -> examples ON
+
+test / test-*
+  -> tests ON
+  -> reviewed test targets and CTest
+
+package-test
+  -> build
+  -> install
+  -> external package consumer validation
+```
+
+Resolved configuration is written to `.hako/resolved-build.yaml`, and the operation-specific CMake arguments are written to `.hako/cmake-args.txt`. Both are generated files.
+
+### Overrides and dependency discovery
+
+Existing CLI overrides remain available:
+
+```bash
+python tools/hako.py build \
+  --build-dir out/build \
+  --install-dir out/install \
+  --build-type Debug \
+  --endpoint-root /path/to/endpoint/install
+```
+
+Build directory, install directory, and build type use:
+
+```text
+explicit CLI option > selected manifest value
+```
+
+Endpoint and vcpkg roots use:
+
+```text
+explicit CLI option
+  > selected manifest value
+  > existing environment variables
+  > existing automatic discovery
+```
+
+A non-empty CLI or manifest dependency path is authoritative. If the selected path is invalid, `doctor` reports it instead of silently replacing it with a lower-priority environment or automatically discovered path.
+
+The Endpoint prefix environment variables remain:
 
 ```bash
 export HAKO_PDU_ENDPOINT_ROOT=/path/to/endpoint/install
@@ -137,7 +222,11 @@ export HAKO_PDU_ENDPOINT_ROOT=/path/to/endpoint/install
 export HAKO_PDU_ENDPOINT_PREFIX=/path/to/endpoint/install
 ```
 
-Then the common workflow is:
+On Windows, vcpkg can still be supplied through `VCPKG_ROOT` or `VCPKG_INSTALLATION_ROOT`.
+
+### Operations
+
+The common workflow is:
 
 ```bash
 python tools/hako.py doctor
@@ -145,21 +234,6 @@ python tools/hako.py build
 python tools/hako.py test
 python tools/hako.py install
 python tools/hako.py package-test
-```
-
-By default:
-
-- build directory: `build/`
-- local install directory used by `hako.py`: `.hako/install/`
-- build type: `Release`
-
-Override them when needed:
-
-```bash
-python tools/hako.py build \
-  --build-dir out/build \
-  --install-dir out/install \
-  --build-type Debug
 ```
 
 ### Inspect the generated CMake command

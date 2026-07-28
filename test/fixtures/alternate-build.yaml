@@ -1,0 +1,10 @@
+version: 1
+
+build:
+  type: Debug
+  dir: build-alternate
+  install_dir: .hako/install-alternate
+
+paths:
+  pdu_endpoint_root: ""
+  vcpkg_root: ""

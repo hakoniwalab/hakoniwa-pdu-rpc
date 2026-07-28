@@ -31,14 +31,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Ubuntu x64
+          - name: Ubuntu x64 / default
             os: ubuntu-latest
-          - name: Ubuntu ARM64
+            config: hakoniwa-build.yaml
+          - name: Ubuntu x64 / alternate
+            os: ubuntu-latest
+            config: test/fixtures/alternate-build.yaml
+          - name: Ubuntu ARM64 / default
             os: ubuntu-24.04-arm
-          - name: macOS
+            config: hakoniwa-build.yaml
+          - name: Ubuntu ARM64 / alternate
+            os: ubuntu-24.04-arm
+            config: test/fixtures/alternate-build.yaml
+          - name: macOS / default
             os: macos-15
-          - name: Windows x64
+            config: hakoniwa-build.yaml
+          - name: macOS / alternate
+            os: macos-15
+            config: test/fixtures/alternate-build.yaml
+          - name: Windows x64 / default
             os: windows-2025
+            config: hakoniwa-build.yaml
+          - name: Windows x64 / alternate
+            os: windows-2025
+            config: test/fixtures/alternate-build.yaml
 
     steps:
       - name: Checkout with Registry submodule
@@ -50,6 +66,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Test build manifest resolver
+        run: python -m unittest tools/test_hako.py -v
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -109,16 +128,16 @@ jobs:
           "HAKO_PDU_ENDPOINT_ROOT=$env:GITHUB_WORKSPACE/endpoint-install" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Doctor
-        run: python tools/hako.py doctor
+        run: python tools/hako.py doctor --config "${{ matrix.config }}"
 
       - name: Configure dry-run
-        run: python tools/hako.py configure --dry-run
+        run: python tools/hako.py configure --config "${{ matrix.config }}" --dry-run
 
       - name: Build
-        run: python tools/hako.py build
+        run: python tools/hako.py build --config "${{ matrix.config }}"
 
       - name: Install
-        run: python tools/hako.py install
+        run: python tools/hako.py install --config "${{ matrix.config }}"
 
       - name: Installed package consumer
-        run: python tools/hako.py package-test
+        run: python tools/hako.py package-test --config "${{ matrix.config }}"
