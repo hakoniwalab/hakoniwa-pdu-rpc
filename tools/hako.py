@@ -532,6 +532,155 @@ def build(ctx: Context) -> None:
     )
 
 
+def _command_output(command: list[str], cwd: Path) -> str:
+    result = subprocess.run(
+        command,
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else "unknown"
+
+
+def _cmake_cache_value(build_dir: Path, key: str) -> str:
+    cache = build_dir / "CMakeCache.txt"
+    if not cache.is_file():
+        return "unknown"
+    prefix = f"{key}:"
+    for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith(prefix) and "=" in line:
+            return line.split("=", 1)[1] or "unknown"
+    return "unknown"
+
+
+def _read_dependency_receipt(prefix: Path, component_id: str) -> Dict[str, Any]:
+    path = prefix / "share" / "hakoniwa" / "receipts" / f"{component_id}.yaml"
+    if not path.is_file():
+        return {
+            "version": "unknown",
+            "source_revision": "unknown",
+            "build_limits": {},
+        }
+
+    result: Dict[str, Any] = {"build_limits": {}}
+    section = ""
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if raw and not raw.startswith(" ") and raw.endswith(":"):
+            section = raw[:-1]
+            continue
+        if not raw.startswith("  ") or raw.startswith("    ") or ":" not in raw:
+            continue
+        key, value = raw.strip().split(":", 1)
+        parsed = _parse_scalar(value)
+        if section == "component" and key in {"version", "source_revision"}:
+            result[key] = parsed
+        elif section == "build_limits":
+            result["build_limits"][key] = parsed
+    if not result.get("version") or not result.get("source_revision"):
+        raise ConfigError(f"incomplete dependency receipt: {path}")
+    return result
+
+
+def _rpc_artifacts(install_dir: Path) -> list[tuple[Path, str]]:
+    artifacts: list[tuple[Path, str]] = []
+    fixed = (
+        (Path("include/hakoniwa/pdu/rpc"), "directory"),
+        (Path("lib/cmake/hakoniwa_pdu_rpc"), "cmake-package"),
+    )
+    for relative, kind in fixed:
+        if (install_dir / relative).exists():
+            artifacts.append((relative, kind))
+    for child in ("bin", "lib"):
+        parent = install_dir / child
+        if not parent.is_dir():
+            continue
+        for installed in parent.iterdir():
+            if installed.is_file() and "hakoniwa_pdu_rpc" in installed.name:
+                kind = "executable" if child == "bin" and installed.suffix == ".exe" else "library"
+                artifacts.append((installed.relative_to(install_dir), kind))
+    return sorted(set(artifacts), key=lambda item: item[0].as_posix())
+
+
+def write_receipt(ctx: Context) -> Path:
+    if ctx.endpoint_root is None:
+        raise HakoError("Endpoint package root is required for Component Receipt")
+    receipt_root = ctx.install_dir / "share" / "hakoniwa" / "receipts"
+    resolved_relative = (
+        Path("share")
+        / "hakoniwa"
+        / "receipts"
+        / "resolved"
+        / "hakoniwa-pdu-rpc.yaml"
+    )
+    (ctx.install_dir / resolved_relative).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(
+        ctx.repo_root / ".hako" / "resolved-build.yaml",
+        ctx.install_dir / resolved_relative,
+    )
+
+    artifacts = _rpc_artifacts(ctx.install_dir)
+    if not any(kind == "cmake-package" for _, kind in artifacts):
+        raise HakoError(f"installed RPC CMake package not found under: {ctx.install_dir}")
+
+    dependency = _read_dependency_receipt(
+        ctx.endpoint_root,
+        "hakoniwa-pdu-endpoint",
+    )
+    compiler = _cmake_cache_value(ctx.build_dir, "CMAKE_CXX_COMPILER")
+    revision = _command_output(["git", "rev-parse", "HEAD"], ctx.repo_root)
+    lines = [
+        "schema_version: 1",
+        "component:",
+        "  id: hakoniwa-pdu-rpc",
+        "  version: 0.1.0",
+        f"  source_revision: {_yaml_scalar(revision)}",
+        "platform:",
+        f"  os: {_yaml_scalar(ctx.platform_name)}",
+        f"  architecture: {_yaml_scalar(ctx.arch)}",
+        f"  toolchain: {_yaml_scalar(compiler)}",
+        "install:",
+        f"  prefix: {_yaml_scalar(ctx.install_dir)}",
+        "capabilities:",
+        "  rpc_client: true",
+        "  rpc_server: true",
+        "  cmake_package: true",
+    ]
+    build_limits = dependency["build_limits"]
+    if build_limits:
+        lines.append("build_limits:")
+        for key, value in build_limits.items():
+            lines.append(f"  {key}: {_yaml_scalar(value)}")
+    else:
+        lines.append("build_limits: {}")
+    lines.extend(
+        [
+            "dependencies:",
+            "  hakoniwa-pdu-endpoint:",
+            f"    version: {_yaml_scalar(dependency['version'])}",
+            f"    source_revision: {_yaml_scalar(dependency['source_revision'])}",
+        ]
+    )
+    if build_limits:
+        lines.append("    build_limits:")
+        for key, value in build_limits.items():
+            lines.append(f"      {key}: {_yaml_scalar(value)}")
+    else:
+        lines.append("    build_limits: {}")
+    lines.append("artifacts:")
+    for path, kind in artifacts:
+        lines.extend(
+            [
+                f"  - path: {_yaml_scalar(path.as_posix())}",
+                f"    kind: {kind}",
+            ]
+        )
+    lines.append(f"resolved_manifest: {_yaml_scalar(resolved_relative.as_posix())}")
+    receipt_path = receipt_root / "hakoniwa-pdu-rpc.yaml"
+    _atomic_write(receipt_path, "\n".join(lines) + "\n")
+    return receipt_path
+
+
 def install(ctx: Context) -> None:
     if not (ctx.build_dir / "CMakeCache.txt").is_file():
         build(ctx)
@@ -548,6 +697,8 @@ def install(ctx: Context) -> None:
         ],
         cwd=ctx.repo_root,
     )
+    receipt = write_receipt(ctx)
+    print(f"Component Receipt: {receipt}")
 
 
 def run_test_target(ctx: Context, target: str, ctest_name: str) -> None:

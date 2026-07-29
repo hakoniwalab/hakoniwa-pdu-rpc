@@ -333,5 +333,73 @@ class OperationCompatibilityTests(unittest.TestCase):
                 )
 
 
+class FoundationInstallTests(unittest.TestCase):
+    def test_dependency_receipt_reads_endpoint_contract_fields(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prefix = Path(temp_dir)
+            receipt = (
+                prefix
+                / "share"
+                / "hakoniwa"
+                / "receipts"
+                / "hakoniwa-pdu-endpoint.yaml"
+            )
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(
+                """schema_version: 1
+component:
+  id: hakoniwa-pdu-endpoint
+  version: 1.0.0
+  source_revision: "def456"
+build_limits:
+  asset_num: 16
+artifacts:
+  - path: "lib/libhakoniwa_pdu_endpoint.so"
+    kind: library
+""",
+                encoding="utf-8",
+            )
+
+            dependency = HAKO._read_dependency_receipt(
+                prefix,
+                "hakoniwa-pdu-endpoint",
+            )
+
+            self.assertEqual(dependency["version"], "1.0.0")
+            self.assertEqual(dependency["source_revision"], "def456")
+            self.assertEqual(dependency["build_limits"]["asset_num"], 16)
+
+    def test_missing_legacy_dependency_receipt_is_unknown(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dependency = HAKO._read_dependency_receipt(
+                Path(temp_dir),
+                "hakoniwa-pdu-endpoint",
+            )
+        self.assertEqual(dependency["source_revision"], "unknown")
+        self.assertEqual(dependency["build_limits"], {})
+
+    def test_rpc_artifacts_are_compact_install_surfaces(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prefix = Path(temp_dir)
+            headers = prefix / "include" / "hakoniwa" / "pdu" / "rpc"
+            headers.mkdir(parents=True)
+            for index in range(100):
+                (headers / f"rpc_{index}.hpp").write_text("", encoding="utf-8")
+            cmake_dir = prefix / "lib" / "cmake" / "hakoniwa_pdu_rpc"
+            cmake_dir.mkdir(parents=True)
+            (prefix / "lib" / "libhakoniwa_pdu_rpc.a").write_text(
+                "",
+                encoding="utf-8",
+            )
+
+            artifacts = HAKO._rpc_artifacts(prefix)
+
+            self.assertIn(
+                (Path("include/hakoniwa/pdu/rpc"), "directory"),
+                artifacts,
+            )
+            self.assertLess(len(artifacts), 10)
+
+
 if __name__ == "__main__":
     unittest.main()
