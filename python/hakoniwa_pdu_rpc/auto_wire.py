@@ -7,6 +7,12 @@ from typing import Any, Callable
 from .client import RpcClient
 
 
+DEFAULT_SERVICE_PACKAGES = (
+    "hakoniwa_pdu.pdu_msgs.hako_srv_msgs",
+    "pdu.python.hako_srv_msgs",
+)
+
+
 @dataclass(frozen=True)
 class ServiceWire:
     request_packet_type: type
@@ -19,50 +25,61 @@ class ServiceWire:
 
 def load_service_wire(
     service_type: str,
-    package: str = "pdu.python.hako_srv_msgs",
+    package: str | None = None,
 ) -> ServiceWire:
-    """Load generated PDU Registry packet types and converters by convention."""
+    """Load generated PDU Registry packet types and converters by convention.
+
+    When ``package`` is omitted, prefer the installed ``hakoniwa-pdu`` package
+    layout used by hakoniwa-pdu-ros, then fall back to the Registry source-tree
+    layout used by this repository's submodule tests.
+    """
+    packages = (package,) if package is not None else DEFAULT_SERVICE_PACKAGES
+    errors: list[BaseException] = []
+
+    for candidate in packages:
+        try:
+            return _load_service_wire_from_package(service_type, candidate)
+        except (ImportError, AttributeError) as error:
+            errors.append(error)
+
+    attempted = ", ".join(repr(candidate) for candidate in packages)
+    raise RuntimeError(
+        "failed to load generated PDU Registry service components: "
+        f"service_type={service_type!r}, packages=[{attempted}]"
+    ) from errors[-1]
+
+
+def _load_service_wire_from_package(
+    service_type: str,
+    package: str,
+) -> ServiceWire:
     request_name = f"{service_type}RequestPacket"
     response_name = f"{service_type}ResponsePacket"
 
-    try:
-        request_type_module = import_module(
-            f"{package}.pdu_pytype_{request_name}"
-        )
-        response_type_module = import_module(
-            f"{package}.pdu_pytype_{response_name}"
-        )
-        request_converter_module = import_module(
-            f"{package}.pdu_conv_{request_name}"
-        )
-        response_converter_module = import_module(
-            f"{package}.pdu_conv_{response_name}"
-        )
+    request_type_module = import_module(f"{package}.pdu_pytype_{request_name}")
+    response_type_module = import_module(f"{package}.pdu_pytype_{response_name}")
+    request_converter_module = import_module(f"{package}.pdu_conv_{request_name}")
+    response_converter_module = import_module(f"{package}.pdu_conv_{response_name}")
 
-        request_encoder = getattr(
-            request_converter_module, f"py_to_pdu_{request_name}"
-        )
-        response_encoder = getattr(
-            response_converter_module, f"py_to_pdu_{response_name}"
-        )
+    request_encoder = getattr(
+        request_converter_module, f"py_to_pdu_{request_name}"
+    )
+    response_encoder = getattr(
+        response_converter_module, f"py_to_pdu_{response_name}"
+    )
 
-        return ServiceWire(
-            request_packet_type=getattr(request_type_module, request_name),
-            response_packet_type=getattr(response_type_module, response_name),
-            request_encode=lambda packet: bytes(request_encoder(packet)),
-            request_decode=getattr(
-                request_converter_module, f"pdu_to_py_{request_name}"
-            ),
-            response_encode=lambda packet: bytes(response_encoder(packet)),
-            response_decode=getattr(
-                response_converter_module, f"pdu_to_py_{response_name}"
-            ),
-        )
-    except (ImportError, AttributeError) as error:
-        raise RuntimeError(
-            "failed to load generated PDU Registry service components: "
-            f"service_type={service_type!r}, package={package!r}"
-        ) from error
+    return ServiceWire(
+        request_packet_type=getattr(request_type_module, request_name),
+        response_packet_type=getattr(response_type_module, response_name),
+        request_encode=lambda packet: bytes(request_encoder(packet)),
+        request_decode=getattr(
+            request_converter_module, f"pdu_to_py_{request_name}"
+        ),
+        response_encode=lambda packet: bytes(response_encoder(packet)),
+        response_decode=getattr(
+            response_converter_module, f"pdu_to_py_{response_name}"
+        ),
+    )
 
 
 class TypedRpcClient:
@@ -74,7 +91,7 @@ class TypedRpcClient:
         service_name: str,
         service_type: str,
         *,
-        package: str = "pdu.python.hako_srv_msgs",
+        package: str | None = None,
     ):
         self._rpc_client = rpc_client
         self.service_name = service_name
@@ -117,7 +134,7 @@ def make_typed_client(
     service_name: str,
     service_type: str,
     *,
-    package: str = "pdu.python.hako_srv_msgs",
+    package: str | None = None,
 ) -> TypedRpcClient:
     return TypedRpcClient(
         rpc_client,
