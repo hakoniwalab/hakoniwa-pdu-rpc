@@ -6,8 +6,13 @@ import sys
 import time
 from pathlib import Path
 
+_NATIVE_LIBRARY = None
+_DLL_DIRECTORY = None
+
 
 def _prepare_imports() -> Path:
+    global _NATIVE_LIBRARY, _DLL_DIRECTORY
+
     repo_root = Path(__file__).resolve().parents[1]
     build_dir = Path(os.environ.get("HAKO_PDU_RPC_BUILD_DIR", repo_root / "build")).resolve()
     build_type = os.environ.get("HAKO_PDU_RPC_BUILD_TYPE", "Release")
@@ -17,7 +22,7 @@ def _prepare_imports() -> Path:
     sys.path.insert(0, str(repo_root / "python"))
 
     if sys.platform == "win32":
-        os.add_dll_directory(str(native_dir))
+        _DLL_DIRECTORY = os.add_dll_directory(str(native_dir))
         library = native_dir / "hakoniwa_pdu_rpc.dll"
     elif sys.platform == "darwin":
         library = native_dir / "libhakoniwa_pdu_rpc.dylib"
@@ -26,7 +31,9 @@ def _prepare_imports() -> Path:
 
     if not library.is_file():
         raise RuntimeError(f"C facade library was not found: {library}")
-    ctypes.CDLL(str(library), mode=getattr(ctypes, "RTLD_GLOBAL", 0))
+    _NATIVE_LIBRARY = ctypes.CDLL(
+        str(library), mode=getattr(ctypes, "RTLD_GLOBAL", 0)
+    )
     return repo_root
 
 
