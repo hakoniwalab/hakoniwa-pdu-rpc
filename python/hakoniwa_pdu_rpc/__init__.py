@@ -11,6 +11,7 @@ from .cffi_api import (
     ServerPollResult,
 )
 from .client import RpcCanceledError, RpcClient, RpcTimeoutError
+from .future import RpcFuture
 
 __all__ = [
     "CffiRpcClient",
@@ -19,6 +20,7 @@ __all__ = [
     "RpcCanceledError",
     "RpcClient",
     "RpcError",
+    "RpcFuture",
     "RpcServer",
     "RpcTimeoutError",
     "ServerEvent",
