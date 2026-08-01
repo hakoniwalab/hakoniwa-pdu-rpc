@@ -120,6 +120,43 @@ struct hako_pdu_rpc_server_handle {
     bool started{false};
 };
 
+namespace {
+
+bool initialize_client(hako_pdu_rpc_client_handle_t* handle) {
+    handle->endpoints = std::make_shared<EndpointContainer>(
+        handle->node_id, handle->endpoint_config_path);
+    if (handle->endpoints->initialize() != HAKO_PDU_ERR_OK) {
+        return false;
+    }
+
+    handle->rpc = std::make_unique<RpcServicesClient>(
+        handle->node_id,
+        handle->client_name,
+        handle->service_config_path,
+        kClientImpl,
+        handle->delta_time_usec,
+        handle->time_source_type);
+    return handle->rpc->initialize_services(handle->endpoints);
+}
+
+bool initialize_server(hako_pdu_rpc_server_handle_t* handle) {
+    handle->endpoints = std::make_shared<EndpointContainer>(
+        handle->node_id, handle->endpoint_config_path);
+    if (handle->endpoints->initialize() != HAKO_PDU_ERR_OK) {
+        return false;
+    }
+
+    handle->rpc = std::make_unique<RpcServicesServer>(
+        handle->node_id,
+        kServerImpl,
+        handle->service_config_path,
+        handle->delta_time_usec,
+        handle->time_source_type);
+    return handle->rpc->initialize_services(handle->endpoints);
+}
+
+} // namespace
+
 extern "C" {
 
 hako_pdu_rpc_client_handle_t* hako_pdu_rpc_client_create(
@@ -135,14 +172,17 @@ hako_pdu_rpc_client_handle_t* hako_pdu_rpc_client_create(
         return nullptr;
     }
     try {
-        auto* handle = new hako_pdu_rpc_client_handle_t();
+        auto handle = std::make_unique<hako_pdu_rpc_client_handle_t>();
         handle->node_id = node_id;
         handle->client_name = client_name;
         handle->service_config_path = service_config_path;
         handle->endpoint_config_path = endpoint_config_path;
         handle->delta_time_usec = delta_time_usec;
         handle->time_source_type = valid_text(time_source_type) ? time_source_type : kDefaultTimeSource;
-        return handle;
+        if (!initialize_client(handle.get())) {
+            return nullptr;
+        }
+        return handle.release();
     } catch (...) {
         return nullptr;
     }
@@ -163,32 +203,23 @@ hako_pdu_rpc_error_t hako_pdu_rpc_client_start(hako_pdu_rpc_client_handle_t* han
     if (handle->started) {
         return HAKO_PDU_RPC_OK;
     }
+    if (!handle->endpoints || !handle->rpc) {
+        return HAKO_PDU_RPC_ERROR_INITIALIZE;
+    }
     try {
-        handle->endpoints = std::make_shared<EndpointContainer>(handle->node_id, handle->endpoint_config_path);
-        if (handle->endpoints->initialize() != HAKO_PDU_ERR_OK) {
-            handle->endpoints.reset();
-            return HAKO_PDU_RPC_ERROR_INITIALIZE;
-        }
         if (handle->endpoints->start_all() != HAKO_PDU_ERR_OK) {
-            handle->endpoints.reset();
             return HAKO_PDU_RPC_ERROR_START;
         }
-        handle->rpc = std::make_unique<RpcServicesClient>(
-            handle->node_id,
-            handle->client_name,
-            handle->service_config_path,
-            kClientImpl,
-            handle->delta_time_usec,
-            handle->time_source_type);
-        if (!handle->rpc->initialize_services(handle->endpoints) || !handle->rpc->start_all_services()) {
-            handle->rpc.reset();
+        if (!handle->rpc->start_all_services()) {
             (void)handle->endpoints->stop_all();
-            handle->endpoints.reset();
-            return HAKO_PDU_RPC_ERROR_INITIALIZE;
+            return HAKO_PDU_RPC_ERROR_START;
         }
         handle->started = true;
         return HAKO_PDU_RPC_OK;
     } catch (...) {
+        if (handle->endpoints) {
+            (void)handle->endpoints->stop_all();
+        }
         return HAKO_PDU_RPC_ERROR_INTERNAL;
     }
 }
@@ -311,13 +342,16 @@ hako_pdu_rpc_server_handle_t* hako_pdu_rpc_server_create(
         return nullptr;
     }
     try {
-        auto* handle = new hako_pdu_rpc_server_handle_t();
+        auto handle = std::make_unique<hako_pdu_rpc_server_handle_t>();
         handle->node_id = node_id;
         handle->service_config_path = service_config_path;
         handle->endpoint_config_path = endpoint_config_path;
         handle->delta_time_usec = delta_time_usec;
         handle->time_source_type = valid_text(time_source_type) ? time_source_type : kDefaultTimeSource;
-        return handle;
+        if (!initialize_server(handle.get())) {
+            return nullptr;
+        }
+        return handle.release();
     } catch (...) {
         return nullptr;
     }
@@ -338,31 +372,23 @@ hako_pdu_rpc_error_t hako_pdu_rpc_server_start(hako_pdu_rpc_server_handle_t* han
     if (handle->started) {
         return HAKO_PDU_RPC_OK;
     }
+    if (!handle->endpoints || !handle->rpc) {
+        return HAKO_PDU_RPC_ERROR_INITIALIZE;
+    }
     try {
-        handle->endpoints = std::make_shared<EndpointContainer>(handle->node_id, handle->endpoint_config_path);
-        if (handle->endpoints->initialize() != HAKO_PDU_ERR_OK) {
-            handle->endpoints.reset();
-            return HAKO_PDU_RPC_ERROR_INITIALIZE;
-        }
         if (handle->endpoints->start_all() != HAKO_PDU_ERR_OK) {
-            handle->endpoints.reset();
             return HAKO_PDU_RPC_ERROR_START;
         }
-        handle->rpc = std::make_unique<RpcServicesServer>(
-            handle->node_id,
-            kServerImpl,
-            handle->service_config_path,
-            handle->delta_time_usec,
-            handle->time_source_type);
-        if (!handle->rpc->initialize_services(handle->endpoints) || !handle->rpc->start_all_services()) {
-            handle->rpc.reset();
+        if (!handle->rpc->start_all_services()) {
             (void)handle->endpoints->stop_all();
-            handle->endpoints.reset();
-            return HAKO_PDU_RPC_ERROR_INITIALIZE;
+            return HAKO_PDU_RPC_ERROR_START;
         }
         handle->started = true;
         return HAKO_PDU_RPC_OK;
     } catch (...) {
+        if (handle->endpoints) {
+            (void)handle->endpoints->stop_all();
+        }
         return HAKO_PDU_RPC_ERROR_INTERNAL;
     }
 }
