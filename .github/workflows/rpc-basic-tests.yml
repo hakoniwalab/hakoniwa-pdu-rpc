@@ -65,7 +65,7 @@ jobs:
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install boost-asio:x64-windows boost-beast:x64-windows
 
-      - name: Build and install Core-free Endpoint package
+      - name: Build and install shared Core-free Endpoint package
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -84,7 +84,7 @@ jobs:
           cmake --install endpoint/build --config Release --prefix "${GITHUB_WORKSPACE}/endpoint-install"
           echo "HAKO_PDU_ENDPOINT_ROOT=${GITHUB_WORKSPACE}/endpoint-install" >> "$GITHUB_ENV"
 
-      - name: Build and install Core-free Endpoint package on Windows
+      - name: Build and install shared Core-free Endpoint package on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -107,59 +107,17 @@ jobs:
       - name: Doctor
         run: python tools/hako.py doctor
 
-      - name: Phase 1 basic RPC tests
+      - name: Configure
+        run: python tools/hako.py configure
+
+      - name: Build native library and Python binding
+        run: python tools/hako.py build
+
+      - name: Test basic RPC contract
         run: python tools/hako.py test-basic
 
-      - name: Configure shared RPC library
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          cmake -S . -B build-cffi \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=ON \
-            -DHAKO_PDU_ENDPOINT_PREFIX="${HAKO_PDU_ENDPOINT_ROOT}" \
-            -DHAKO_PDU_RPC_BUILD_TESTS=OFF \
-            -DHAKO_PDU_RPC_BUILD_EXAMPLES=OFF
-          cmake --build build-cffi --config Release --parallel
-          echo "HAKO_PDU_RPC_LIB_DIR=${GITHUB_WORKSPACE}/build-cffi/src" >> "$GITHUB_ENV"
+      - name: Install
+        run: python tools/hako.py install
 
-      - name: Configure shared RPC library on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cmake -S . -B build-cffi -A x64 `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows `
-            -DBUILD_SHARED_LIBS=ON `
-            -DHAKO_PDU_ENDPOINT_PREFIX="$env:HAKO_PDU_ENDPOINT_ROOT" `
-            -DHAKO_PDU_RPC_BUILD_TESTS=OFF `
-            -DHAKO_PDU_RPC_BUILD_EXAMPLES=OFF
-          cmake --build build-cffi --config Release --parallel
-          "HAKO_PDU_RPC_LIB_DIR=$env:GITHUB_WORKSPACE/build-cffi/src/Release" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Build CFFI extension
-        run: python python/hakoniwa_pdu_rpc/build_c_rpc_ffi.py
-
-      - name: Import CFFI extension on Linux
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          export PYTHONPATH="${GITHUB_WORKSPACE}/build/python:${GITHUB_WORKSPACE}/python"
-          export LD_LIBRARY_PATH="${GITHUB_WORKSPACE}/build-cffi/src:${GITHUB_WORKSPACE}/endpoint-install/lib:${LD_LIBRARY_PATH:-}"
-          python -c "from hakoniwa_pdu_rpc import RpcClient, RpcServer; print(RpcClient, RpcServer)"
-
-      - name: Import CFFI extension on macOS
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          export PYTHONPATH="${GITHUB_WORKSPACE}/build/python:${GITHUB_WORKSPACE}/python"
-          export DYLD_LIBRARY_PATH="${GITHUB_WORKSPACE}/build-cffi/src:${GITHUB_WORKSPACE}/endpoint-install/lib:${DYLD_LIBRARY_PATH:-}"
-          python -c "from hakoniwa_pdu_rpc import RpcClient, RpcServer; print(RpcClient, RpcServer)"
-
-      - name: Import CFFI extension on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $env:PYTHONPATH = "$env:GITHUB_WORKSPACE/build/python;$env:GITHUB_WORKSPACE/python"
-          $env:PATH = "$env:GITHUB_WORKSPACE/build-cffi/src/Release;$env:GITHUB_WORKSPACE/endpoint-install/bin;$env:PATH"
-          python -c "from hakoniwa_pdu_rpc import RpcClient, RpcServer; print(RpcClient, RpcServer)"
+      - name: Smoke
+        run: python tools/hako.py smoke
