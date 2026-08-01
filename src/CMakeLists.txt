@@ -41,7 +41,10 @@ target_link_libraries(hakoniwa_pdu_rpc
     nlohmann_json::nlohmann_json
 )
 
-set_target_properties(hakoniwa_pdu_rpc PROPERTIES EXPORT_NAME rpc)
+set_target_properties(hakoniwa_pdu_rpc PROPERTIES
+  EXPORT_NAME rpc
+  WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
 
 install(
   TARGETS hakoniwa_pdu_rpc
