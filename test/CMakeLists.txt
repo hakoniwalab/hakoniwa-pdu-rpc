@@ -74,3 +74,20 @@ set_tests_properties(hakoniwa_pdu_rpc_cancel_race_test PROPERTIES
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   TIMEOUT 30
 )
+
+# C ABI smoke coverage. Runtime topology behavior remains owned by the
+# existing contract tests; this target verifies opaque-handle and null-safety
+# behavior at the language boundary.
+add_executable(hakoniwa_pdu_rpc_c_api_test
+  c_rpc_api_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_rpc_c_api_test
+  PRIVATE
+    hakoniwa_pdu_rpc::rpc
+    GTest::gtest_main
+)
+add_test(NAME hakoniwa_pdu_rpc_c_api_test COMMAND hakoniwa_pdu_rpc_c_api_test)
+set_tests_properties(hakoniwa_pdu_rpc_c_api_test PROPERTIES
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  TIMEOUT 30
+)
