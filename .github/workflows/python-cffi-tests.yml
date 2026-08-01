@@ -149,7 +149,26 @@ jobs:
         run: |
           $rpc = Get-ChildItem -Path "$env:GITHUB_WORKSPACE/build" -Recurse -Filter "hakoniwa_pdu_rpc.dll" | Select-Object -First 1
           if (-not $rpc) { throw "hakoniwa_pdu_rpc.dll was not found" }
+
+          $dllDirs = @(
+            $rpc.DirectoryName,
+            "$env:GITHUB_WORKSPACE/endpoint-install/bin",
+            "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin"
+          ) | Where-Object { Test-Path $_ } | Select-Object -Unique
+
           $env:HAKO_PDU_RPC_LIBRARY = $rpc.FullName
           $env:PYTHONPATH = "$env:GITHUB_WORKSPACE/python"
-          $env:PATH = "$env:GITHUB_WORKSPACE/endpoint-install/bin;$($rpc.DirectoryName);$env:PATH"
-          python -m pytest -q python/test_cffi_basic.py
+          $env:HAKO_PDU_RPC_DLL_DIRS = ($dllDirs -join [IO.Path]::PathSeparator)
+          $env:PATH = "$($dllDirs -join ';');$env:PATH"
+
+          @'
+          import os
+          import pytest
+
+          handles = []
+          for directory in os.environ["HAKO_PDU_RPC_DLL_DIRS"].split(os.pathsep):
+              if directory:
+                  handles.append(os.add_dll_directory(directory))
+
+          raise SystemExit(pytest.main(["-q", "python/test_cffi_basic.py"]))
+          '@ | python -
