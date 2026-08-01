@@ -35,7 +35,7 @@ def wait_request(server: RpcServer, timeout: float = 3.0):
     raise AssertionError("server request timed out")
 
 
-def test_registry_auto_wire_round_trip_returns_generated_response_body():
+def run_registry_round_trip(*, asynchronous: bool) -> None:
     library = os.environ["HAKO_PDU_RPC_LIBRARY"]
     wire = load_service_wire("AddTwoInts")
 
@@ -90,10 +90,24 @@ def test_registry_auto_wire_round_trip_returns_generated_response_body():
             request = client.create_request()
             request.a = 10
             request.b = 20
-            response = client.call(request, timeout_usec=1_000_000)
+            if asynchronous:
+                response = client.call_async(
+                    request,
+                    timeout_usec=1_000_000,
+                ).result(timeout=3.0)
+            else:
+                response = client.call(request, timeout_usec=1_000_000)
             assert response.sum == 30
         finally:
             worker.join(timeout=5.0)
 
         assert not worker.is_alive()
         assert not errors
+
+
+def test_registry_auto_wire_round_trip_returns_generated_response_body() -> None:
+    run_registry_round_trip(asynchronous=False)
+
+
+def test_registry_auto_wire_async_round_trip_returns_generated_response_body() -> None:
+    run_registry_round_trip(asynchronous=True)
