@@ -41,7 +41,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install Python dependencies
-        run: python -m pip install --upgrade pip cffi
+        run: python -m pip install --upgrade pip setuptools wheel cffi
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
