@@ -20,6 +20,7 @@ add_library(hakoniwa_pdu_rpc
   rpc_client_endpoint_impl.cpp
   rpc_services_client.cpp
   c_rpc.cpp
+  c_rpc_cancel.cpp
 )
 
 add_library(hakoniwa_pdu_rpc::rpc ALIAS hakoniwa_pdu_rpc)
