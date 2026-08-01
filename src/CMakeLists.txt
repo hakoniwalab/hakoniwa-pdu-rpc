@@ -40,30 +40,35 @@ function(hako_pdu_rpc_configure_target target)
   )
 endfunction()
 
-add_library(hakoniwa_pdu_rpc ${HAKO_PDU_RPC_SOURCES})
+# Keep the historical native CMake target static. Existing C++ consumers and
+# all native contract tests therefore retain the same linkage that was already
+# validated across Linux, macOS, and Windows.
+add_library(hakoniwa_pdu_rpc STATIC ${HAKO_PDU_RPC_SOURCES})
 hako_pdu_rpc_configure_target(hakoniwa_pdu_rpc)
+set_target_properties(hakoniwa_pdu_rpc PROPERTIES EXPORT_NAME rpc)
 
 add_library(hakoniwa_pdu_rpc::rpc ALIAS hakoniwa_pdu_rpc)
 add_library(hakoniwa_pdu_rpc::hakoniwa_pdu_rpc ALIAS hakoniwa_pdu_rpc)
 
-set_target_properties(hakoniwa_pdu_rpc PROPERTIES
-  EXPORT_NAME rpc
+# Build the CFFI-loadable artifact beside the static library from the same
+# sources. The runtime file keeps the established hakoniwa_pdu_rpc name, while
+# its Windows import library uses a distinct name to avoid colliding with the
+# real static hakoniwa_pdu_rpc.lib.
+add_library(hakoniwa_pdu_rpc_shared SHARED ${HAKO_PDU_RPC_SOURCES})
+hako_pdu_rpc_configure_target(hakoniwa_pdu_rpc_shared)
+set_target_properties(hakoniwa_pdu_rpc_shared PROPERTIES
+  EXPORT_NAME rpc_shared
+  OUTPUT_NAME hakoniwa_pdu_rpc
+  ARCHIVE_OUTPUT_NAME hakoniwa_pdu_rpc_shared
   WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
-# The supported Windows shared-library boundary is the C API used by CFFI.
-# Native C++ contract tests instantiate STL-bearing implementation classes, so
-# keep those tests inside one binary instead of exercising an unstable C++ DLL
-# ABI. C API contract tests continue to link the real shared target above.
-if(WIN32 AND BUILD_SHARED_LIBS AND HAKO_PDU_RPC_BUILD_TESTS)
-  add_library(hakoniwa_pdu_rpc_cpp_contract_static STATIC
-    ${HAKO_PDU_RPC_SOURCES}
-  )
-  hako_pdu_rpc_configure_target(hakoniwa_pdu_rpc_cpp_contract_static)
-endif()
+add_library(hakoniwa_pdu_rpc::rpc_shared ALIAS hakoniwa_pdu_rpc_shared)
 
 install(
-  TARGETS hakoniwa_pdu_rpc
+  TARGETS
+    hakoniwa_pdu_rpc
+    hakoniwa_pdu_rpc_shared
   EXPORT hakoniwa_pdu_rpcTargets
   ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
