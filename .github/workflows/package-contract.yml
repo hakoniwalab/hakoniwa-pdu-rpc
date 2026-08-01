@@ -75,8 +75,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Test build manifest resolver
-        run: python -m unittest tools/test_hako.py -v
+      - name: Test build manifest and operation contracts
+        run: python -m unittest tools/test_hako.py tools/test_hako_operations.py -v
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -141,6 +141,9 @@ jobs:
 
       - name: Configure dry-run
         run: python tools/hako.py configure --config "${{ matrix.config }}" --dry-run
+
+      - name: Configure
+        run: python tools/hako.py configure --config "${{ matrix.config }}"
 
       - name: Build
         run: python tools/hako.py build --config "${{ matrix.config }}"
