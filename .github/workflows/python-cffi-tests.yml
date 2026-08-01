@@ -146,6 +146,8 @@ jobs:
 
           @'
           import os
+          from pathlib import Path
+
           import pytest
 
           handles = []
@@ -153,5 +155,6 @@ jobs:
               if directory:
                   handles.append(os.add_dll_directory(directory))
 
-          raise SystemExit(pytest.main(["-q", "python/test_cffi_basic.py", "python/test_cffi_timeout_cancel.py", "python/test_cffi_cancel_race.py"]))
+          tests = [str(path) for path in sorted(Path("python").glob("test_cffi_*.py"))]
+          raise SystemExit(pytest.main(["-q", *tests]))
           '@ | python -
