@@ -14,7 +14,7 @@ if(NOT TARGET nlohmann_json::nlohmann_json)
   FetchContent_MakeAvailable(nlohmann_json)
 endif()
 
-add_library(hakoniwa_pdu_rpc
+set(HAKO_PDU_RPC_SOURCES
   rpc_server_endpoint_impl.cpp
   rpc_services_server.cpp
   rpc_client_endpoint_impl.cpp
@@ -24,27 +24,43 @@ add_library(hakoniwa_pdu_rpc
   c_rpc_alloc.cpp
 )
 
+function(hako_pdu_rpc_configure_target target)
+  target_compile_features(${target} PUBLIC cxx_std_20)
+  target_include_directories(${target}
+    PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
+      $<BUILD_INTERFACE:${HAKONIWA_PDU_REGISTRY_DIR}/pdu/types>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  )
+
+  target_link_libraries(${target}
+    PUBLIC
+      hakoniwa_pdu_endpoint::hakoniwa_pdu_endpoint
+      nlohmann_json::nlohmann_json
+  )
+endfunction()
+
+add_library(hakoniwa_pdu_rpc ${HAKO_PDU_RPC_SOURCES})
+hako_pdu_rpc_configure_target(hakoniwa_pdu_rpc)
+
 add_library(hakoniwa_pdu_rpc::rpc ALIAS hakoniwa_pdu_rpc)
 add_library(hakoniwa_pdu_rpc::hakoniwa_pdu_rpc ALIAS hakoniwa_pdu_rpc)
-
-target_compile_features(hakoniwa_pdu_rpc PUBLIC cxx_std_20)
-target_include_directories(hakoniwa_pdu_rpc
-  PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
-    $<BUILD_INTERFACE:${HAKONIWA_PDU_REGISTRY_DIR}/pdu/types>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-)
-
-target_link_libraries(hakoniwa_pdu_rpc
-  PUBLIC
-    hakoniwa_pdu_endpoint::hakoniwa_pdu_endpoint
-    nlohmann_json::nlohmann_json
-)
 
 set_target_properties(hakoniwa_pdu_rpc PROPERTIES
   EXPORT_NAME rpc
   WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
+
+# The supported Windows shared-library boundary is the C API used by CFFI.
+# Native C++ contract tests instantiate STL-bearing implementation classes, so
+# keep those tests inside one binary instead of exercising an unstable C++ DLL
+# ABI. C API contract tests continue to link the real shared target above.
+if(WIN32 AND BUILD_SHARED_LIBS AND HAKO_PDU_RPC_BUILD_TESTS)
+  add_library(hakoniwa_pdu_rpc_cpp_contract_static STATIC
+    ${HAKO_PDU_RPC_SOURCES}
+  )
+  hako_pdu_rpc_configure_target(hakoniwa_pdu_rpc_cpp_contract_static)
+endif()
 
 install(
   TARGETS hakoniwa_pdu_rpc
