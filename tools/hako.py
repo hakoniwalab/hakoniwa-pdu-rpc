@@ -313,8 +313,6 @@ def doctor(ctx: Context) -> list[str]:
         errors.append("Registry submodule is missing; run: git submodule update --init --recursive")
     if not ctx.endpoint_root or not endpoint_package_exists(ctx.endpoint_root):
         errors.append("installed hakoniwa-pdu-endpoint package was not found at the selected path")
-    elif ctx.python_enabled and not endpoint_shared_library_exists(ctx.endpoint_root, ctx.platform_name):
-        errors.append("bindings.python=true requires a shared hakoniwa-pdu-endpoint package")
     if ctx.python_enabled:
         for module in ("cffi", "setuptools", "wheel"):
             if not _module_available(module):
