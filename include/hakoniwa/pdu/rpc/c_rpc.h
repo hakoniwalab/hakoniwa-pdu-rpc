@@ -51,21 +51,33 @@ typedef struct {
     size_t pdu_size;
 } hako_pdu_rpc_request_info_t;
 
+/*
+ * Buffers returned by an *_alloc function are owned by the caller and must be
+ * released with hako_pdu_rpc_buffer_free(). The function is NULL-safe.
+ * Language bindings should copy the bytes into their native memory and free
+ * the C buffer immediately.
+ */
+void hako_pdu_rpc_buffer_free(uint8_t* buffer);
+
 hako_pdu_rpc_client_handle_t* hako_pdu_rpc_client_create(const char* node_id, const char* client_name, const char* service_config_path, const char* endpoint_config_path, uint64_t delta_time_usec, const char* time_source_type);
 void hako_pdu_rpc_client_destroy(hako_pdu_rpc_client_handle_t* handle);
 hako_pdu_rpc_error_t hako_pdu_rpc_client_start(hako_pdu_rpc_client_handle_t* handle);
 hako_pdu_rpc_error_t hako_pdu_rpc_client_stop(hako_pdu_rpc_client_handle_t* handle);
 hako_pdu_rpc_error_t hako_pdu_rpc_client_create_request_buffer(hako_pdu_rpc_client_handle_t* handle, const char* service_name, uint8_t* buffer, size_t capacity, size_t* out_size);
+hako_pdu_rpc_error_t hako_pdu_rpc_client_create_request_buffer_alloc(hako_pdu_rpc_client_handle_t* handle, const char* service_name, uint8_t** out_buffer, size_t* out_size);
 hako_pdu_rpc_error_t hako_pdu_rpc_client_call(hako_pdu_rpc_client_handle_t* handle, const char* service_name, const uint8_t* pdu, size_t pdu_size, uint64_t timeout_usec);
 hako_pdu_rpc_error_t hako_pdu_rpc_client_cancel(hako_pdu_rpc_client_handle_t* handle, const char* service_name);
 hako_pdu_rpc_client_event_t hako_pdu_rpc_client_poll(hako_pdu_rpc_client_handle_t* handle, hako_pdu_rpc_response_info_t* out_info, uint8_t* buffer, size_t capacity, size_t* out_size, hako_pdu_rpc_error_t* out_error);
+hako_pdu_rpc_client_event_t hako_pdu_rpc_client_poll_alloc(hako_pdu_rpc_client_handle_t* handle, hako_pdu_rpc_response_info_t* out_info, uint8_t** out_buffer, size_t* out_size, hako_pdu_rpc_error_t* out_error);
 
 hako_pdu_rpc_server_handle_t* hako_pdu_rpc_server_create(const char* node_id, const char* service_config_path, const char* endpoint_config_path, uint64_t delta_time_usec, const char* time_source_type);
 void hako_pdu_rpc_server_destroy(hako_pdu_rpc_server_handle_t* handle);
 hako_pdu_rpc_error_t hako_pdu_rpc_server_start(hako_pdu_rpc_server_handle_t* handle);
 hako_pdu_rpc_error_t hako_pdu_rpc_server_stop(hako_pdu_rpc_server_handle_t* handle);
 hako_pdu_rpc_server_event_t hako_pdu_rpc_server_poll(hako_pdu_rpc_server_handle_t* handle, hako_pdu_rpc_request_info_t* out_info, uint8_t* buffer, size_t capacity, size_t* out_size, hako_pdu_rpc_error_t* out_error);
+hako_pdu_rpc_server_event_t hako_pdu_rpc_server_poll_alloc(hako_pdu_rpc_server_handle_t* handle, hako_pdu_rpc_request_info_t* out_info, uint8_t** out_buffer, size_t* out_size, hako_pdu_rpc_error_t* out_error);
 hako_pdu_rpc_error_t hako_pdu_rpc_server_create_reply_buffer(hako_pdu_rpc_server_handle_t* handle, uint64_t request_token, uint8_t status, int32_t result_code, uint8_t* buffer, size_t capacity, size_t* out_size);
+hako_pdu_rpc_error_t hako_pdu_rpc_server_create_reply_buffer_alloc(hako_pdu_rpc_server_handle_t* handle, uint64_t request_token, uint8_t status, int32_t result_code, uint8_t** out_buffer, size_t* out_size);
 hako_pdu_rpc_error_t hako_pdu_rpc_server_send_reply(hako_pdu_rpc_server_handle_t* handle, uint64_t request_token, const uint8_t* pdu, size_t pdu_size);
 hako_pdu_rpc_error_t hako_pdu_rpc_server_send_cancel_reply(hako_pdu_rpc_server_handle_t* handle, uint64_t request_token, const uint8_t* pdu, size_t pdu_size);
 

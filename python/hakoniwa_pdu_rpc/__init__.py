@@ -1,3 +1,22 @@
-"""Hakoniwa PDU RPC validation utilities."""
+"""Hakoniwa PDU RPC Python bindings and validation utilities."""
 
-__all__ = ["validate_configs"]
+from .cffi_api import (
+    ClientEvent,
+    ClientPollResult,
+    RpcClient,
+    RpcError,
+    RpcServer,
+    ServerEvent,
+    ServerPollResult,
+)
+
+__all__ = [
+    "ClientEvent",
+    "ClientPollResult",
+    "RpcClient",
+    "RpcError",
+    "RpcServer",
+    "ServerEvent",
+    "ServerPollResult",
+    "validate_configs",
+]
