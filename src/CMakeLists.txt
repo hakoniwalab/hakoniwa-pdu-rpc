@@ -21,6 +21,7 @@ add_library(hakoniwa_pdu_rpc
   rpc_services_client.cpp
   c_rpc.cpp
   c_rpc_cancel.cpp
+  c_rpc_alloc.cpp
 )
 
 add_library(hakoniwa_pdu_rpc::rpc ALIAS hakoniwa_pdu_rpc)
