@@ -48,9 +48,33 @@ class ManifestTests(unittest.TestCase):
             manifest.write_text(text, encoding="utf-8")
             return HAKO.resolve_config(HAKO.load_simple_yaml(manifest))
 
-    def test_default_manifest_reproduces_legacy_build_intent(self):
+    def test_default_manifest_reproduces_python_binding_build_intent(self):
         cfg = HAKO.resolve_config(
             HAKO.load_simple_yaml(REPO_ROOT / "hakoniwa-build.yaml")
+        )
+        self.assertEqual(cfg["version"], 1)
+        self.assertEqual(cfg["build"]["type"], "Release")
+        self.assertEqual(cfg["build"]["dir"], "build")
+        self.assertEqual(cfg["build"]["install_dir"], ".hako/install")
+        self.assertEqual(cfg["build"]["shared"], "auto")
+        self.assertTrue(cfg["build"]["shared_resolved"])
+        self.assertTrue(cfg["bindings"]["python"])
+        self.assertTrue(cfg["validation"]["tests"])
+        self.assertTrue(cfg["validation"]["python_import"])
+        self.assertEqual(cfg["paths"]["pdu_endpoint_root"], "")
+        self.assertEqual(cfg["paths"]["vcpkg_root"], "")
+
+    def test_legacy_manifest_remains_supported(self):
+        cfg = self.load(
+            """version: 1
+build:
+  type: Release
+  dir: build
+  install_dir: .hako/install
+paths:
+  pdu_endpoint_root: ""
+  vcpkg_root: ""
+"""
         )
         self.assertEqual(
             cfg,
@@ -173,17 +197,8 @@ class PrecedenceTests(unittest.TestCase):
         environment = self.root / "environment-endpoint"
         for path in (cli, manifest, environment):
             write_endpoint_package(path)
-        with patch.dict(
-            HAKO.os.environ,
-            {"HAKO_PDU_ENDPOINT_ROOT": str(environment)},
-            clear=False,
-        ):
-            ctx = HAKO.Context(
-                make_args(endpoint_root=str(cli)),
-                self.config(endpoint_root=str(manifest)),
-                self.manifest,
-                self.root,
-            )
+        with patch.dict(HAKO.os.environ, {"HAKO_PDU_ENDPOINT_ROOT": str(environment)}, clear=False):
+            ctx = HAKO.Context(make_args(endpoint_root=str(cli)), self.config(endpoint_root=str(manifest)), self.manifest, self.root)
         self.assertEqual(ctx.endpoint_root, cli.resolve())
         self.assertEqual(ctx.endpoint_source, "cli")
 
@@ -192,88 +207,43 @@ class PrecedenceTests(unittest.TestCase):
         environment = self.root / "environment-endpoint"
         for path in (manifest, environment):
             write_endpoint_package(path)
-        with patch.dict(
-            HAKO.os.environ,
-            {"HAKO_PDU_ENDPOINT_ROOT": str(environment)},
-            clear=False,
-        ):
-            ctx = HAKO.Context(
-                make_args(),
-                self.config(endpoint_root=str(manifest)),
-                self.manifest,
-                self.root,
-            )
+        with patch.dict(HAKO.os.environ, {"HAKO_PDU_ENDPOINT_ROOT": str(environment)}, clear=False):
+            ctx = HAKO.Context(make_args(), self.config(endpoint_root=str(manifest)), self.manifest, self.root)
         self.assertEqual(ctx.endpoint_root, manifest.resolve())
         self.assertEqual(ctx.endpoint_source, "manifest")
 
     def test_environment_is_used_when_manifest_path_is_empty(self):
         environment = self.root / "environment-endpoint"
         write_endpoint_package(environment)
-        with patch.dict(
-            HAKO.os.environ,
-            {"HAKO_PDU_ENDPOINT_ROOT": str(environment)},
-            clear=False,
-        ):
-            ctx = HAKO.Context(
-                make_args(),
-                self.config(),
-                self.manifest,
-                self.root,
-            )
+        with patch.dict(HAKO.os.environ, {"HAKO_PDU_ENDPOINT_ROOT": str(environment)}, clear=False):
+            ctx = HAKO.Context(make_args(), self.config(), self.manifest, self.root)
         self.assertEqual(ctx.endpoint_root, environment.resolve())
-        self.assertEqual(
-            ctx.endpoint_source,
-            "environment:HAKO_PDU_ENDPOINT_ROOT",
-        )
+        self.assertEqual(ctx.endpoint_source, "environment:HAKO_PDU_ENDPOINT_ROOT")
 
     def test_environment_discovery_skips_invalid_legacy_candidate(self):
         valid = self.root / "valid-environment-endpoint"
         write_endpoint_package(valid)
         with patch.dict(
             HAKO.os.environ,
-            {
-                "HAKO_PDU_ENDPOINT_ROOT": str(self.root / "missing-endpoint"),
-                "HAKO_PDU_ENDPOINT_PREFIX": str(valid),
-            },
+            {"HAKO_PDU_ENDPOINT_ROOT": str(self.root / "missing-endpoint"), "HAKO_PDU_ENDPOINT_PREFIX": str(valid)},
             clear=False,
         ):
-            ctx = HAKO.Context(
-                make_args(),
-                self.config(),
-                self.manifest,
-                self.root,
-            )
+            ctx = HAKO.Context(make_args(), self.config(), self.manifest, self.root)
         self.assertEqual(ctx.endpoint_root, valid.resolve())
-        self.assertEqual(
-            ctx.endpoint_source,
-            "environment:HAKO_PDU_ENDPOINT_PREFIX",
-        )
+        self.assertEqual(ctx.endpoint_source, "environment:HAKO_PDU_ENDPOINT_PREFIX")
 
     def test_invalid_manifest_path_is_not_replaced_by_environment(self):
         selected = self.root / "missing-endpoint"
         environment = self.root / "environment-endpoint"
         write_endpoint_package(environment)
-        with patch.dict(
-            HAKO.os.environ,
-            {"HAKO_PDU_ENDPOINT_ROOT": str(environment)},
-            clear=False,
-        ):
-            ctx = HAKO.Context(
-                make_args(),
-                self.config(endpoint_root=str(selected)),
-                self.manifest,
-                self.root,
-            )
+        with patch.dict(HAKO.os.environ, {"HAKO_PDU_ENDPOINT_ROOT": str(environment)}, clear=False):
+            ctx = HAKO.Context(make_args(), self.config(endpoint_root=str(selected)), self.manifest, self.root)
         self.assertEqual(ctx.endpoint_root, selected.resolve())
         self.assertEqual(ctx.endpoint_source, "manifest")
 
     def test_cli_build_values_override_manifest(self):
         ctx = HAKO.Context(
-            make_args(
-                build_dir="cli-build",
-                install_dir="cli-install",
-                build_type="RelWithDebInfo",
-            ),
+            make_args(build_dir="cli-build", install_dir="cli-install", build_type="RelWithDebInfo"),
             self.config(),
             self.manifest,
             self.root,
@@ -285,20 +255,14 @@ class PrecedenceTests(unittest.TestCase):
 
 class OperationCompatibilityTests(unittest.TestCase):
     def context(self):
-        cfg = HAKO.resolve_config(
-            HAKO.load_simple_yaml(REPO_ROOT / "hakoniwa-build.yaml")
-        )
-        return HAKO.Context(
-            make_args(),
-            cfg,
-            REPO_ROOT / "hakoniwa-build.yaml",
-            REPO_ROOT,
-        )
+        cfg = HAKO.resolve_config(HAKO.load_simple_yaml(REPO_ROOT / "hakoniwa-build.yaml"))
+        return HAKO.Context(make_args(), cfg, REPO_ROOT / "hakoniwa-build.yaml", REPO_ROOT)
 
     def test_default_build_cmake_contract_matches_legacy_driver(self):
         ctx = self.context()
         command = HAKO.configure_command(ctx, tests=False)
         self.assertIn("-DCMAKE_BUILD_TYPE=Release", command)
+        self.assertIn("-DBUILD_SHARED_LIBS=ON", command)
         self.assertIn("-DHAKO_PDU_RPC_BUILD_TESTS=OFF", command)
         self.assertIn("-DHAKO_PDU_RPC_BUILD_EXAMPLES=ON", command)
         self.assertEqual(ctx.build_dir, REPO_ROOT / "build")
@@ -310,40 +274,22 @@ class OperationCompatibilityTests(unittest.TestCase):
             with self.subTest(operation=operation):
                 record = HAKO.resolved_record(ctx, operation)
                 self.assertTrue(record["operation_semantics"]["tests"])
-                self.assertIn(
-                    "-DHAKO_PDU_RPC_BUILD_TESTS=ON",
-                    record["cmake_args"],
-                )
+                self.assertIn("-DHAKO_PDU_RPC_BUILD_TESTS=ON", record["cmake_args"])
 
     def test_non_test_operations_keep_tests_disabled(self):
         ctx = self.context()
-        for operation in (
-            "doctor",
-            "configure",
-            "build",
-            "install",
-            "package-test",
-        ):
+        for operation in ("doctor", "configure", "build", "install", "smoke", "package-test"):
             with self.subTest(operation=operation):
                 record = HAKO.resolved_record(ctx, operation)
                 self.assertFalse(record["operation_semantics"]["tests"])
-                self.assertIn(
-                    "-DHAKO_PDU_RPC_BUILD_TESTS=OFF",
-                    record["cmake_args"],
-                )
+                self.assertIn("-DHAKO_PDU_RPC_BUILD_TESTS=OFF", record["cmake_args"])
 
 
 class FoundationInstallTests(unittest.TestCase):
     def test_dependency_receipt_reads_endpoint_contract_fields(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             prefix = Path(temp_dir)
-            receipt = (
-                prefix
-                / "share"
-                / "hakoniwa"
-                / "receipts"
-                / "hakoniwa-pdu-endpoint.yaml"
-            )
+            receipt = prefix / "share" / "hakoniwa" / "receipts" / "hakoniwa-pdu-endpoint.yaml"
             receipt.parent.mkdir(parents=True)
             receipt.write_text(
                 """schema_version: 1
@@ -359,22 +305,14 @@ artifacts:
 """,
                 encoding="utf-8",
             )
-
-            dependency = HAKO._read_dependency_receipt(
-                prefix,
-                "hakoniwa-pdu-endpoint",
-            )
-
+            dependency = HAKO._read_dependency_receipt(prefix, "hakoniwa-pdu-endpoint")
             self.assertEqual(dependency["version"], "1.0.0")
             self.assertEqual(dependency["source_revision"], "def456")
             self.assertEqual(dependency["build_limits"]["asset_num"], 16)
 
     def test_missing_legacy_dependency_receipt_is_unknown(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            dependency = HAKO._read_dependency_receipt(
-                Path(temp_dir),
-                "hakoniwa-pdu-endpoint",
-            )
+            dependency = HAKO._read_dependency_receipt(Path(temp_dir), "hakoniwa-pdu-endpoint")
         self.assertEqual(dependency["source_revision"], "unknown")
         self.assertEqual(dependency["build_limits"], {})
 
@@ -387,17 +325,9 @@ artifacts:
                 (headers / f"rpc_{index}.hpp").write_text("", encoding="utf-8")
             cmake_dir = prefix / "lib" / "cmake" / "hakoniwa_pdu_rpc"
             cmake_dir.mkdir(parents=True)
-            (prefix / "lib" / "libhakoniwa_pdu_rpc.a").write_text(
-                "",
-                encoding="utf-8",
-            )
-
+            (prefix / "lib" / "libhakoniwa_pdu_rpc.a").write_text("", encoding="utf-8")
             artifacts = HAKO._rpc_artifacts(prefix)
-
-            self.assertIn(
-                (Path("include/hakoniwa/pdu/rpc"), "directory"),
-                artifacts,
-            )
+            self.assertIn((Path("include/hakoniwa/pdu/rpc"), "directory"), artifacts)
             self.assertLess(len(artifacts), 10)
 
 
