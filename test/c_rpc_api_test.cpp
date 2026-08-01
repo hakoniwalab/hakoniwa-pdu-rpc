@@ -2,20 +2,26 @@
 
 #include "hakoniwa/pdu/rpc/c_rpc.h"
 
+namespace {
+constexpr const char* kServiceConfigPath = "configs/service_config.json";
+constexpr const char* kEndpointConfigPath = "configs/endpoints.json";
+}
+
 TEST(CRpcApiTest, RejectsInvalidCreateArguments) {
     EXPECT_EQ(hako_pdu_rpc_client_create(nullptr, "client", "service.json", "endpoint.json", 1000, "real"), nullptr);
     EXPECT_EQ(hako_pdu_rpc_server_create(nullptr, "service.json", "endpoint.json", 1000, "real"), nullptr);
 }
 
-TEST(CRpcApiTest, HandleCanBeCreatedAndDestroyedWithoutStarting) {
-    auto* client = hako_pdu_rpc_client_create(
-        "client_node", "TestClient", "service.json", "endpoint.json", 1000, "real");
-    ASSERT_NE(client, nullptr);
-    hako_pdu_rpc_client_destroy(client);
-
+TEST(CRpcApiTest, InitializedHandleCanBeDestroyedWithoutStarting) {
     auto* server = hako_pdu_rpc_server_create(
-        "server_node", "service.json", "endpoint.json", 1000, "real");
+        "server_node", kServiceConfigPath, kEndpointConfigPath, 1000, "real");
     ASSERT_NE(server, nullptr);
+
+    auto* client = hako_pdu_rpc_client_create(
+        "client_node", "TestClient", kServiceConfigPath, kEndpointConfigPath, 1000, "real");
+    ASSERT_NE(client, nullptr);
+
+    hako_pdu_rpc_client_destroy(client);
     hako_pdu_rpc_server_destroy(server);
 }
 
