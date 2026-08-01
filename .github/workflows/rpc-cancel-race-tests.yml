@@ -100,5 +100,11 @@ jobs:
       - name: Doctor
         run: python tools/hako.py doctor
 
-      - name: Phase 4 cancel-race RPC test
+      - name: Existing C++ cancel-race RPC contract
         run: python tools/hako.py test-cancel-race
+
+      - name: Build C API cancel-race RPC contract
+        run: cmake --build build --config Release --target hakoniwa_pdu_rpc_c_api_cancel_race_test --parallel
+
+      - name: Run C API cancel-race RPC contract
+        run: ctest --test-dir build -C Release --output-on-failure -R "^hakoniwa_pdu_rpc_c_api_cancel_race_test$"
