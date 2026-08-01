@@ -113,8 +113,8 @@ jobs:
       - name: Build native library and Python binding
         run: python tools/hako.py build
 
-      - name: Test basic RPC contract
-        run: python tools/hako.py test-basic
+      - name: Test basic RPC contract with static native build
+        run: python tools/hako.py test-basic --config test/fixtures/cpp-contract-build.yaml
 
       - name: Install
         run: python tools/hako.py install
