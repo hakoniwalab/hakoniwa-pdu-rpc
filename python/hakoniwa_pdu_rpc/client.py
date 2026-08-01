@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
 from .cffi_api import ClientEvent, RpcClient as CffiRpcClient, RpcError
+from .future import RpcFuture
 
 
 class RpcTimeoutError(RpcError):
@@ -15,10 +17,14 @@ class RpcCanceledError(RpcError):
 
 
 class RpcClient:
-    """Synchronous high-level RPC client built on the thin CFFI binding.
+    """High-level RPC client with synchronous and non-blocking call APIs.
 
     Native PDU buffers never escape the CFFI layer. Responses returned by
-    :meth:`call` are ordinary Python ``bytes``.
+    :meth:`call` and :meth:`call_async` are ordinary Python ``bytes``.
+
+    The underlying native client exposes one shared response queue, so one
+    ``RpcClient`` instance supports one in-flight request at a time. Create
+    separate clients when independent concurrent calls are required.
     """
 
     def __init__(
@@ -40,6 +46,7 @@ class RpcClient:
             delta_time_usec,
             time_source_type,
         )
+        self._inflight_lock = threading.Lock()
 
     def start(self) -> None:
         self._client.start()
@@ -58,14 +65,91 @@ class RpcClient:
         event_timeout_sec: float = 5.0,
         poll_interval_sec: float = 0.001,
     ) -> bytes:
-        """Send one request and wait for its terminal response.
+        """Send one request and synchronously wait for terminal completion."""
+        return self.call_async(
+            service_name,
+            pdu,
+            timeout_usec,
+            cancel_on_timeout=cancel_on_timeout,
+            connect_timeout_sec=connect_timeout_sec,
+            event_timeout_sec=event_timeout_sec,
+            poll_interval_sec=poll_interval_sec,
+        ).result()
 
-        A normal response returns its PDU as ``bytes``. When the native timeout
-        event occurs, the default behavior is to issue an explicit cancel and
-        wait for terminal completion so the endpoint remains reusable. If a
-        normal response wins the cancel race, that response is returned.
-        Otherwise :class:`RpcTimeoutError` is raised after cancel completion.
+    def call_async(
+        self,
+        service_name: str,
+        pdu: bytes,
+        timeout_usec: int,
+        *,
+        cancel_on_timeout: bool = True,
+        connect_timeout_sec: float = 3.0,
+        event_timeout_sec: float = 5.0,
+        poll_interval_sec: float = 0.001,
+    ) -> RpcFuture[bytes]:
+        """Start one RPC call and return immediately with an :class:`RpcFuture`.
+
+        The worker owns the existing timeout, cancel, and response/cancel race
+        state machine. The returned future is independent of ROS and asyncio;
+        adapters can use ``add_done_callback()`` or bridge ``result()`` into
+        their own executor model without blocking the caller thread.
         """
+        if not self._inflight_lock.acquire(blocking=False):
+            raise RpcError("another RPC call is already in flight on this client")
+
+        future = RpcFuture[bytes](lambda: self.cancel(service_name))
+
+        def run() -> None:
+            if not future._set_running_or_notify_cancel():
+                self._inflight_lock.release()
+                return
+            try:
+                response = self._call_impl(
+                    service_name,
+                    pdu,
+                    timeout_usec,
+                    cancel_on_timeout=cancel_on_timeout,
+                    connect_timeout_sec=connect_timeout_sec,
+                    event_timeout_sec=event_timeout_sec,
+                    poll_interval_sec=poll_interval_sec,
+                )
+            except BaseException as error:
+                future._set_exception(error)
+            else:
+                future._set_result(response)
+            finally:
+                self._inflight_lock.release()
+
+        threading.Thread(
+            target=run,
+            name=f"hakoniwa-rpc-{service_name}",
+            daemon=True,
+        ).start()
+        return future
+
+    def cancel(self, service_name: str) -> None:
+        self._client.cancel(service_name)
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> "RpcClient":
+        return self
+
+    def __exit__(self, *_args) -> None:
+        self.close()
+
+    def _call_impl(
+        self,
+        service_name: str,
+        pdu: bytes,
+        timeout_usec: int,
+        *,
+        cancel_on_timeout: bool,
+        connect_timeout_sec: float,
+        event_timeout_sec: float,
+        poll_interval_sec: float,
+    ) -> bytes:
         self._send_when_connected(
             service_name,
             pdu,
@@ -99,18 +183,6 @@ class RpcClient:
                 )
 
         raise RpcError(f"RPC terminal event was not received: {service_name}")
-
-    def cancel(self, service_name: str) -> None:
-        self._client.cancel(service_name)
-
-    def close(self) -> None:
-        self._client.close()
-
-    def __enter__(self) -> "RpcClient":
-        return self
-
-    def __exit__(self, *_args) -> None:
-        self.close()
 
     def _send_when_connected(
         self,
@@ -146,11 +218,9 @@ class RpcClient:
                     f"unexpected service response: {result.service_name!r}"
                 )
             if result.event == ClientEvent.RESPONSE_IN:
-                # The server completed normally before processing the cancel.
                 return result.pdu
             if result.event == ClientEvent.RESPONSE_CANCEL:
                 raise RpcTimeoutError(f"RPC timed out and was canceled: {service_name}")
-            # A repeated timeout notification is non-terminal; keep waiting.
 
         raise RpcError(
             f"RPC cancel completion was not received after timeout: {service_name}"
