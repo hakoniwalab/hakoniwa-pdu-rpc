@@ -41,6 +41,16 @@ target_link_libraries(hakoniwa_pdu_rpc
 
 set_target_properties(hakoniwa_pdu_rpc PROPERTIES EXPORT_NAME rpc)
 
+# A Windows DLL needs exported symbols before CMake/MSVC can produce the
+# corresponding import library. The public API predates explicit dllexport
+# annotations, so preserve source compatibility and let CMake generate the
+# export definition for shared builds.
+if(WIN32 AND BUILD_SHARED_LIBS)
+  set_target_properties(hakoniwa_pdu_rpc PROPERTIES
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+  )
+endif()
+
 install(
   TARGETS hakoniwa_pdu_rpc
   EXPORT hakoniwa_pdu_rpcTargets
