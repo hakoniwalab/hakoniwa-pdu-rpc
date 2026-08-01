@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -15,6 +16,8 @@ from hakoniwa_pdu_rpc import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "hakoniwa-pdu-registry"))
+
 SERVICE_CONFIG = ROOT / "test" / "configs" / "service_config.json"
 ENDPOINT_CONFIG = ROOT / "test" / "configs" / "endpoints.json"
 SERVICE = "Service/Add"
