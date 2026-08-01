@@ -1,6 +1,6 @@
 # Hakoniwa PDU-RPC
 
-`hakoniwa-pdu-rpc` is a C++ request/response layer built on `hakoniwa-pdu-endpoint`.
+`hakoniwa-pdu-rpc` is a C++ request/response layer built on `hakoniwa-pdu-endpoint`, with Python CFFI bindings for typed synchronous and asynchronous client integration.
 
 It is designed for Hakoniwa-native control-plane communication where explicit lifecycle, endpoint topology, and deterministic/tick-driven integration are more important than general-purpose RPC features.
 
@@ -10,11 +10,13 @@ It is designed for Hakoniwa-native control-plane communication where explicit li
 - Multiple named services and clients.
 - JSON-driven service and endpoint topology.
 - Typed request/response helpers for generated PDU service types.
+- Python CFFI clients with Registry-generated service auto-wiring.
+- ROS-independent synchronous and asynchronous Python APIs.
 - Explicit polling, timeout, and cancellation semantics.
 - An installable CMake package for downstream consumers.
 - Cross-platform build and contract-test coverage on Linux x64, Linux ARM64, macOS, and Windows x64.
 
-This library intentionally does **not** provide dynamic service discovery, authentication, tracing, streaming RPC, or a hidden scheduling/threading model.
+This library intentionally does **not** provide dynamic service discovery, authentication, tracing, streaming RPC, or a general-purpose scheduler. The C++ API remains explicitly polled. The Python high-level `call_async()` API uses one background worker per in-flight call while remaining independent of ROS and `asyncio`.
 
 ## Architecture
 
@@ -90,6 +92,87 @@ Server loss is not treated as a separate RPC recovery protocol here. Application
 
 See `docs/test-contract.md` for the detailed test ownership and lifecycle rationale.
 
+## Python Client API
+
+Set the Python package path and shared-library path after building the native library:
+
+```bash
+export PYTHONPATH="$PWD/python:$PYTHONPATH"
+export HAKO_PDU_RPC_LIBRARY=/path/to/libhakoniwa_pdu_rpc.so
+```
+
+The high-level Python `RpcClient` exposes both synchronous and asynchronous calls. The synchronous API is implemented on top of the same asynchronous lifecycle implementation, so timeout, cancellation, and response/cancel race handling are not duplicated.
+
+```python
+from hakoniwa_pdu_rpc import RpcClient
+
+client = RpcClient(
+    library_path="/path/to/libhakoniwa_pdu_rpc.so",
+    node_id="client-node",
+    client_name="client1",
+    service_config_path="config/sample/simple-service.json",
+    endpoint_config_path="config/sample/endpoints.json",
+)
+client.start()
+
+response_pdu = client.call(
+    "Service/Add",
+    request_pdu,
+    timeout_usec=1_000_000,
+)
+```
+
+For executor-based integrations, use `call_async()` and observe the returned `RpcFuture`:
+
+```python
+future = client.call_async(
+    "Service/Add",
+    request_pdu,
+    timeout_usec=1_000_000,
+)
+
+future.add_done_callback(lambda completed: print(completed.result()))
+```
+
+`RpcFuture` provides:
+
+- `result()`
+- `exception()`
+- `done()`
+- `running()`
+- `add_done_callback()`
+- protocol-level `cancel()`
+
+The Future is independent of `rclpy` and `asyncio`. An adapter such as `hakoniwa-pdu-ros` can forward completion into its own executor without blocking the caller thread.
+
+The native client currently owns one shared response queue. Therefore, one Python `RpcClient` instance permits one in-flight request at a time. Use separate client instances for independent concurrent requests.
+
+### Registry-generated typed service auto-wiring
+
+`TypedRpcClient` loads request/response packet classes and converters by service naming convention. When no package is specified, discovery prefers the installed `hakoniwa-pdu` layout and falls back to the Registry source-tree layout:
+
+```text
+hakoniwa_pdu.pdu_msgs.hako_srv_msgs
+pdu.python.hako_srv_msgs
+```
+
+```python
+from hakoniwa_pdu_rpc import make_typed_client
+
+add_client = make_typed_client(
+    client,
+    service_name="Service/Add",
+    service_type="AddTwoInts",
+)
+
+request = add_client.create_request()
+request.body.a = 5
+request.body.b = 7
+response = add_client.call(request, timeout_usec=1_000_000)
+```
+
+The auto-wire layer owns packet conversion and normalizes generated converter output to Python `bytes`. Higher-level bridges should map only the service request/response body and leave packet headers, request IDs, timeout, and cancellation lifecycle to PDU-RPC.
+
 ## Repository Setup
 
 Clone the repository including the generated PDU registry submodule:
@@ -109,7 +192,7 @@ git submodule update --init --recursive
 
 Required:
 
-- Python 3.12 or newer for `tools/hako.py`.
+- Python 3.12 or newer for `tools/hako.py` and the Python binding.
 - C++20 compiler.
 - CMake 3.16 or newer.
 - Installed `hakoniwa-pdu-endpoint` CMake package.
@@ -418,7 +501,7 @@ config/schema/service-schema.json
 
 ## Core API
 
-Primary application entry points:
+Primary native application entry points:
 
 ### `RpcServicesClient`
 
@@ -450,20 +533,15 @@ send_reply(...)
 - `reply()`
 - `get_response_body()`
 
-Most users should work through `RpcServicesClient`, `RpcServicesServer`, and the typed helper. `IRpcClientEndpoint` / `IRpcServerEndpoint` are extension interfaces for custom endpoint behavior.
+Most native users should work through `RpcServicesClient`, `RpcServicesServer`, and the typed helper. `IRpcClientEndpoint` / `IRpcServerEndpoint` are extension interfaces for custom endpoint behavior.
 
-## Why Explicit Polling?
+## Scheduling Model
 
-The RPC API intentionally uses `poll()` instead of imposing worker threads or a scheduler.
+The native C++ RPC API intentionally uses `poll()` instead of imposing worker threads or a scheduler. This lets the caller choose simulation tick alignment, sleep/backoff policy, scheduling order, and integration with an existing deterministic main loop.
 
-This lets the caller choose:
+The Python high-level `call_async()` adapter makes a different tradeoff: it drives the same RPC lifecycle state machine in a daemon worker and exposes completion through `RpcFuture`. This is suitable for ROS executors, GUIs, and other callback-oriented applications, while the C++ layer remains explicitly scheduled.
 
-- simulation tick alignment,
-- sleep/backoff policy,
-- scheduling order,
-- integration with an existing deterministic main loop.
-
-The library owns RPC state transitions; the application owns scheduling policy.
+In both cases, the RPC implementation owns state transitions. The selected application adapter owns how completion is integrated into its execution model.
 
 ## Why Not gRPC?
 
