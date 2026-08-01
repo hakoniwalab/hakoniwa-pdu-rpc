@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  basic-round-trip:
+  contracts:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -127,7 +127,7 @@ jobs:
             -DCMAKE_PREFIX_PATH="$env:GITHUB_WORKSPACE/endpoint-install"
           cmake --build build --config Release --target hakoniwa_pdu_rpc --parallel
 
-      - name: Python CFFI basic round trip
+      - name: Python CFFI contract tests
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -141,9 +141,9 @@ jobs:
           test -n "$RPC_LIBRARY"
           export HAKO_PDU_RPC_LIBRARY="$RPC_LIBRARY"
           export PYTHONPATH="${GITHUB_WORKSPACE}/python"
-          python -m pytest -q python/test_cffi_basic.py
+          python -m pytest -q python/test_cffi_*.py
 
-      - name: Python CFFI basic round trip on Windows
+      - name: Python CFFI contract tests on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -170,5 +170,5 @@ jobs:
               if directory:
                   handles.append(os.add_dll_directory(directory))
 
-          raise SystemExit(pytest.main(["-q", "python/test_cffi_basic.py"]))
+          raise SystemExit(pytest.main(["-q", "python/test_cffi_basic.py", "python/test_cffi_timeout_cancel.py", "python/test_cffi_cancel_race.py"]))
           '@ | python -
