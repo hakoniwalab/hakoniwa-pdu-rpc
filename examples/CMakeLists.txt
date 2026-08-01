@@ -3,10 +3,10 @@ add_executable(hakoniwa_pdu_rpc_client rpc_client.cpp)
 
 target_link_libraries(hakoniwa_pdu_rpc_server
   PRIVATE
-    hakoniwa_pdu_rpc
+    hakoniwa_pdu_rpc::rpc
 )
 
 target_link_libraries(hakoniwa_pdu_rpc_client
   PRIVATE
-    hakoniwa_pdu_rpc
+    hakoniwa_pdu_rpc::rpc
 )
