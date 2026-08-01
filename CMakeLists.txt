@@ -4,11 +4,6 @@ project(hakoniwa-pdu-rpc VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# The Python CFFI binding loads the native RPC library at runtime. Keep the
-# standard build CFFI-ready while preserving an explicit static opt-out for
-# native-only consumers.
-option(BUILD_SHARED_LIBS "Build shared libraries instead of static libraries" ON)
-
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
