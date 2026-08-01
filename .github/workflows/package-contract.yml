@@ -155,9 +155,9 @@ jobs:
       - name: Build
         run: python tools/hako.py build --config "${{ matrix.config }}"
 
-      - name: Reviewed RPC contract tests
+      - name: Reviewed RPC contract tests with static native build
         if: matrix.config == 'hakoniwa-build.yaml' || matrix.os == 'ubuntu-latest'
-        run: python tools/hako.py test --config "${{ matrix.config }}"
+        run: python tools/hako.py test --config test/fixtures/cpp-contract-build.yaml --build-type "${{ matrix.build_type }}"
 
       - name: Install
         run: python tools/hako.py install --config "${{ matrix.config }}"
