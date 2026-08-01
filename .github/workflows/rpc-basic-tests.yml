@@ -121,5 +121,8 @@ jobs:
       - name: Install
         run: python tools/hako.py install
 
-      - name: Smoke
+      - name: Import smoke
         run: python tools/hako.py smoke
+
+      - name: Python CFFI lifecycle smoke
+        run: python test/python_binding_smoke.py
