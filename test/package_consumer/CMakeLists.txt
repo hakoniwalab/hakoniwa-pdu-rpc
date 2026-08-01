@@ -10,3 +10,7 @@ target_link_libraries(rpc_package_consumer PRIVATE hakoniwa_pdu_rpc::rpc)
 add_executable(rpc_package_consumer_compat main.cpp)
 target_compile_features(rpc_package_consumer_compat PRIVATE cxx_std_20)
 target_link_libraries(rpc_package_consumer_compat PRIVATE hakoniwa_pdu_rpc::hakoniwa_pdu_rpc)
+
+add_executable(rpc_package_consumer_shared main.cpp)
+target_compile_features(rpc_package_consumer_shared PRIVATE cxx_std_20)
+target_link_libraries(rpc_package_consumer_shared PRIVATE hakoniwa_pdu_rpc::rpc_shared)
