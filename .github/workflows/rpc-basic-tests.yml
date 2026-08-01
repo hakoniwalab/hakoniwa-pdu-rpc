@@ -65,14 +65,15 @@ jobs:
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install boost-asio:x64-windows boost-beast:x64-windows
 
-      - name: Build and install shared Core-free Endpoint package
+      - name: Build and install PIC static Core-free Endpoint package
         if: runner.os != 'Windows'
         shell: bash
         run: |
           git clone https://github.com/hakoniwalab/hakoniwa-pdu-endpoint.git endpoint
           cmake -S endpoint -B endpoint/build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/endpoint-install" \
             -DHAKO_PDU_ENDPOINT_ENABLE_HAKONIWA_CORE=OFF \
             -DHAKO_PDU_ENDPOINT_BUILD_TESTS=OFF \
@@ -84,7 +85,7 @@ jobs:
           cmake --install endpoint/build --config Release --prefix "${GITHUB_WORKSPACE}/endpoint-install"
           echo "HAKO_PDU_ENDPOINT_ROOT=${GITHUB_WORKSPACE}/endpoint-install" >> "$GITHUB_ENV"
 
-      - name: Build and install shared Core-free Endpoint package on Windows
+      - name: Build and install static Core-free Endpoint package on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -92,7 +93,8 @@ jobs:
           cmake -S endpoint -B endpoint/build -A x64 `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
-            -DBUILD_SHARED_LIBS=ON `
+            -DBUILD_SHARED_LIBS=OFF `
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE/endpoint-install" `
             -DHAKO_PDU_ENDPOINT_ENABLE_HAKONIWA_CORE=OFF `
             -DHAKO_PDU_ENDPOINT_BUILD_TESTS=OFF `
@@ -113,8 +115,8 @@ jobs:
       - name: Build native library and Python binding
         run: python tools/hako.py build
 
-      - name: Test basic RPC contract with static native build
-        run: python tools/hako.py test-basic --config test/fixtures/cpp-contract-build.yaml
+      - name: Test basic RPC contract
+        run: python tools/hako.py test-basic
 
       - name: Install
         run: python tools/hako.py install
