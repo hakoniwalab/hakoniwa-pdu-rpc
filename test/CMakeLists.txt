@@ -13,64 +13,39 @@ if(NOT TARGET GTest::gtest_main)
   FetchContent_MakeAvailable(googletest)
 endif()
 
-# Phase 1: focused, cross-platform-safe RPC contract tests.
 add_executable(hakoniwa_pdu_rpc_basic_test
   rpc_basic_contract_test.cpp
 )
-target_link_libraries(hakoniwa_pdu_rpc_basic_test
-  PRIVATE
-    hakoniwa_pdu_rpc::rpc
-    GTest::gtest_main
-)
+target_link_libraries(hakoniwa_pdu_rpc_basic_test PRIVATE hakoniwa_pdu_rpc::rpc GTest::gtest_main)
 add_test(NAME hakoniwa_pdu_rpc_basic_test COMMAND hakoniwa_pdu_rpc_basic_test)
-set_tests_properties(hakoniwa_pdu_rpc_basic_test PROPERTIES
-  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-  TIMEOUT 30
-)
+set_tests_properties(hakoniwa_pdu_rpc_basic_test PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
 
-# Phase 2: timeout == 0 means the in-flight RPC has no timeout deadline.
+# C API parity test for the same two basic contracts. Keep this beside the
+# existing C++ test until the C facade has proven equivalent on every platform.
+add_executable(hakoniwa_pdu_rpc_c_api_basic_test
+  c_rpc_basic_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_rpc_c_api_basic_test PRIVATE hakoniwa_pdu_rpc::rpc GTest::gtest_main)
+add_test(NAME hakoniwa_pdu_rpc_c_api_basic_test COMMAND hakoniwa_pdu_rpc_c_api_basic_test)
+set_tests_properties(hakoniwa_pdu_rpc_c_api_basic_test PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+
 add_executable(hakoniwa_pdu_rpc_infinite_wait_test
   rpc_infinite_wait_contract_test.cpp
 )
-target_link_libraries(hakoniwa_pdu_rpc_infinite_wait_test
-  PRIVATE
-    hakoniwa_pdu_rpc::rpc
-    GTest::gtest_main
-)
+target_link_libraries(hakoniwa_pdu_rpc_infinite_wait_test PRIVATE hakoniwa_pdu_rpc::rpc GTest::gtest_main)
 add_test(NAME hakoniwa_pdu_rpc_infinite_wait_test COMMAND hakoniwa_pdu_rpc_infinite_wait_test)
-set_tests_properties(hakoniwa_pdu_rpc_infinite_wait_test PROPERTIES
-  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-  TIMEOUT 30
-)
+set_tests_properties(hakoniwa_pdu_rpc_infinite_wait_test PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
 
-# Phase 3: timeout is a notification; cancellation is explicit; only a terminal
-# cancel response returns the endpoint to a reusable state.
 add_executable(hakoniwa_pdu_rpc_timeout_cancel_test
   rpc_timeout_cancel_contract_test.cpp
 )
-target_link_libraries(hakoniwa_pdu_rpc_timeout_cancel_test
-  PRIVATE
-    hakoniwa_pdu_rpc::rpc
-    GTest::gtest_main
-)
+target_link_libraries(hakoniwa_pdu_rpc_timeout_cancel_test PRIVATE hakoniwa_pdu_rpc::rpc GTest::gtest_main)
 add_test(NAME hakoniwa_pdu_rpc_timeout_cancel_test COMMAND hakoniwa_pdu_rpc_timeout_cancel_test)
-set_tests_properties(hakoniwa_pdu_rpc_timeout_cancel_test PROPERTIES
-  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-  TIMEOUT 30
-)
+set_tests_properties(hakoniwa_pdu_rpc_timeout_cancel_test PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
 
-# Phase 4: after explicit cancellation, a normal response may still win before
-# the server processes the CANCEL. A late CANCEL must be harmless.
 add_executable(hakoniwa_pdu_rpc_cancel_race_test
   rpc_cancel_race_contract_test.cpp
 )
-target_link_libraries(hakoniwa_pdu_rpc_cancel_race_test
-  PRIVATE
-    hakoniwa_pdu_rpc::rpc
-    GTest::gtest_main
-)
+target_link_libraries(hakoniwa_pdu_rpc_cancel_race_test PRIVATE hakoniwa_pdu_rpc::rpc GTest::gtest_main)
 add_test(NAME hakoniwa_pdu_rpc_cancel_race_test COMMAND hakoniwa_pdu_rpc_cancel_race_test)
-set_tests_properties(hakoniwa_pdu_rpc_cancel_race_test PROPERTIES
-  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-  TIMEOUT 30
-)
+set_tests_properties(hakoniwa_pdu_rpc_cancel_race_test PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)

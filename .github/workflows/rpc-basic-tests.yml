@@ -100,5 +100,11 @@ jobs:
       - name: Doctor
         run: python tools/hako.py doctor
 
-      - name: Phase 1 basic RPC tests
+      - name: Existing C++ basic contracts
         run: python tools/hako.py test-basic
+
+      - name: Build C API basic contract
+        run: cmake --build build --config Release --target hakoniwa_pdu_rpc_c_api_basic_test --parallel
+
+      - name: C API basic contracts
+        run: ctest --test-dir build -C Release --output-on-failure -R "^hakoniwa_pdu_rpc_c_api_basic_test$"
