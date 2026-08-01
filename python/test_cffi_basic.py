@@ -9,6 +9,9 @@ import pytest
 
 from hakoniwa_pdu_rpc import RpcClient as HighLevelRpcClient, RpcTimeoutError
 from hakoniwa_pdu_rpc.cffi_api import ClientEvent, RpcClient, RpcServer, ServerEvent
+from test_cffi_registry_auto_wire import (
+    test_registry_auto_wire_round_trip_returns_generated_response_body,
+)
 from test_cffi_timeout_cancel import (
     test_timeout_requires_explicit_cancel_and_endpoint_remains_reusable,
 )
