@@ -39,18 +39,21 @@ def load_service_wire(
             f"{package}.pdu_conv_{response_name}"
         )
 
+        request_encoder = getattr(
+            request_converter_module, f"py_to_pdu_{request_name}"
+        )
+        response_encoder = getattr(
+            response_converter_module, f"py_to_pdu_{response_name}"
+        )
+
         return ServiceWire(
             request_packet_type=getattr(request_type_module, request_name),
             response_packet_type=getattr(response_type_module, response_name),
-            request_encode=getattr(
-                request_converter_module, f"py_to_pdu_{request_name}"
-            ),
+            request_encode=lambda packet: bytes(request_encoder(packet)),
             request_decode=getattr(
                 request_converter_module, f"pdu_to_py_{request_name}"
             ),
-            response_encode=getattr(
-                response_converter_module, f"py_to_pdu_{response_name}"
-            ),
+            response_encode=lambda packet: bytes(response_encoder(packet)),
             response_decode=getattr(
                 response_converter_module, f"pdu_to_py_{response_name}"
             ),
