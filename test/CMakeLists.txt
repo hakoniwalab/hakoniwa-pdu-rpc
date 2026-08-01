@@ -36,6 +36,13 @@ target_link_libraries(hakoniwa_pdu_rpc_infinite_wait_test PRIVATE hakoniwa_pdu_r
 add_test(NAME hakoniwa_pdu_rpc_infinite_wait_test COMMAND hakoniwa_pdu_rpc_infinite_wait_test)
 set_tests_properties(hakoniwa_pdu_rpc_infinite_wait_test PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
 
+add_executable(hakoniwa_pdu_rpc_c_api_infinite_wait_test
+  c_rpc_infinite_wait_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_rpc_c_api_infinite_wait_test PRIVATE hakoniwa_pdu_rpc::rpc GTest::gtest_main)
+add_test(NAME hakoniwa_pdu_rpc_c_api_infinite_wait_test COMMAND hakoniwa_pdu_rpc_c_api_infinite_wait_test)
+set_tests_properties(hakoniwa_pdu_rpc_c_api_infinite_wait_test PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+
 add_executable(hakoniwa_pdu_rpc_timeout_cancel_test
   rpc_timeout_cancel_contract_test.cpp
 )
