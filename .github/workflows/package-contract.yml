@@ -105,6 +105,7 @@ jobs:
           git clone https://github.com/hakoniwalab/hakoniwa-pdu-endpoint.git endpoint
           cmake -S endpoint -B endpoint/build \
             -DCMAKE_BUILD_TYPE="${{ matrix.build_type }}" \
+            -DBUILD_SHARED_LIBS=ON \
             -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/endpoint-install" \
             -DHAKO_PDU_ENDPOINT_ENABLE_HAKONIWA_CORE=OFF \
             -DHAKO_PDU_ENDPOINT_BUILD_TESTS=OFF \
@@ -123,6 +124,7 @@ jobs:
           git clone https://github.com/hakoniwalab/hakoniwa-pdu-endpoint.git endpoint
           cmake -S endpoint -B endpoint/build -A x64 `
             -DCMAKE_BUILD_TYPE="${{ matrix.build_type }}" `
+            -DBUILD_SHARED_LIBS=ON `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE/endpoint-install" `
