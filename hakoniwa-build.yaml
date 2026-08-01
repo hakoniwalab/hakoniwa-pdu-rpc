@@ -1,11 +1,19 @@
 # User-facing build intent for hakoniwa-pdu-rpc.
-# Empty dependency paths preserve the existing environment/automatic discovery.
+# Empty dependency paths preserve environment/automatic discovery.
 version: 1
 
 build:
   type: Release
   dir: build
   install_dir: .hako/install
+  shared: auto
+
+bindings:
+  python: true
+
+validation:
+  tests: true
+  python_import: true
 
 paths:
   pdu_endpoint_root: ""
