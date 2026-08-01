@@ -5,6 +5,9 @@ import time
 from pathlib import Path
 
 from hakoniwa_pdu_rpc.cffi_api import ClientEvent, RpcClient, RpcServer, ServerEvent
+from test_cffi_timeout_cancel import (
+    test_timeout_requires_explicit_cancel_and_endpoint_remains_reusable,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
