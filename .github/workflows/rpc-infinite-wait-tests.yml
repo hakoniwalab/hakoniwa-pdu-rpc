@@ -100,5 +100,11 @@ jobs:
       - name: Doctor
         run: python tools/hako.py doctor
 
-      - name: Phase 2 infinite-wait RPC test
+      - name: Existing C++ infinite-wait RPC contract
         run: python tools/hako.py test-infinite-wait
+
+      - name: Build C API infinite-wait RPC contract
+        run: cmake --build .hako/build --config Release --target hakoniwa_pdu_rpc_c_api_infinite_wait_test --parallel
+
+      - name: Run C API infinite-wait RPC contract
+        run: ctest --test-dir .hako/build -C Release --output-on-failure -R "^hakoniwa_pdu_rpc_c_api_infinite_wait_test$"
