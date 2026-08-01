@@ -100,5 +100,11 @@ jobs:
       - name: Doctor
         run: python tools/hako.py doctor
 
-      - name: Phase 3 timeout-cancel RPC test
+      - name: Existing C++ timeout-cancel RPC contract
         run: python tools/hako.py test-timeout-cancel
+
+      - name: Build C API timeout-cancel RPC contract
+        run: cmake --build build --config Release --target hakoniwa_pdu_rpc_c_api_timeout_cancel_test --parallel
+
+      - name: Run C API timeout-cancel RPC contract
+        run: ctest --test-dir build -C Release --output-on-failure -R "^hakoniwa_pdu_rpc_c_api_timeout_cancel_test$"
