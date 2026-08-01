@@ -40,11 +40,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         shell: bash
@@ -65,14 +60,13 @@ jobs:
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install boost-asio:x64-windows boost-beast:x64-windows
 
-      - name: Build and install shared Core-free Endpoint package
+      - name: Build and install Core-free Endpoint package
         if: runner.os != 'Windows'
         shell: bash
         run: |
           git clone https://github.com/hakoniwalab/hakoniwa-pdu-endpoint.git endpoint
           cmake -S endpoint -B endpoint/build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=ON \
             -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/endpoint-install" \
             -DHAKO_PDU_ENDPOINT_ENABLE_HAKONIWA_CORE=OFF \
             -DHAKO_PDU_ENDPOINT_BUILD_TESTS=OFF \
@@ -84,7 +78,7 @@ jobs:
           cmake --install endpoint/build --config Release --prefix "${GITHUB_WORKSPACE}/endpoint-install"
           echo "HAKO_PDU_ENDPOINT_ROOT=${GITHUB_WORKSPACE}/endpoint-install" >> "$GITHUB_ENV"
 
-      - name: Build and install shared Core-free Endpoint package on Windows
+      - name: Build and install Core-free Endpoint package on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -92,7 +86,6 @@ jobs:
           cmake -S endpoint -B endpoint/build -A x64 `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
-            -DBUILD_SHARED_LIBS=ON `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE/endpoint-install" `
             -DHAKO_PDU_ENDPOINT_ENABLE_HAKONIWA_CORE=OFF `
             -DHAKO_PDU_ENDPOINT_BUILD_TESTS=OFF `
@@ -104,8 +97,8 @@ jobs:
           cmake --install endpoint/build --config Release --prefix "$env:GITHUB_WORKSPACE/endpoint-install"
           "HAKO_PDU_ENDPOINT_ROOT=$env:GITHUB_WORKSPACE/endpoint-install" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Doctor
-        run: python tools/hako.py doctor
+      - name: Doctor C++ contract build
+        run: python tools/hako.py doctor --config test/fixtures/cpp-contract-build.yaml
 
       - name: Phase 3 timeout-cancel RPC test
-        run: python tools/hako.py test-timeout-cancel
+        run: python tools/hako.py test-timeout-cancel --config test/fixtures/cpp-contract-build.yaml
