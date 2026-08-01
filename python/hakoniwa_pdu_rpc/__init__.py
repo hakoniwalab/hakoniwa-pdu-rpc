@@ -1,5 +1,6 @@
 """Hakoniwa PDU RPC Python bindings and validation utilities."""
 
+from .auto_wire import ServiceWire, TypedRpcClient, load_service_wire, make_typed_client
 from .cffi_api import (
     ClientEvent,
     ClientPollResult,
@@ -22,5 +23,9 @@ __all__ = [
     "RpcTimeoutError",
     "ServerEvent",
     "ServerPollResult",
+    "ServiceWire",
+    "TypedRpcClient",
+    "load_service_wire",
+    "make_typed_client",
     "validate_configs",
 ]
