@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "hakoniwa/pdu/rpc/c_rpc.h"
+#include "hakoniwa/pdu/rpc/rpc_types.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsResponsePacket.hpp"
 
@@ -152,13 +153,18 @@ TEST(CRpcInfiniteWaitContractTest, TimeoutZeroDoesNotEmitTimeoutBeforeReply)
     ASSERT_EQ(received_request_cpp.body.a, 99);
     ASSERT_EQ(received_request_cpp.body.b, 1);
 
+    const auto done_status = static_cast<uint8_t>(
+        hakoniwa::pdu::rpc::HAKO_SERVICE_STATUS_DONE);
+    const auto ok_result = static_cast<int32_t>(
+        hakoniwa::pdu::rpc::HAKO_SERVICE_RESULT_CODE_OK);
+
     size_t reply_size = 0;
     ASSERT_EQ(
         hako_pdu_rpc_server_create_reply_buffer(
             runtime.server,
             request_info.request_token,
-            HAKO_PDU_RPC_SERVICE_STATUS_DONE,
-            HAKO_PDU_RPC_SERVICE_RESULT_OK,
+            done_status,
+            ok_result,
             nullptr,
             0,
             &reply_size),
@@ -168,8 +174,8 @@ TEST(CRpcInfiniteWaitContractTest, TimeoutZeroDoesNotEmitTimeoutBeforeReply)
         hako_pdu_rpc_server_create_reply_buffer(
             runtime.server,
             request_info.request_token,
-            HAKO_PDU_RPC_SERVICE_STATUS_DONE,
-            HAKO_PDU_RPC_SERVICE_RESULT_OK,
+            done_status,
+            ok_result,
             reply.data(),
             reply.size(),
             &reply_size),
