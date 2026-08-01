@@ -5,6 +5,7 @@ from importlib import import_module
 from typing import Any, Callable
 
 from .client import RpcClient
+from .future import RpcFuture
 
 
 DEFAULT_SERVICE_PACKAGES = (
@@ -108,18 +109,50 @@ class TypedRpcClient:
         timeout_usec: int,
         **kwargs: Any,
     ) -> Any:
-        """Encode a request body, perform RPC, and return the response body."""
-        base_pdu = self._rpc_client.create_request_buffer(self.service_name)
-        request_packet = self.wire.request_decode(base_pdu)
-        request_packet.body = request
-        request_id = request_packet.header.request_id
+        """Encode a request body and synchronously return the response body."""
+        return self.call_async(request, timeout_usec, **kwargs).result()
 
-        response_pdu = self._rpc_client.call(
+    def call_async(
+        self,
+        request: Any,
+        timeout_usec: int,
+        **kwargs: Any,
+    ) -> RpcFuture[Any]:
+        """Encode a request body and return a Future for the response body.
+
+        Packet conversion and request-ID validation remain owned by the typed
+        adapter. Cancellation is forwarded to the underlying protocol-level
+        RPC Future.
+        """
+        request_pdu, request_id = self._encode_request(request)
+        raw_future = self._rpc_client.call_async(
             self.service_name,
-            self.wire.request_encode(request_packet),
+            request_pdu,
             timeout_usec,
             **kwargs,
         )
+
+        typed_future = RpcFuture[Any](raw_future.cancel)
+        typed_future._set_running_or_notify_cancel()
+
+        def complete(completed: RpcFuture[bytes]) -> None:
+            try:
+                response = self._decode_response(completed.result(), request_id)
+            except BaseException as error:
+                typed_future._set_exception(error)
+            else:
+                typed_future._set_result(response)
+
+        raw_future.add_done_callback(complete)
+        return typed_future
+
+    def _encode_request(self, request: Any) -> tuple[bytes, Any]:
+        base_pdu = self._rpc_client.create_request_buffer(self.service_name)
+        request_packet = self.wire.request_decode(base_pdu)
+        request_packet.body = request
+        return self.wire.request_encode(request_packet), request_packet.header.request_id
+
+    def _decode_response(self, response_pdu: bytes, request_id: Any) -> Any:
         response_packet = self.wire.response_decode(response_pdu)
         if response_packet.header.request_id != request_id:
             raise RuntimeError(
