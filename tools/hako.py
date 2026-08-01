@@ -11,16 +11,60 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 
-
 DEFAULT_MANIFEST = "hakoniwa-build.yaml"
 VALID_BUILD_TYPES = {"Debug", "Release", "RelWithDebInfo", "MinSizeRel"}
-TEST_COMMANDS = {
-    "test",
-    "test-basic",
-    "test-infinite-wait",
-    "test-timeout-cancel",
-    "test-cancel-race",
+
+
+class OperationSpec:
+    __slots__ = ("tests", "target", "ctest_name")
+
+    def __init__(
+        self,
+        *,
+        tests: bool = False,
+        target: str | None = None,
+        ctest_name: str | None = None,
+    ) -> None:
+        self.tests = tests
+        self.target = target
+        self.ctest_name = ctest_name
+
+
+OPERATIONS: dict[str, OperationSpec] = {
+    "doctor": OperationSpec(),
+    "configure": OperationSpec(),
+    "build": OperationSpec(),
+    "test-basic": OperationSpec(
+        tests=True,
+        target="hakoniwa_pdu_rpc_basic_test",
+        ctest_name="hakoniwa_pdu_rpc_basic_test",
+    ),
+    "test-infinite-wait": OperationSpec(
+        tests=True,
+        target="hakoniwa_pdu_rpc_infinite_wait_test",
+        ctest_name="hakoniwa_pdu_rpc_infinite_wait_test",
+    ),
+    "test-timeout-cancel": OperationSpec(
+        tests=True,
+        target="hakoniwa_pdu_rpc_timeout_cancel_test",
+        ctest_name="hakoniwa_pdu_rpc_timeout_cancel_test",
+    ),
+    "test-cancel-race": OperationSpec(
+        tests=True,
+        target="hakoniwa_pdu_rpc_cancel_race_test",
+        ctest_name="hakoniwa_pdu_rpc_cancel_race_test",
+    ),
+    "test": OperationSpec(tests=True),
+    "install": OperationSpec(),
+    "package-test": OperationSpec(),
 }
+TEST_COMMANDS = {name for name, spec in OPERATIONS.items() if spec.tests}
+REVIEWED_TEST_TARGETS = tuple(
+    spec.target for spec in OPERATIONS.values() if spec.target is not None
+)
+REVIEWED_TEST_REGEX = (
+    "^hakoniwa_pdu_rpc_(basic|infinite_wait|timeout_cancel|cancel_race)_test$"
+)
 
 
 class HakoError(RuntimeError):
@@ -88,10 +132,10 @@ def _parse_scalar(text: str) -> Any:
 
 
 def load_simple_yaml(path: Path) -> Dict[str, Any]:
-    """Load the mapping/scalar YAML subset used by build manifest v1."""
+    """Load the mapping/scalar subset used by build manifest version 1."""
     root: Dict[str, Any] = {}
     stack: list[tuple[int, Dict[str, Any]]] = [(-1, root)]
-    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if "\t" in raw:
             raise ConfigError(f"{path}:{lineno}: tabs are not allowed")
         line = _strip_comment(raw)
@@ -107,12 +151,10 @@ def load_simple_yaml(path: Path) -> Dict[str, Any]:
             raise ConfigError(f"{path}:{lineno}: expected 'key: value'")
         key, raw_value = stripped.split(":", 1)
         key = key.strip()
-        if not key:
-            raise ConfigError(f"{path}:{lineno}: empty key")
         while stack and indent <= stack[-1][0]:
             stack.pop()
-        if not stack:
-            raise ConfigError(f"{path}:{lineno}: invalid indentation")
+        if not stack or not key:
+            raise ConfigError(f"{path}:{lineno}: invalid mapping")
         parent = stack[-1][1]
         if key in parent:
             raise ConfigError(f"{path}:{lineno}: duplicate key: {key}")
@@ -124,9 +166,7 @@ def load_simple_yaml(path: Path) -> Dict[str, Any]:
 
 
 def _require_exact_keys(
-    value: Mapping[str, Any],
-    required: set[str],
-    location: str,
+    value: Mapping[str, Any], required: set[str], location: str
 ) -> None:
     unknown = sorted(set(value) - required)
     if unknown:
@@ -146,15 +186,13 @@ def resolve_config(raw: Mapping[str, Any]) -> Dict[str, Any]:
     if not isinstance(build, Mapping):
         raise ConfigError("build must be a mapping")
     _require_exact_keys(build, {"type", "dir", "install_dir"}, "build")
-
     build_type = build["type"]
     if build_type not in VALID_BUILD_TYPES:
         raise ConfigError(
             f"build.type must be one of: {', '.join(sorted(VALID_BUILD_TYPES))}"
         )
     for key in ("dir", "install_dir"):
-        value = build[key]
-        if not isinstance(value, str) or not value.strip():
+        if not isinstance(build[key], str) or not build[key].strip():
             raise ConfigError(f"build.{key} must be a non-empty string")
 
     paths = raw["paths"]
@@ -180,17 +218,18 @@ def resolve_config(raw: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def resolve_manifest_path(value: str | None, root: Path) -> Path:
-    if value is None:
-        manifest = root / DEFAULT_MANIFEST
-        if not manifest.is_file():
-            raise ConfigError(f"default build manifest not found: {manifest}")
-        return manifest
-    manifest = Path(value)
-    if not manifest.is_absolute():
-        manifest = (Path.cwd() / manifest).resolve()
-    if not manifest.is_file():
-        raise ConfigError(f"build manifest not found: {manifest}")
-    return manifest
+    path = root / DEFAULT_MANIFEST if value is None else Path(value)
+    if value is not None and not path.is_absolute():
+        path = Path.cwd() / path
+    path = path.resolve()
+    if not path.is_file():
+        raise ConfigError(f"build manifest not found: {path}")
+    return path
+
+
+def _path_from(value: str, base: Path) -> Path:
+    path = Path(value).expanduser()
+    return (path if path.is_absolute() else base / path).resolve()
 
 
 def host_platform() -> tuple[str, str]:
@@ -202,7 +241,6 @@ def host_platform() -> tuple[str, str]:
         os_name = "linux"
     else:
         os_name = sys.platform
-
     machine = platform.machine().lower()
     arch = {
         "amd64": "x64",
@@ -215,33 +253,19 @@ def host_platform() -> tuple[str, str]:
 
 def endpoint_package_exists(root: Path) -> bool:
     return any(
-        path.is_file()
-        for path in (
+        (
             root
-            / "lib"
+            / lib_dir
             / "cmake"
             / "hakoniwa_pdu_endpoint"
-            / "hakoniwa_pdu_endpointConfig.cmake",
-            root
-            / "lib64"
-            / "cmake"
-            / "hakoniwa_pdu_endpoint"
-            / "hakoniwa_pdu_endpointConfig.cmake",
-        )
+            / "hakoniwa_pdu_endpointConfig.cmake"
+        ).is_file()
+        for lib_dir in ("lib", "lib64")
     )
 
 
-def _path_from(value: str, base: Path) -> Path:
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        path = base / path
-    return path.resolve()
-
-
 def find_endpoint_root(
-    explicit: str | None,
-    manifest_value: str,
-    root: Path,
+    explicit: str | None, manifest_value: str, root: Path
 ) -> tuple[Path | None, str]:
     if explicit:
         return _path_from(explicit, Path.cwd()), "cli"
@@ -253,22 +277,19 @@ def find_endpoint_root(
             candidate = _path_from(value, Path.cwd())
             if endpoint_package_exists(candidate):
                 return candidate, f"environment:{env_name}"
-    candidates = [
+    for candidate in (
         root.parent / "hakoniwa-pdu-endpoint" / ".hako" / "install",
         root.parent / "hakoniwa-pdu-endpoint" / "install",
         Path("/usr/local/hakoniwa"),
-    ]
-    for candidate in candidates:
-        candidate = candidate.resolve()
-        if endpoint_package_exists(candidate):
-            return candidate, "automatic"
+    ):
+        resolved = candidate.resolve()
+        if endpoint_package_exists(resolved):
+            return resolved, "automatic"
     return None, "unresolved"
 
 
 def find_vcpkg_root(
-    explicit: str | None,
-    manifest_value: str,
-    root: Path,
+    explicit: str | None, manifest_value: str, root: Path
 ) -> tuple[Path | None, str]:
     if explicit:
         return _path_from(explicit, Path.cwd()), "cli"
@@ -278,9 +299,7 @@ def find_vcpkg_root(
         value = os.environ.get(env_name, "")
         if value:
             candidate = _path_from(value, Path.cwd())
-            if (
-                candidate / "scripts" / "buildsystems" / "vcpkg.cmake"
-            ).is_file():
+            if (candidate / "scripts" / "buildsystems" / "vcpkg.cmake").is_file():
                 return candidate, f"environment:{env_name}"
     candidate = (root.parent / "vcpkg").resolve()
     if (candidate / "scripts" / "buildsystems" / "vcpkg.cmake").is_file():
@@ -288,13 +307,16 @@ def find_vcpkg_root(
     return None, "unresolved"
 
 
-def run(command: Sequence[str], *, cwd: Path) -> None:
-    print(
-        ">",
+def format_command(command: Sequence[str]) -> str:
+    return (
         subprocess.list2cmdline(list(command))
         if sys.platform == "win32"
-        else " ".join(command),
+        else " ".join(command)
     )
+
+
+def run(command: Sequence[str], *, cwd: Path) -> None:
+    print(">", format_command(command))
     subprocess.run(list(command), cwd=cwd, check=True)
 
 
@@ -309,14 +331,16 @@ class Context:
         self.repo_root = root or repo_root()
         self.manifest_path = manifest_path
         self.cfg = cfg
-        build_dir = args.build_dir if args.build_dir is not None else cfg["build"]["dir"]
-        install_dir = (
+        self.build_dir = _path_from(
+            args.build_dir if args.build_dir is not None else cfg["build"]["dir"],
+            self.repo_root,
+        )
+        self.install_dir = _path_from(
             args.install_dir
             if args.install_dir is not None
-            else cfg["build"]["install_dir"]
+            else cfg["build"]["install_dir"],
+            self.repo_root,
         )
-        self.build_dir = _path_from(build_dir, self.repo_root)
-        self.install_dir = _path_from(install_dir, self.repo_root)
         self.build_type = (
             args.build_type if args.build_type is not None else cfg["build"]["type"]
         )
@@ -336,33 +360,14 @@ class Context:
     def vcpkg_triplet(self) -> str:
         return f"{self.arch}-windows"
 
-    def common_cmake_args(self) -> list[str]:
-        args = [f"-DCMAKE_BUILD_TYPE={self.build_type}"]
-        if self.endpoint_root:
-            args.extend(
-                [
-                    f"-DHAKO_PDU_ENDPOINT_PREFIX={self.endpoint_root}",
-                    f"-DCMAKE_PREFIX_PATH={self.endpoint_root}",
-                ]
-            )
-        if self.platform_name == "windows" and self.vcpkg_root:
-            args.extend(
-                [
-                    f"-DCMAKE_TOOLCHAIN_FILE={self.vcpkg_root / 'scripts' / 'buildsystems' / 'vcpkg.cmake'}",
-                    f"-DVCPKG_TARGET_TRIPLET={self.vcpkg_triplet}",
-                ]
-            )
-        return args
-
 
 def doctor(ctx: Context) -> list[str]:
     errors: list[str] = []
     if sys.version_info < (3, 12):
         errors.append("Python 3.12 or newer is required")
-    if not shutil.which("cmake"):
-        errors.append("CMake was not found on PATH")
-    if not shutil.which("git"):
-        errors.append("Git was not found on PATH")
+    for executable in ("cmake", "git"):
+        if not shutil.which(executable):
+            errors.append(f"{executable} was not found on PATH")
     if not (ctx.repo_root / "hakoniwa-pdu-registry" / "pdu" / "types").is_dir():
         errors.append(
             "Registry submodule is missing; run: git submodule update --init --recursive"
@@ -414,21 +419,33 @@ def configure_command(ctx: Context, *, tests: bool) -> list[str]:
     command = ["cmake", "-S", str(ctx.repo_root), "-B", str(ctx.build_dir)]
     if ctx.platform_name == "windows" and not os.environ.get("CMAKE_GENERATOR"):
         command.extend(["-A", "ARM64" if ctx.arch == "arm64" else "x64"])
-    command.extend(ctx.common_cmake_args())
     command.extend(
         [
+            f"-DCMAKE_BUILD_TYPE={ctx.build_type}",
             f"-DHAKO_PDU_RPC_BUILD_TESTS={'ON' if tests else 'OFF'}",
             "-DHAKO_PDU_RPC_BUILD_EXAMPLES=ON",
         ]
     )
+    if ctx.endpoint_root:
+        command.extend(
+            [
+                f"-DHAKO_PDU_ENDPOINT_PREFIX={ctx.endpoint_root}",
+                f"-DCMAKE_PREFIX_PATH={ctx.endpoint_root}",
+            ]
+        )
+    if ctx.platform_name == "windows" and ctx.vcpkg_root:
+        command.extend(
+            [
+                f"-DCMAKE_TOOLCHAIN_FILE={ctx.vcpkg_root / 'scripts' / 'buildsystems' / 'vcpkg.cmake'}",
+                f"-DVCPKG_TARGET_TRIPLET={ctx.vcpkg_triplet}",
+            ]
+        )
     return command
 
 
 def _yaml_scalar(value: Any) -> str:
-    if value is True:
-        return "true"
-    if value is False:
-        return "false"
+    if isinstance(value, bool):
+        return "true" if value else "false"
     if value is None:
         return "null"
     if isinstance(value, int):
@@ -453,7 +470,7 @@ def dump_yaml(data: Mapping[str, Any], indent: int = 0) -> str:
 
 
 def resolved_record(ctx: Context, operation: str) -> Dict[str, Any]:
-    tests = operation in TEST_COMMANDS
+    spec = OPERATIONS[operation]
     return {
         "version": 1,
         "manifest": str(ctx.manifest_path),
@@ -475,8 +492,8 @@ def resolved_record(ctx: Context, operation: str) -> Dict[str, Any]:
             },
         },
         "components": {"examples": True},
-        "operation_semantics": {"tests": tests},
-        "cmake_args": configure_command(ctx, tests=tests),
+        "operation_semantics": {"tests": spec.tests},
+        "cmake_args": configure_command(ctx, tests=spec.tests),
     }
 
 
@@ -497,8 +514,7 @@ def write_resolved(ctx: Context, operation: str) -> Path:
     resolved_path = out_dir / "resolved-build.yaml"
     _atomic_write(resolved_path, dump_yaml(record))
     _atomic_write(
-        out_dir / "cmake-args.txt",
-        "\n".join(record["cmake_args"]) + "\n",
+        out_dir / "cmake-args.txt", "\n".join(record["cmake_args"]) + "\n"
     )
     return resolved_path
 
@@ -506,12 +522,7 @@ def write_resolved(ctx: Context, operation: str) -> Path:
 def configure(ctx: Context, *, dry_run: bool = False, tests: bool = False) -> None:
     command = configure_command(ctx, tests=tests)
     if dry_run:
-        print(
-            ">",
-            subprocess.list2cmdline(command)
-            if sys.platform == "win32"
-            else " ".join(command),
-        )
+        print(">", format_command(command))
         return
     ctx.build_dir.mkdir(parents=True, exist_ok=True)
     run(command, cwd=ctx.repo_root)
@@ -534,11 +545,7 @@ def build(ctx: Context) -> None:
 
 def _command_output(command: list[str], cwd: Path) -> str:
     result = subprocess.run(
-        command,
-        cwd=cwd,
-        check=False,
-        capture_output=True,
-        text=True,
+        command, cwd=cwd, check=False, capture_output=True, text=True
     )
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
@@ -562,7 +569,6 @@ def _read_dependency_receipt(prefix: Path, component_id: str) -> Dict[str, Any]:
             "source_revision": "unknown",
             "build_limits": {},
         }
-
     result: Dict[str, Any] = {"build_limits": {}}
     section = ""
     for raw in path.read_text(encoding="utf-8").splitlines():
@@ -584,11 +590,10 @@ def _read_dependency_receipt(prefix: Path, component_id: str) -> Dict[str, Any]:
 
 def _rpc_artifacts(install_dir: Path) -> list[tuple[Path, str]]:
     artifacts: list[tuple[Path, str]] = []
-    fixed = (
+    for relative, kind in (
         (Path("include/hakoniwa/pdu/rpc"), "directory"),
         (Path("lib/cmake/hakoniwa_pdu_rpc"), "cmake-package"),
-    )
-    for relative, kind in fixed:
+    ):
         if (install_dir / relative).exists():
             artifacts.append((relative, kind))
     for child in ("bin", "lib"):
@@ -597,7 +602,11 @@ def _rpc_artifacts(install_dir: Path) -> list[tuple[Path, str]]:
             continue
         for installed in parent.iterdir():
             if installed.is_file() and "hakoniwa_pdu_rpc" in installed.name:
-                kind = "executable" if child == "bin" and installed.suffix == ".exe" else "library"
+                kind = (
+                    "executable"
+                    if child == "bin" and installed.suffix == ".exe"
+                    else "library"
+                )
                 artifacts.append((installed.relative_to(install_dir), kind))
     return sorted(set(artifacts), key=lambda item: item[0].as_posix())
 
@@ -624,8 +633,7 @@ def write_receipt(ctx: Context) -> Path:
         raise HakoError(f"installed RPC CMake package not found under: {ctx.install_dir}")
 
     dependency = _read_dependency_receipt(
-        ctx.endpoint_root,
-        "hakoniwa-pdu-endpoint",
+        ctx.endpoint_root, "hakoniwa-pdu-endpoint"
     )
     compiler = _cmake_cache_value(ctx.build_dir, "CMAKE_CXX_COMPILER")
     revision = _command_output(["git", "rev-parse", "HEAD"], ctx.repo_root)
@@ -701,7 +709,9 @@ def install(ctx: Context) -> None:
     print(f"Component Receipt: {receipt}")
 
 
-def run_test_target(ctx: Context, target: str, ctest_name: str) -> None:
+def run_test_target(ctx: Context, spec: OperationSpec) -> None:
+    if not spec.target or not spec.ctest_name:
+        raise HakoError("focused test operation is missing its target definition")
     configure(ctx, tests=True)
     run(
         [
@@ -711,7 +721,7 @@ def run_test_target(ctx: Context, target: str, ctest_name: str) -> None:
             "--config",
             ctx.build_type,
             "--target",
-            target,
+            spec.target,
             "--parallel",
         ],
         cwd=ctx.repo_root,
@@ -725,52 +735,14 @@ def run_test_target(ctx: Context, target: str, ctest_name: str) -> None:
             ctx.build_type,
             "--output-on-failure",
             "-R",
-            f"^{ctest_name}$",
+            f"^{spec.ctest_name}$",
         ],
         cwd=ctx.repo_root,
-    )
-
-
-def test_basic(ctx: Context) -> None:
-    run_test_target(
-        ctx,
-        "hakoniwa_pdu_rpc_basic_test",
-        "hakoniwa_pdu_rpc_basic_test",
-    )
-
-
-def test_infinite_wait(ctx: Context) -> None:
-    run_test_target(
-        ctx,
-        "hakoniwa_pdu_rpc_infinite_wait_test",
-        "hakoniwa_pdu_rpc_infinite_wait_test",
-    )
-
-
-def test_timeout_cancel(ctx: Context) -> None:
-    run_test_target(
-        ctx,
-        "hakoniwa_pdu_rpc_timeout_cancel_test",
-        "hakoniwa_pdu_rpc_timeout_cancel_test",
-    )
-
-
-def test_cancel_race(ctx: Context) -> None:
-    run_test_target(
-        ctx,
-        "hakoniwa_pdu_rpc_cancel_race_test",
-        "hakoniwa_pdu_rpc_cancel_race_test",
     )
 
 
 def test(ctx: Context) -> None:
     configure(ctx, tests=True)
-    reviewed_targets = [
-        "hakoniwa_pdu_rpc_basic_test",
-        "hakoniwa_pdu_rpc_infinite_wait_test",
-        "hakoniwa_pdu_rpc_timeout_cancel_test",
-        "hakoniwa_pdu_rpc_cancel_race_test",
-    ]
     run(
         [
             "cmake",
@@ -779,7 +751,7 @@ def test(ctx: Context) -> None:
             "--config",
             ctx.build_type,
             "--target",
-            *reviewed_targets,
+            *REVIEWED_TEST_TARGETS,
             "--parallel",
         ],
         cwd=ctx.repo_root,
@@ -793,7 +765,7 @@ def test(ctx: Context) -> None:
             ctx.build_type,
             "--output-on-failure",
             "-R",
-            "^hakoniwa_pdu_rpc_(basic|infinite_wait|timeout_cancel|cancel_race)_test$",
+            REVIEWED_TEST_REGEX,
         ],
         cwd=ctx.repo_root,
     )
@@ -846,21 +818,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Hakoniwa PDU RPC cross-platform build driver"
     )
-    parser.add_argument(
-        "command",
-        choices=[
-            "doctor",
-            "configure",
-            "build",
-            "test-basic",
-            "test-infinite-wait",
-            "test-timeout-cancel",
-            "test-cancel-race",
-            "test",
-            "install",
-            "package-test",
-        ],
-    )
+    parser.add_argument("command", choices=list(OPERATIONS))
     parser.add_argument(
         "--config",
         default=None,
@@ -875,8 +833,14 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def validate_arguments(args: argparse.Namespace) -> None:
+    if args.dry_run and args.command != "configure":
+        raise ConfigError("--dry-run is only valid with the configure command")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = create_parser().parse_args(argv)
+    validate_arguments(args)
     root = repo_root()
     manifest = resolve_manifest_path(args.config, root)
     cfg = resolve_config(load_simple_yaml(manifest))
@@ -891,18 +855,13 @@ def main(argv: list[str] | None = None) -> int:
     if errors:
         raise HakoError("doctor found blocking prerequisites")
 
+    spec = OPERATIONS[args.command]
     if args.command == "configure":
-        configure(ctx, dry_run=args.dry_run, tests=False)
+        configure(ctx, dry_run=args.dry_run, tests=spec.tests)
     elif args.command == "build":
         build(ctx)
-    elif args.command == "test-basic":
-        test_basic(ctx)
-    elif args.command == "test-infinite-wait":
-        test_infinite_wait(ctx)
-    elif args.command == "test-timeout-cancel":
-        test_timeout_cancel(ctx)
-    elif args.command == "test-cancel-race":
-        test_cancel_race(ctx)
+    elif spec.target is not None:
+        run_test_target(ctx, spec)
     elif args.command == "test":
         test(ctx)
     elif args.command == "install":
