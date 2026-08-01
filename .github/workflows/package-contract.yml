@@ -105,6 +105,7 @@ jobs:
           git clone https://github.com/hakoniwalab/hakoniwa-pdu-endpoint.git endpoint
           cmake -S endpoint -B endpoint/build \
             -DCMAKE_BUILD_TYPE="${{ matrix.build_type }}" \
+            -DBUILD_SHARED_LIBS=ON \
             -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/endpoint-install" \
             -DHAKO_PDU_ENDPOINT_ENABLE_HAKONIWA_CORE=OFF \
             -DHAKO_PDU_ENDPOINT_BUILD_TESTS=OFF \
@@ -123,6 +124,7 @@ jobs:
           git clone https://github.com/hakoniwalab/hakoniwa-pdu-endpoint.git endpoint
           cmake -S endpoint -B endpoint/build -A x64 `
             -DCMAKE_BUILD_TYPE="${{ matrix.build_type }}" `
+            -DBUILD_SHARED_LIBS=ON `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE/endpoint-install" `
@@ -154,6 +156,11 @@ jobs:
       - name: Installed package consumer
         run: python tools/hako.py package-test --config "${{ matrix.config }}"
 
+      # Windows native contracts run in the dedicated RPC workflows against the
+      # historical static Endpoint + static RPC combination. This package job
+      # intentionally uses a shared Endpoint to validate the installed shared
+      # RPC target and must not mix that package configuration into native ABI
+      # contract coverage.
       - name: Reviewed RPC contract tests
-        if: matrix.config == 'hakoniwa-build.yaml' || matrix.os == 'ubuntu-latest'
+        if: runner.os != 'Windows' && (matrix.config == 'hakoniwa-build.yaml' || matrix.os == 'ubuntu-latest')
         run: python tools/hako.py test --config "${{ matrix.config }}"

@@ -14,7 +14,7 @@ if(NOT TARGET nlohmann_json::nlohmann_json)
   FetchContent_MakeAvailable(nlohmann_json)
 endif()
 
-add_library(hakoniwa_pdu_rpc
+set(HAKO_PDU_RPC_SOURCES
   rpc_server_endpoint_impl.cpp
   rpc_services_server.cpp
   rpc_client_endpoint_impl.cpp
@@ -24,30 +24,51 @@ add_library(hakoniwa_pdu_rpc
   c_rpc_alloc.cpp
 )
 
+function(hako_pdu_rpc_configure_target target)
+  target_compile_features(${target} PUBLIC cxx_std_20)
+  target_include_directories(${target}
+    PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
+      $<BUILD_INTERFACE:${HAKONIWA_PDU_REGISTRY_DIR}/pdu/types>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  )
+
+  target_link_libraries(${target}
+    PUBLIC
+      hakoniwa_pdu_endpoint::hakoniwa_pdu_endpoint
+      nlohmann_json::nlohmann_json
+  )
+endfunction()
+
+# Keep the historical native CMake target static. Existing C++ consumers and
+# all native contract tests therefore retain the same linkage that was already
+# validated across Linux, macOS, and Windows.
+add_library(hakoniwa_pdu_rpc STATIC ${HAKO_PDU_RPC_SOURCES})
+hako_pdu_rpc_configure_target(hakoniwa_pdu_rpc)
+set_target_properties(hakoniwa_pdu_rpc PROPERTIES EXPORT_NAME rpc)
+
 add_library(hakoniwa_pdu_rpc::rpc ALIAS hakoniwa_pdu_rpc)
 add_library(hakoniwa_pdu_rpc::hakoniwa_pdu_rpc ALIAS hakoniwa_pdu_rpc)
 
-target_compile_features(hakoniwa_pdu_rpc PUBLIC cxx_std_20)
-target_include_directories(hakoniwa_pdu_rpc
-  PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
-    $<BUILD_INTERFACE:${HAKONIWA_PDU_REGISTRY_DIR}/pdu/types>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-)
-
-target_link_libraries(hakoniwa_pdu_rpc
-  PUBLIC
-    hakoniwa_pdu_endpoint::hakoniwa_pdu_endpoint
-    nlohmann_json::nlohmann_json
-)
-
-set_target_properties(hakoniwa_pdu_rpc PROPERTIES
-  EXPORT_NAME rpc
+# Build the CFFI-loadable artifact beside the static library from the same
+# sources. The runtime file keeps the established hakoniwa_pdu_rpc name, while
+# its Windows import library uses a distinct name to avoid colliding with the
+# real static hakoniwa_pdu_rpc.lib.
+add_library(hakoniwa_pdu_rpc_shared SHARED ${HAKO_PDU_RPC_SOURCES})
+hako_pdu_rpc_configure_target(hakoniwa_pdu_rpc_shared)
+set_target_properties(hakoniwa_pdu_rpc_shared PROPERTIES
+  EXPORT_NAME rpc_shared
+  OUTPUT_NAME hakoniwa_pdu_rpc
+  ARCHIVE_OUTPUT_NAME hakoniwa_pdu_rpc_shared
   WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
+add_library(hakoniwa_pdu_rpc::rpc_shared ALIAS hakoniwa_pdu_rpc_shared)
+
 install(
-  TARGETS hakoniwa_pdu_rpc
+  TARGETS
+    hakoniwa_pdu_rpc
+    hakoniwa_pdu_rpc_shared
   EXPORT hakoniwa_pdu_rpcTargets
   ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
