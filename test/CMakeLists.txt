@@ -20,13 +20,20 @@ if(NOT TARGET GTest::gtest_main)
   FetchContent_MakeAvailable(googletest)
 endif()
 
+# The C++ contract tests intentionally link to the internal test runtime on
+# Windows shared builds. This keeps EndpointContainer, RpcServicesClient, and
+# RpcServicesServer in the same module and avoids crossing the DLL boundary
+# with C++/STL-owned objects. On other configurations the alias resolves to the
+# normal product target.
+set(HAKO_PDU_RPC_CPP_TEST_TARGET hakoniwa_pdu_rpc::test_runtime)
+
 # Phase 1: focused, cross-platform-safe RPC contract tests.
 add_executable(hakoniwa_pdu_rpc_basic_test
   rpc_basic_contract_test.cpp
 )
 target_link_libraries(hakoniwa_pdu_rpc_basic_test
   PRIVATE
-    hakoniwa_pdu_rpc::rpc
+    ${HAKO_PDU_RPC_CPP_TEST_TARGET}
     GTest::gtest_main
 )
 add_test(NAME hakoniwa_pdu_rpc_basic_test COMMAND hakoniwa_pdu_rpc_basic_test)
@@ -41,7 +48,7 @@ add_executable(hakoniwa_pdu_rpc_infinite_wait_test
 )
 target_link_libraries(hakoniwa_pdu_rpc_infinite_wait_test
   PRIVATE
-    hakoniwa_pdu_rpc::rpc
+    ${HAKO_PDU_RPC_CPP_TEST_TARGET}
     GTest::gtest_main
 )
 add_test(NAME hakoniwa_pdu_rpc_infinite_wait_test COMMAND hakoniwa_pdu_rpc_infinite_wait_test)
@@ -57,7 +64,7 @@ add_executable(hakoniwa_pdu_rpc_timeout_cancel_test
 )
 target_link_libraries(hakoniwa_pdu_rpc_timeout_cancel_test
   PRIVATE
-    hakoniwa_pdu_rpc::rpc
+    ${HAKO_PDU_RPC_CPP_TEST_TARGET}
     GTest::gtest_main
 )
 add_test(NAME hakoniwa_pdu_rpc_timeout_cancel_test COMMAND hakoniwa_pdu_rpc_timeout_cancel_test)
@@ -73,7 +80,7 @@ add_executable(hakoniwa_pdu_rpc_cancel_race_test
 )
 target_link_libraries(hakoniwa_pdu_rpc_cancel_race_test
   PRIVATE
-    hakoniwa_pdu_rpc::rpc
+    ${HAKO_PDU_RPC_CPP_TEST_TARGET}
     GTest::gtest_main
 )
 add_test(NAME hakoniwa_pdu_rpc_cancel_race_test COMMAND hakoniwa_pdu_rpc_cancel_race_test)
@@ -82,9 +89,9 @@ set_tests_properties(hakoniwa_pdu_rpc_cancel_race_test PROPERTIES
   TIMEOUT 30
 )
 
-# C ABI smoke coverage. Runtime topology behavior remains owned by the
-# existing contract tests; this target verifies opaque-handle and null-safety
-# behavior at the language boundary.
+# C ABI smoke coverage must link to the distributed product target. This verifies
+# that the C API is exported from hakoniwa_pdu_rpc.dll/.so/.dylib without exposing
+# C++ ownership across the language boundary.
 add_executable(hakoniwa_pdu_rpc_c_api_test
   c_rpc_api_test.cpp
 )
