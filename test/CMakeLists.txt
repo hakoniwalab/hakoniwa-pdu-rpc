@@ -12,12 +12,19 @@ if(NOT TARGET GTest::gtest_main)
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
   set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
 
+  # The Python distribution profile uses BUILD_SHARED_LIBS=ON for the C facade,
+  # but the existing C++ contract tests should retain their original static
+  # GoogleTest dependency.
+  set(_hako_pdu_rpc_saved_build_shared_libs "${BUILD_SHARED_LIBS}")
+  set(BUILD_SHARED_LIBS OFF)
   FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_TAG v1.15.2
   )
   FetchContent_MakeAvailable(googletest)
+  set(BUILD_SHARED_LIBS "${_hako_pdu_rpc_saved_build_shared_libs}")
+  unset(_hako_pdu_rpc_saved_build_shared_libs)
 endif()
 
 # Existing C++ contract tests continue to exercise the original C++ library.
