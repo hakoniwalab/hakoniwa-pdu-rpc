@@ -92,3 +92,17 @@ set_tests_properties(hakoniwa_pdu_rpc_c_api_test PROPERTIES
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   TIMEOUT 30
 )
+
+add_executable(hakoniwa_pdu_rpc_c_roundtrip_test
+  c_rpc_roundtrip_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_rpc_c_roundtrip_test
+  PRIVATE
+    hakoniwa_pdu_rpc::c
+    GTest::gtest_main
+)
+add_test(NAME hakoniwa_pdu_rpc_c_roundtrip_test COMMAND hakoniwa_pdu_rpc_c_roundtrip_test)
+set_tests_properties(hakoniwa_pdu_rpc_c_roundtrip_test PROPERTIES
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  TIMEOUT 30
+)
