@@ -13,6 +13,7 @@ extern "C" {
 
 typedef struct hako_pdu_rpc_client_handle hako_pdu_rpc_client_handle_t;
 typedef struct hako_pdu_rpc_server_handle hako_pdu_rpc_server_handle_t;
+typedef struct hako_pdu_rpc_mux_server_handle hako_pdu_rpc_mux_server_handle_t;
 
 typedef enum {
     HAKO_PDU_RPC_OK = 0,
@@ -80,6 +81,26 @@ hako_pdu_rpc_error_t hako_pdu_rpc_server_create_reply_buffer(hako_pdu_rpc_server
 hako_pdu_rpc_error_t hako_pdu_rpc_server_create_reply_buffer_alloc(hako_pdu_rpc_server_handle_t* handle, uint64_t request_token, uint8_t status, int32_t result_code, uint8_t** out_buffer, size_t* out_size);
 hako_pdu_rpc_error_t hako_pdu_rpc_server_send_reply(hako_pdu_rpc_server_handle_t* handle, uint64_t request_token, const uint8_t* pdu, size_t pdu_size);
 hako_pdu_rpc_error_t hako_pdu_rpc_server_send_cancel_reply(hako_pdu_rpc_server_handle_t* handle, uint64_t request_token, const uint8_t* pdu, size_t pdu_size);
+
+/*
+ * Multiplexed server API. One endpoint mux listens on a single server port and
+ * creates one RPC adapter per accepted transport session. Request tokens retain
+ * the session identity internally, so callers use the same request-info shape
+ * as the static server API.
+ */
+hako_pdu_rpc_mux_server_handle_t* hako_pdu_rpc_mux_server_create(const char* node_id, const char* service_config_path, const char* endpoint_mux_config_path, uint64_t delta_time_usec, const char* time_source_type);
+void hako_pdu_rpc_mux_server_destroy(hako_pdu_rpc_mux_server_handle_t* handle);
+hako_pdu_rpc_error_t hako_pdu_rpc_mux_server_start(hako_pdu_rpc_mux_server_handle_t* handle);
+hako_pdu_rpc_error_t hako_pdu_rpc_mux_server_stop(hako_pdu_rpc_mux_server_handle_t* handle);
+hako_pdu_rpc_server_event_t hako_pdu_rpc_mux_server_poll(hako_pdu_rpc_mux_server_handle_t* handle, hako_pdu_rpc_request_info_t* out_info, uint8_t* buffer, size_t capacity, size_t* out_size, hako_pdu_rpc_error_t* out_error);
+hako_pdu_rpc_server_event_t hako_pdu_rpc_mux_server_poll_alloc(hako_pdu_rpc_mux_server_handle_t* handle, hako_pdu_rpc_request_info_t* out_info, uint8_t** out_buffer, size_t* out_size, hako_pdu_rpc_error_t* out_error);
+hako_pdu_rpc_error_t hako_pdu_rpc_mux_server_create_reply_buffer(hako_pdu_rpc_mux_server_handle_t* handle, uint64_t request_token, uint8_t status, int32_t result_code, uint8_t* buffer, size_t capacity, size_t* out_size);
+hako_pdu_rpc_error_t hako_pdu_rpc_mux_server_create_reply_buffer_alloc(hako_pdu_rpc_mux_server_handle_t* handle, uint64_t request_token, uint8_t status, int32_t result_code, uint8_t** out_buffer, size_t* out_size);
+hako_pdu_rpc_error_t hako_pdu_rpc_mux_server_send_reply(hako_pdu_rpc_mux_server_handle_t* handle, uint64_t request_token, const uint8_t* pdu, size_t pdu_size);
+hako_pdu_rpc_error_t hako_pdu_rpc_mux_server_send_cancel_reply(hako_pdu_rpc_mux_server_handle_t* handle, uint64_t request_token, const uint8_t* pdu, size_t pdu_size);
+size_t hako_pdu_rpc_mux_server_connected_count(const hako_pdu_rpc_mux_server_handle_t* handle);
+size_t hako_pdu_rpc_mux_server_expected_count(const hako_pdu_rpc_mux_server_handle_t* handle);
+int hako_pdu_rpc_mux_server_is_ready(const hako_pdu_rpc_mux_server_handle_t* handle);
 
 /* Co-located test/application shutdown order: server Endpoint, client Endpoint, server RPC, client RPC. */
 hako_pdu_rpc_error_t hako_pdu_rpc_stop_pair(hako_pdu_rpc_server_handle_t* server, hako_pdu_rpc_client_handle_t* client);
