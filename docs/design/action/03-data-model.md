@@ -69,7 +69,9 @@ Goal Execution B
   goal_id = UUID-B
 ```
 
-同じAction Type、同じAction Endpoint、同じClient Sessionであっても、`goal_id`が異なれば別のGoal Executionです。
+同じAction Typeに対して、`goal_id`が異なれば別のGoal Executionです。
+
+Action EndpointとClient Sessionは、Goal Executionに関連する配送・通信コンテキストですが、Goal Executionの同一性を決める条件には含めません。
 
 ## 3. goal_id
 
@@ -174,7 +176,7 @@ Server Runtimeは、自身が管理する範囲で重複を検出します。
 
 ### 5.1 Protocol上の原則
 
-同一Action Typeに対して、複数のGoal Executionが同時に存在できる設計とします。
+同一Action Typeに対して、異なる`goal_id`を持つ複数のGoal Executionが同時に存在できる設計とします。
 
 ```text
 MoveRobot
@@ -184,6 +186,8 @@ MoveRobot
 ```
 
 各Goalは、Feedback、Cancel、Result、Terminal Statusを独立して持ちます。
+
+同じ`goal_id`を持つGoal Requestは、新しいGoal Executionとして扱いません。その具体的な扱いを重複エラーとするか、再送または冪等な再照会とするかは後続のProtocol設計で決定します。
 
 ```text
 Goal A
@@ -401,15 +405,17 @@ GoalExecutionContext
 Action Type
   1
   |
-  | exposed by
-  v
-Action Endpoint
-  1
-  |
-  | receives
+  | instantiated as
   v
 Goal Execution (0..N)
   identified by goal_id
+
+Action Endpoint
+  1
+  |
+  | routes
+  v
+Goal Execution (0..N)
 
 Client Session
   1
@@ -419,9 +425,9 @@ Client Session
 Goal Execution (0..N)
 ```
 
-Goal Executionは、Action EndpointとClient Sessionの両方に関連しますが、どちらか一方だけでは識別しません。
+Goal Executionの型はAction Typeによって決まり、第一識別子は`goal_id`です。
 
-第一識別子は`goal_id`です。
+Action EndpointとClient SessionはGoal Executionに関連付けられますが、配送・通信コンテキストであり、Goal Executionの同一性を決めません。
 
 ## 12. 今回の設計判断
 
@@ -429,12 +435,13 @@ Goal Executionは、Action EndpointとClient Sessionの両方に関連します�
 2. 通常のClientではAction Client RuntimeがGoal送信前に生成する。
 3. Adapterは外部で生成された互換UUIDを指定できる。
 4. Server RuntimeはUUIDの検査、重複検査、登録、相関、ライフサイクル管理を行う。
-5. 同一Action Type、同一Endpoint、同一Client Sessionに複数Goal Executionが存在できる。
-6. RPC Runtimeは複数Goalを`goal_id`ごとに独立管理できる能力を提供する。
-7. Runtimeは一律のsingle-goal制約をProtocolへ埋め込まない。
-8. Goalの受理、並列実行、直列化、キュー、排他、優先度、preemptionはApplication Policyとする。
-9. `tcp_mux.maxClients`はTransport接続容量であり、active Goal数やApplication同時実行数とは別概念とする。
-10. Transport接続失敗、Runtime拒否、Application拒否を別の失敗として扱う。
+5. 同一Action Typeに対して、異なる`goal_id`を持つ複数のGoal Executionが同時に存在できる。
+6. Action EndpointおよびClient Sessionは配送・通信コンテキストであり、Goal Executionの識別条件には含めない。
+7. RPC Runtimeは複数Goalを`goal_id`ごとに独立管理できる能力を提供する。
+8. Runtimeは一律のsingle-goal制約をProtocolへ埋め込まない。
+9. Goalの受理、並列実行、直列化、キュー、排他、優先度、preemptionはApplication Policyとする。
+10. `tcp_mux.maxClients`はTransport接続容量であり、active Goal数やApplication同時実行数とは別概念とする。
+11. Transport接続失敗、Runtime拒否、Application拒否を別の失敗として扱う。
 
 ## 13. レビューで問答したい事項
 
