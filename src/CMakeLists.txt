@@ -23,6 +23,7 @@ set(HAKO_PDU_RPC_SOURCES
   c_rpc.cpp
   c_rpc_cancel.cpp
   c_rpc_alloc.cpp
+  c_rpc_mux.cpp
 )
 
 function(hako_pdu_rpc_configure_target target)
