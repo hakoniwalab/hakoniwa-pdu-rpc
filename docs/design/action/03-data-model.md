@@ -11,14 +11,15 @@
 
 - 1回のAction実行をどのように識別するか
 - 同一Action Typeに対する複数のGoal Executionをどう表現するか
-- 同一Client接続上で複数Goalをどう独立管理するか
-- RPC Runtime、Action Server Application、Transportの責務をどう分離するか
+- Goal、Feedback、Cancel、Resultをどのように相関するか
+- RPC RuntimeとAction Server Applicationの責務をどう分離するか
+- Protocolのデータモデルを通信経路や接続方式からどう独立させるか
 
-具体的なPDUのバイト配置、状態遷移、送受信順序、公開APIは後続文書で定義します。
+具体的なPDUのバイト配置、状態遷移、送受信順序、公開API、Transport実装は後続文書で定義します。
 
 ## 2. データモデルの基本単位
 
-Hakoniwa Actionでは、以下を別の概念として扱います。
+Hakoniwa Action Protocolの中心となる概念は、Action Type、Goal Execution、`goal_id`です。
 
 ### 2.1 Action Type
 
@@ -32,28 +33,7 @@ Action Typeは、実行可能な処理の型です。
 
 Action Type自体は、個別の実行状態を持ちません。
 
-### 2.2 Action Endpoint
-
-Action Endpointは、Action TypeをClientへ公開する論理的な通信先です。
-
-同じAction Typeを複数のEndpointで公開できます。
-
-```text
-robot1/move : MoveRobot
-robot2/move : MoveRobot
-```
-
-EndpointはAction Typeを公開する場所であり、単一のGoal Executionを表すものではありません。
-
-### 2.3 Client Session
-
-Client Sessionは、ClientとServer間のTransportまたはRPC上の接続・通信コンテキストです。
-
-Client SessionはGoal Executionの識別子ではありません。
-
-1つのClient Session上に、複数のGoal Executionが存在できます。
-
-### 2.4 Goal Execution
+### 2.2 Goal Execution
 
 Goal Executionは、Action Typeに対して行われる1回の具体的な実行です。
 
@@ -71,7 +51,23 @@ Goal Execution B
 
 同じAction Typeに対して、`goal_id`が異なれば別のGoal Executionです。
 
-Action EndpointとClient Sessionは、Goal Executionに関連する配送・通信コンテキストですが、Goal Executionの同一性を決める条件には含めません。
+### 2.3 Goal Executionセッション
+
+Goal Executionは、Goal Requestの送信から終端Resultまで継続する論理的な実行セッションです。
+
+このセッションは`goal_id`によって識別・相関します。
+
+```text
+Goal Request(goal_id = X)
+  -> Goal Response(goal_id = X)
+  -> Feedback(goal_id = X) 0..N
+  -> Cancel(goal_id = X) optional
+  -> Result(goal_id = X)
+```
+
+本設計では、これとは別に「Client Session」というProtocol概念を導入しません。
+
+TCP接続、共有メモリ接続、mux上のClient識別子などはTransportまたはRuntime実装上の情報であり、Goal ExecutionのProtocol identityではありません。
 
 ## 3. goal_id
 
@@ -89,6 +85,8 @@ Cancel Request(goal_id = X)
 Cancel Response(goal_id = X)
 Result(goal_id = X)
 ```
+
+`goal_id`は単なるRequest番号ではなく、Goal Executionのライフサイクル全体を束ねる相関キーです。
 
 ### 3.2 生成責任
 
@@ -124,7 +122,7 @@ Action Server Runtimeは、受信した`goal_id`について以下を担当し�
 - 実行中Goalとの重複検査
 - 必要に応じた終了済みGoalとの重複検査
 - Goal Execution Contextへの登録
-- Feedback、Cancel、Resultの相関
+- Goal Response、Feedback、Cancel、Resultの相関
 - Goal終了後の破棄または一定期間の保持
 
 `goal_id`の値をClient側で生成することと、Server側で一意性・ライフサイクルを管理することは矛盾しません。
@@ -185,9 +183,7 @@ MoveRobot
   Goal C: goal_id = UUID-C
 ```
 
-各Goalは、Feedback、Cancel、Result、Terminal Statusを独立して持ちます。
-
-同じ`goal_id`を持つGoal Requestは、新しいGoal Executionとして扱いません。その具体的な扱いを重複エラーとするか、再送または冪等な再照会とするかは後続のProtocol設計で決定します。
+各Goal Executionは、Goal Response、Feedback、Cancel、Result、Terminal Statusを独立して持ちます。
 
 ```text
 Goal A
@@ -200,36 +196,25 @@ Goal B
   Result B / CANCELED
 ```
 
-### 5.2 同一Clientからの複数Goal
+同じ`goal_id`を持つGoal Requestは、新しいGoal Executionとして扱いません。
 
-同一Client Sessionから送信された複数Goalも、異なる`goal_id`を持つ独立したGoal Executionとして表現できます。
+その具体的な扱いを重複エラーとするか、再送または冪等な再照会とするかは後続のProtocol設計で決定します。
 
-```text
-Client Session A
-  Goal A1: UUID-A1
-  Goal A2: UUID-A2
-  Goal A3: UUID-A3
-```
+### 5.2 実現方式からの独立
 
-Runtimeが一律に以下の制限を設ける設計にはしません。
+複数Goal Executionをどの通信経路で運ぶかは、Protocol上の同一性とは関係しません。
 
-- 1 Action Typeにつき1 active Goal
-- 1 Action Endpointにつき1 active Goal
-- 1 Client Sessionにつき1 active Goal
-
-この制限をProtocolへ埋め込むと、将来の並列実行、多重化、キューイング、複数ロボット操作などの利用形態を妨げるためです。
-
-### 5.3 複数Clientからの複数Goal
-
-異なるClient Sessionから、同じAction Endpointへ複数Goalを送信できます。
+以下はいずれも同じProtocolモデルで扱えます。
 
 ```text
-Client A -> Goal A
-Client B -> Goal B
-Client C -> Goal C
+1つの通信経路で複数Goalを配送する
+複数の通信経路からGoalを配送する
+TransportがGoalごとに異なる経路を選択する
 ```
 
-これらも`goal_id`ごとに独立して管理します。
+Protocolが要求するのは、各メッセージを`goal_id`で正しいGoal Executionへ相関できることです。
+
+Endpoint、socket、connection、channel、mux client IDなどをGoal Executionの識別条件には含めません。
 
 ## 6. Runtimeの責務
 
@@ -241,6 +226,7 @@ RPC Runtimeは、複数のGoal Executionを扱える共通Protocol能力を提�
 - あるGoalの終了が、別のGoalを暗黙に終了させないこと
 - 複数Goalから発生するイベントを利用アプリケーションへ識別可能な形で通知すること
 - Protocol不正、重複ID、未知IDなどの検出
+- Transport固有の識別子をProtocol identityとして要求しないこと
 
 概念上、Runtimeは以下のような集合を管理します。
 
@@ -285,7 +271,7 @@ Goal B -> higher priority
 Application decides whether to preempt A
 ```
 
-Hakoniwa Action Protocolは、複数Goalを識別し配送できる能力を提供しますが、上記の実行Policyを一律に決定しません。
+Hakoniwa Action Protocolは、複数Goalを識別・相関・配送できる能力を提供しますが、上記の実行Policyを一律に決定しません。
 
 Application Policyに含まれるものの例は以下です。
 
@@ -326,55 +312,23 @@ Applicationが業務上の判断として拒否する候補です。
 
 Runtime capacity failureとApplication Policy rejectionは、同じ`BUSY`へ安易に統合せず、後続のデータ契約で識別可能にすることを検討します。
 
-## 9. Transportとの分離
+## 9. Transportとの境界
 
-### 9.1 maxClients
+Transportは、Goal Request、Goal Response、Feedback、Cancel、Resultを配送します。
 
-`tcp_mux`の`maxClients`は、Transportが同時に収容できるClient接続数の上限です。
+Protocolは、Transportに以下を要求しません。
 
-```text
-maxClients
-  = transport client connection capacity
-```
+- 1 Goalにつき1接続
+- 1 Clientにつき1接続
+- 1 Action Typeにつき1 Endpoint
+- 特定のmultiplex方式
+- 特定の接続上限
 
-これは以下を意味しません。
+Transportが使用するEndpoint、connection、channel、client IDなどは、配送を実現するための情報です。
 
-```text
-maxClients
-  != maximum active goals
-  != application concurrency limit
-```
+それらをGoal ExecutionのProtocol identityへ含めません。
 
-1つのClient Session上に複数Goalを多重化できるため、active Goal数が`maxClients`を上回ることもProtocol上はあり得ます。
-
-```text
-maxClients = 2
-
-Client A
-  Goal A1
-  Goal A2
-  Goal A3
-
-Client B
-  Goal B1
-  Goal B2
-
-active goals = 5
-```
-
-### 9.2 Transport capacity failure
-
-Transportの接続上限によってClientが接続できない場合、そのClientはGoal Requestを送信する段階へ到達していません。
-
-したがって、これはGoal Rejectionとは別の失敗です。
-
-```text
-Transport connection rejected
-  -> no Goal Execution created
-
-Goal rejected by Application
-  -> Goal Request reached Action Server
-```
+Transport上の接続失敗は、Goal RequestがAction Runtimeへ到達した後のGoal Rejectionとは別の失敗です。
 
 ## 10. Goal Execution Context
 
@@ -383,9 +337,7 @@ Runtimeは各Goal Executionについて、概念上、以下の情報を関連�
 ```text
 GoalExecutionContext
   goal_id
-  action_endpoint
   action_type
-  client/session reference
   goal body or its reference
   protocol state
   feedback sequence state
@@ -395,11 +347,13 @@ GoalExecutionContext
 
 具体的にどのフィールドを保持するか、所有権、コピー方式、永続性は後続設計で決定します。
 
-重要なのは、状態管理の主キーをClient Sessionだけにせず、`goal_id`を中心に各Goalを独立管理することです。
+重要なのは、`goal_id`を主キーとしてGoal Executionのライフサイクル全体を独立管理することです。
+
+Transport固有のrouteやconnection情報をRuntime内部で関連付けることはできますが、それは実装情報であり、Protocol上のGoal Execution identityではありません。
 
 ## 11. データ関係
 
-概念上の関係は以下です。
+概念上の中心関係は以下です。
 
 ```text
 Action Type
@@ -409,25 +363,13 @@ Action Type
   v
 Goal Execution (0..N)
   identified by goal_id
-
-Action Endpoint
-  1
-  |
-  | routes
-  v
-Goal Execution (0..N)
-
-Client Session
-  1
-  |
-  | submits
-  v
-Goal Execution (0..N)
 ```
 
-Goal Executionの型はAction Typeによって決まり、第一識別子は`goal_id`です。
+Goal Executionの型はAction Typeによって決まり、Goal Executionそのものは`goal_id`で識別します。
 
-Action EndpointとClient SessionはGoal Executionに関連付けられますが、配送・通信コンテキストであり、Goal Executionの同一性を決めません。
+Goal、Feedback、Cancel、Resultは、同じ`goal_id`を使用してそのGoal Executionへ関連付けます。
+
+通信経路、Endpoint、接続、Client識別子は、この中心関係へ含めません。
 
 ## 12. 今回の設計判断
 
@@ -435,13 +377,15 @@ Action EndpointとClient SessionはGoal Executionに関連付けられますが�
 2. 通常のClientではAction Client RuntimeがGoal送信前に生成する。
 3. Adapterは外部で生成された互換UUIDを指定できる。
 4. Server RuntimeはUUIDの検査、重複検査、登録、相関、ライフサイクル管理を行う。
-5. 同一Action Typeに対して、異なる`goal_id`を持つ複数のGoal Executionが同時に存在できる。
-6. Action EndpointおよびClient Sessionは配送・通信コンテキストであり、Goal Executionの識別条件には含めない。
-7. RPC Runtimeは複数Goalを`goal_id`ごとに独立管理できる能力を提供する。
-8. Runtimeは一律のsingle-goal制約をProtocolへ埋め込まない。
-9. Goalの受理、並列実行、直列化、キュー、排他、優先度、preemptionはApplication Policyとする。
-10. `tcp_mux.maxClients`はTransport接続容量であり、active Goal数やApplication同時実行数とは別概念とする。
-11. Transport接続失敗、Runtime拒否、Application拒否を別の失敗として扱う。
+5. `goal_id`はGoal Requestから終端Resultまで続くGoal Executionセッション全体の相関キーとする。
+6. 同一Action Typeに対して、異なる`goal_id`を持つ複数のGoal Executionが同時に存在できる。
+7. 同じ`goal_id`を持つGoal Requestは新しいGoal Executionとして扱わない。
+8. Protocol上の独立したClient Session概念は導入しない。
+9. Endpoint、connection、channel、mux client IDなどの実現方式をGoal Executionの識別条件に含めない。
+10. RPC Runtimeは複数Goalを`goal_id`ごとに独立管理できる能力を提供する。
+11. Runtimeは一律のsingle-goal制約をProtocolへ埋め込まない。
+12. Goalの受理、並列実行、直列化、キュー、排他、優先度、preemptionはApplication Policyとする。
+13. Transport接続失敗、Runtime拒否、Application拒否を別の失敗として扱う。
 
 ## 13. レビューで問答したい事項
 
@@ -451,5 +395,4 @@ Action EndpointとClient SessionはGoal Executionに関連付けられますが�
 4. 同じ`goal_id`を持つGoal Requestの再送を、重複エラーとするか冪等な再照会として扱うか。
 5. Applicationがキューへ入れたGoalを、Protocol上`ACCEPTED`とだけ表現するか、`QUEUED`状態を設けるか。
 6. Runtime内部資源不足とApplication同時実行上限を、Goal Response上で別理由として表現するか。
-7. Client Session切断時に、そのClientが送信したGoalを継続するかCancelするかを、Protocol、設定、Applicationのどこで決めるか。
-8. 1つのClient Session上で複数Goalイベントを配送する際、順序保証をGoal単位に限定するか。
+7. TransportがGoalごとに経路を変更した場合でも、`goal_id`だけで相関できることをProtocol要件とするか。
