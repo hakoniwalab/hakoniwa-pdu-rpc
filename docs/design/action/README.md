@@ -170,6 +170,8 @@ DEFER
 
 ## 現在の主要な未確定事項
 
+- イベントの洗い出しに不足がないか
+- イベント発生元と受信側の分類が正しいか
 - `CANCELING`中のFeedbackを許可するか
 - `CANCELING`中の`COMPLETE_SUCCEEDED`を許可するか
 - `DOING`中の`COMPLETE_CANCELED`を許可するか
