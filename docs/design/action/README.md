@@ -23,7 +23,8 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 - Actionは単に応答時間の長いService RPCではなく、`goal_id`で識別されるGoal実行セッションとして扱います。
 - 1回のGoal Executionは128-bit UUIDの`goal_id`で識別します。
 - `goal_id`は原則としてAction Client RuntimeがGoal送信前に生成し、Server Runtimeが重複検査とlifecycle管理を行います。
-- 同一Action Type、同一Endpoint、同一Client Sessionに、複数のGoal Executionが同時に存在することをProtocol上許容します。
+- 同一Action Typeに対して、異なる`goal_id`を持つ複数のGoal Executionが同時に存在することをProtocol上許容します。
+- Action EndpointおよびClient Sessionは配送・通信コンテキストであり、Goal Executionの同一性を決める条件には使用しません。
 - RPC Runtimeは、複数Goalを`goal_id`ごとに独立して相関・配送・状態管理できる能力を提供します。
 - Goalを並列実行するか、直列化するか、キューへ入れるか、拒否するかはAction Server Applicationの実行ポリシーとします。
 - Runtimeは一律の「1 Actionにつき1 Goal」または「1 Clientにつき1 Goal」という制約をProtocolへ埋め込みません。
@@ -66,7 +67,8 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 - 通常のHakoniwa ClientではAction Client Runtimeが`goal_id`を生成する。
 - ROS BridgeなどのAdapterは、外部で生成された互換UUIDを指定できる。
 - Server Runtimeは`goal_id`の形式検査、重複検査、登録、相関、状態管理を担当する。
-- 同一Action Type、同一Endpoint、同一Client Sessionの複数Goal ExecutionをProtocol上許容する。
+- 同一Action Typeに対して、異なる`goal_id`を持つ複数のGoal ExecutionをProtocol上許容する。
+- Action EndpointおよびClient SessionはGoal Executionの配送・通信コンテキストとして関連付けるが、識別条件には含めない。
 - RPC Runtimeは各Goalを`goal_id`ごとに独立管理する。
 - 同時実行数、直列化、キュー、排他、優先度、preemptionはApplication Policyとする。
 - `maxClients`とAction同時実行能力を分離する。
@@ -109,9 +111,10 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 主な確認事項は以下です。
 
 1. `goal_id`をClient Runtime生成、Server Runtime管理とする責務分担。
-2. 同一Action Type、同一Endpoint、同一Client Sessionで複数Goal Executionを許容すること。
-3. RPC Runtimeが複数Goalを独立管理できる共通能力を持つこと。
-4. Goalの並列実行、直列化、キュー、排他、優先度、preemptionをApplication Policyとすること。
-5. `tcp_mux.maxClients`をTransport接続容量として、active Goal数と分離すること。
+2. 同一Action Typeに対して、異なる`goal_id`を持つ複数のGoal Executionを許容すること。
+3. Action EndpointおよびClient Sessionを、Goal Executionの識別条件ではなく配送・通信コンテキストとして扱うこと。
+4. RPC Runtimeが複数Goalを独立管理できる共通能力を持つこと。
+5. Goalの並列実行、直列化、キュー、排他、優先度、preemptionをApplication Policyとすること。
+6. `tcp_mux.maxClients`をTransport接続容量として、active Goal数と分離すること。
 
 このデータモデルが合意できた後、各Goal Executionがどのように状態遷移するかを`04-state-model.md`で設計します。
