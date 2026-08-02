@@ -104,8 +104,20 @@ jobs:
       - name: Existing C++ basic contracts
         run: python tools/hako.py test-basic
 
+      - name: Build TCP mux C++ contract
+        run: cmake --build build --config Release --target hakoniwa_pdu_rpc_mux_server_test --parallel
+
+      - name: TCP mux C++ contract
+        run: ctest --test-dir build -C Release --output-on-failure -R "^hakoniwa_pdu_rpc_mux_server_test$"
+
       - name: Build C API basic contract
         run: cmake --build build --config Release --target hakoniwa_pdu_rpc_c_api_basic_test --parallel
 
       - name: C API basic contracts
         run: ctest --test-dir build -C Release --output-on-failure -R "^hakoniwa_pdu_rpc_c_api_basic_test$"
+
+      - name: Build TCP mux C API contract
+        run: cmake --build build --config Release --target hakoniwa_pdu_rpc_c_api_mux_server_test --parallel
+
+      - name: TCP mux C API contract
+        run: ctest --test-dir build -C Release --output-on-failure -R "^hakoniwa_pdu_rpc_c_api_mux_server_test$"
