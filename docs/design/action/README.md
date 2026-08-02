@@ -12,7 +12,7 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 - 基本概念と用語
 - リポジトリおよびレイヤ間の責務境界
 - PDUデータ契約
-- Goal lifecycleの状態機械
+- Goal lifecycleの状態とイベント処理規則
 - Goal、Feedback、Cancel、Resultの通信規約
 - エラー、競合、遅延メッセージの扱い
 - 公開API、設定、ファイル配置、ビルド契約
@@ -34,8 +34,8 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 - Endpoint、接続、multiplex、transport capacityなどの実現方式はProtocolの識別モデルから分離します。
 - Protocol上の独立したClient Session概念は導入しません。
 - Feedbackは0回以上送信できる非終端通知とします。
-- Resultのデータと、Succeeded、Canceled、Abortedなどの終端状態を区別します。
-- Cancel要求、Cancel受理、Canceled終端を同一概念として扱いません。
+- Resultのデータと、Succeeded、Canceled、Abortedなどのterminal statusを区別します。
+- Cancel要求、Cancel受理、停止完了、Canceled Resultを同一概念として扱いません。
 - 既存Service RPCのPDUレイアウト、設定、状態遷移、API挙動を変更しません。
 - Action対応は追加機能かつ明示的なopt-inとします。
 
@@ -65,7 +65,7 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 
 ## 現時点の設計判断
 
-以下は、これまでのレビューで合意した方向性です。後続の状態モデル、Protocol、API設計では、この前提を狭めない形で具体化します。
+以下は、これまでのレビューで合意した方向性です。後続のProtocol、競合規約、API設計では、この前提を狭めない形で具体化します。
 
 - 1回のGoalを128-bit UUIDの`goal_id`で識別する。
 - 通常のHakoniwa ClientではAction Client Runtimeが`goal_id`を生成する。
@@ -84,52 +84,107 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 - Transport接続失敗、Runtime拒否、Application拒否を異なる失敗として扱う。
 - Action Request、Action Response、Action FeedbackをServiceとは独立したPDU契約として定義する。
 - Feedbackに`sequence_no`を持たせる。
+- Feedbackの発行契機と周期はServer Applicationが決定する。
 - 汎用的な進捗率を共通ヘッダへ入れず、Action固有のFeedback bodyへ置く。
 - 既存Service Request/Responseのバイナリ契約を変更しない。
 
-## 状態モデル初稿の提案
+## 状態モデルの設計判断
 
-今回のレビューでは、Goal lifecycleを二つのフェーズへ分けます。
+状態モデルは、Action Typeやworkerではなく、accept済みの`goal_id`インスタンスだけを対象とします。
 
 ```text
-Goal Request lifecycle
-  PENDING_ACCEPTANCE
-    -> REJECTED
-    -> ACCEPTED
-
-Accepted Goal lifecycle
-  ACCEPTED
-    -> EXECUTING
-    -> terminal
+Goal Request
+  -> reject: Goalインスタンスを生成しない
+  -> accept: DOINGでGoalインスタンスを生成
 ```
 
-初稿では以下を提案します。
+Action Type全体の状態、およびApplication内部workerの状態はProtocolへ持ち込みません。
 
-- `REJECTED`はGoal Request lifecycleの終端であり、accepted Goalの終端状態には含めない。
-- `ACCEPTED`と`EXECUTING`を区別する。
-- `ACCEPTED`は受理済みだが実行開始前のGoalを表現できる。
-- `QUEUED`を共通Protocol状態へ含めるかは未確定とする。
-- Cancel Request、Cancel Response、実際の停止、`CANCELED`終端を区別する。
-- Cancel拒否時は元のGoal状態を維持する。
-- accepted Goalの終端候補を`SUCCEEDED`、`CANCELED`、`ABORTED`、`ERROR`とする。
-- Clientローカル状態とServer正規状態を分離する。
+accept済みGoalは、非同期イベント競合を制御するため、次の3状態をMUSTで持ちます。
+
+```text
+DOING
+CANCELING
+FINISHING
+```
+
+基本遷移は次のとおりです。
+
+```text
+normal:
+  [*] -> DOING -> FINISHING -> [*]
+
+cancel:
+  [*] -> DOING -> CANCELING -> FINISHING -> [*]
+```
+
+- 初期状態は実体stateにせず、initial pseudo-stateで表現する。
+- Goal Requestをrejectした場合、Goalインスタンスを生成しない。
+- Cancel Requestを受信しただけでは`CANCELING`へ遷移しない。
+- ApplicationがCancelをacceptした時点で`CANCELING`へ遷移する。
+- terminal statusとResultを確定した時点で`FINISHING`へ遷移する。
+- `FINISHING`では新規Feedback、Cancel、重複完了によって終端結果を変更しない。
+- Result送信後のRuntime保持責務が完了した時点でGoalインスタンスを破棄する。
+
+## イベント×状態マトリクス
+
+今回の状態モデルは、状態図だけではなく、イベント×状態マトリクスを正規の設計手法とします。
+
+```text
+縦軸: イベント
+横軸: DOING / CANCELING / FINISHING
+各セル:
+  Decision
+  Action
+  Next state
+```
+
+イベント発生元は、主に次へ分けます。
+
+```text
+Server Application
+Client / Protocol
+Server Runtime / Transport
+```
+
+各セルでは、次のいずれかを選択します。
+
+```text
+ALLOW
+REJECT
+IGNORE
+IDEMPOTENT
+DEFER
+```
+
+これにより、次のような非同期競合を網羅的に検討します。
+
+- Result確定とFeedback発行の競合
+- 通常完了とCancel Requestの競合
+- Cancel受理と通常成功の競合
+- 重複Cancel
+- 重複完了
+- FINISHING中のCancel
+- Result送信失敗
+- Transport切断
 
 ## 現在の主要な未確定事項
 
-- `REJECTED`をGoal Request lifecycleの終端として整理してよいか
-- `ACCEPTED`と`EXECUTING`をProtocol上区別するか
-- queue待ちを`ACCEPTED`へ包含するか、`QUEUED`を追加するか
-- Cancel受理後の`CANCELING`をProtocol公開状態とするか
-- `ACCEPTED`状態から実行開始前に`CANCELED`または`ABORTED`へ遷移できるか
-- `ERROR`をGoal終端状態とするか、Runtime/通信エラーとして分離するか
-- ApplicationがGoal Requestへ応答しない場合のacceptance timeout
+- `CANCELING`中のFeedbackを許可するか
+- `CANCELING`中の`COMPLETE_SUCCEEDED`を許可するか
+- `DOING`中の`COMPLETE_CANCELED`を許可するか
+- Cancel判断待ち中に通常完了した場合のCancel Response
+- `CANCELING`中の重複Cancelを冪等応答にするか
+- `FINISHING`中のCancel Requestへの応答
+- 重複完了を冪等またはエラーのどちらにするか
+- Result送信失敗時の保持、再送、解放条件
+- Transport切断時にApplication実行を継続するか
+- Server Runtime状態をClientへ明示公開する必要があるか
 - UUID versionと一意性を要求する範囲
 - 終了済み`goal_id`を保持する期間
 - 同じ`goal_id`を持つGoal Request再送の扱い
 - Protocol Runtimeによる拒否理由の標準化範囲
 - Application rejection reasonの表現方法
-- Cancel ResponseとCanceled Resultの役割分担
-- Resultとterminal statusをAPI上でどのように返すか
 - Feedbackのキュー方式、容量、欠落および順序の扱い
 - Applicationへ公開するGoalHandleまたはContextの責務
 
@@ -147,15 +202,13 @@ Accepted Goal lifecycle
 
 ## 現在のレビュー方針
 
-今回のレビューでは、前段で合意したデータモデルを前提として、1つのGoalが受理判定から終端までどのように状態遷移するかを整理します。
+今回のレビューでは、以下を順に確認します。
 
-主な確認事項は以下です。
+1. `DOING`、`CANCELING`、`FINISHING`の3状態で必要十分か。
+2. 発生し得るイベントを発生元ごとに網羅できているか。
+3. イベント×状態マトリクスの各セルについて、許可、拒否、無視、冪等、委譲のどれにするか。
+4. 各セルで必要な副作用と次状態が明確か。
+5. 競合、重複、遅延、送信失敗などのイレギュラーケースが漏れていないか。
+6. 状態モデルで確定する事項と、後続のProtocol・競合規約へ送る事項を分離できているか。
 
-1. Goal Requestの受理判定フェーズと、accept後の実行フェーズを分けること。
-2. `REJECTED`をaccepted Goalの終端状態へ含めないこと。
-3. `ACCEPTED`と`EXECUTING`を区別すること。
-4. queue、Cancel、終端状態をProtocolとApplication Policyの境界で整理すること。
-5. Clientローカル状態とServer正規状態を分離すること。
-6. 各Goalが`goal_id`ごとに独立して状態遷移すること。
-
-この状態モデルが合意できた後、各状態遷移をどのmessage交換で成立させるかを`05-protocol.md`で設計します。
+この状態・イベントモデルが合意できた後、各イベントをどのmessage交換で成立させるかを`05-protocol.md`で設計します。
