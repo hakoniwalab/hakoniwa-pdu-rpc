@@ -1,0 +1,46 @@
+{
+  "pduMetaDataSize": 24,
+  "services": [
+    {
+      "name": "Service/Add",
+      "type": "hako_srv_msgs/AddTwoInts",
+      "maxClients": 2,
+      "pduSize": {
+        "server": {
+          "heapSize": 0,
+          "baseSize": 296
+        },
+        "client": {
+          "heapSize": 0,
+          "baseSize": 288
+        }
+      },
+      "server_endpoints": [
+        {
+          "nodeId": "server_node",
+          "endpointId": "mux_session"
+        }
+      ],
+      "clients": [
+        {
+          "name": "TestClient0",
+          "requestChannelId": 0,
+          "responseChannelId": 1,
+          "client_endpoint": {
+            "nodeId": "client_node",
+            "endpointId": "client_ep_id"
+          }
+        },
+        {
+          "name": "TestClient1",
+          "requestChannelId": 2,
+          "responseChannelId": 3,
+          "client_endpoint": {
+            "nodeId": "client_node",
+            "endpointId": "client_ep_id"
+          }
+        }
+      ]
+    }
+  ]
+}

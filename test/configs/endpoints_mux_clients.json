@@ -1,0 +1,11 @@
+[
+  {
+    "nodeId": "client_node",
+    "endpoints": [
+      {
+        "id": "client_ep_id",
+        "config_path": "mux_client_endpoint.json"
+      }
+    ]
+  }
+]

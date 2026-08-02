@@ -17,11 +17,13 @@ endif()
 set(HAKO_PDU_RPC_SOURCES
   rpc_server_endpoint_impl.cpp
   rpc_services_server.cpp
+  rpc_services_mux_server.cpp
   rpc_client_endpoint_impl.cpp
   rpc_services_client.cpp
   c_rpc.cpp
   c_rpc_cancel.cpp
   c_rpc_alloc.cpp
+  c_rpc_mux.cpp
 )
 
 function(hako_pdu_rpc_configure_target target)

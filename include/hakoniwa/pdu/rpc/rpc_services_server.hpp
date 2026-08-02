@@ -4,24 +4,38 @@
 #include "hakoniwa/pdu/endpoint.hpp"
 #include "hakoniwa/pdu/endpoint_container.hpp"
 #include "hakoniwa/time_source/time_source_factory.hpp"
-#include <string>
+
+#include <iostream>
+#include <map>
 #include <memory>
 #include <optional>
-#include <vector>
-#include <map>
+#include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 namespace hakoniwa::pdu::rpc {
 
 class RpcServicesServer {
 public:
     RpcServicesServer(const std::string& node_id, const std::string& impl_type, const std::string& service_config_path, uint64_t delta_time_usec, std::string time_source_type = "real")
-        : node_id_(node_id), impl_type_(impl_type), service_config_path_(service_config_path), delta_time_usec_(delta_time_usec) 
+        : node_id_(node_id), impl_type_(impl_type), service_config_path_(service_config_path), delta_time_usec_(delta_time_usec)
         {
             time_source_ = hakoniwa::time_source::create_time_source(time_source_type, delta_time_usec);
         }
-    virtual ~RpcServicesServer(); // Removed = default;
-    bool initialize_services(std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container, std::optional<std::string> client_node_id = std::nullopt);
+    virtual ~RpcServicesServer();
+
+    bool initialize_services(
+        std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container,
+        std::optional<std::string> client_node_id = std::nullopt);
+
+    // Initialize all configured services on one already-opened Endpoint.
+    // This path is used by server-side communication multiplexers, where each
+    // accepted transport session becomes its own Endpoint instance.
+    bool initialize_services(
+        std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint,
+        std::optional<std::string> client_node_id = std::nullopt);
+
     bool start_all_services();
     void stop_all_services();
     void clear_all_instances();
@@ -56,8 +70,11 @@ public:
     }
 
 private:
-    //(nodeId, endpointId), endpoint
-    //std::map<std::pair<std::string, std::string>, std::shared_ptr<hakoniwa::pdu::Endpoint>> pdu_endpoints_;
+    bool initialize_services_impl(
+        std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container,
+        std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_override,
+        std::optional<std::string> client_node_id);
+
     //service_name, endpoint
     std::map<std::string, std::shared_ptr<IRpcServerEndpoint>> rpc_endpoints_;
     std::string node_id_;
