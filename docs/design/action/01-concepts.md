@@ -57,6 +57,33 @@ Goal Execution B
   goal_id = B
 ```
 
+### 3.3 同一Action Typeの複数Goal Execution
+
+同一のAction Typeおよび同一のAction Server Endpointに対して、複数のGoal Executionが同時に存在することをProtocol上許容します。
+
+```text
+ExecuteMission
+  goal_id = A  RUNNING
+  goal_id = B  RUNNING
+  goal_id = C  CANCELING
+```
+
+各Goal Executionは異なる`goal_id`によって独立して識別され、Feedback、Cancel、Result、Terminal StatusもGoalごとに管理されます。
+
+Hakoniwa Action ProtocolおよびRPC Runtimeは、同一Action Typeを単一実行に制限しません。また、1 Clientにつき1 Goalという制限もProtocolの前提にしません。
+
+ただし、実際に複数Goalを受理して並列実行するか、直列化するか、キューへ入れるか、拒否するかはAction Server Applicationの実行ポリシーです。
+
+例えば以下は、いずれも同じProtocol上で実現できるApplication Policyです。
+
+- すべてのGoalを並列に受理する。
+- 最大N件まで受理し、それを超えるGoalを拒否する。
+- 実行中Goalがある場合、新しいGoalをキューへ入れる。
+- 優先度の高いGoalを受理し、既存Goalをpreemptまたはcancelする。
+- 共有資源を使用するため、同時実行を1件に制限する。
+
+`tcp_mux`の`maxClients`はTransportが収容できるClient接続数を表すものであり、Actionの同時実行ポリシーそのものではありません。
+
 ## 4. Goal
 
 Goalは、ClientがServerへ提示する実行要求と、そのAction固有の入力データです。
@@ -74,7 +101,7 @@ Goalの提示は、実行開始そのものを保証しません。ServerはGoal
 
 ## 5. goal_id
 
-`goal_id`は、1回のGoal Executionを識別する128-bitの識別子です。
+`goal_id`は、1回のGoal Executionを識別する128-bit UUIDです。
 
 Goal、Goal Response、Feedback、Cancel、Resultは、同じ`goal_id`によって関連付けます。
 
@@ -85,20 +112,42 @@ Cancel(goal_id = X)
 Result(goal_id = X)
 ```
 
-### 5.1 提案する役割
+### 5.1 役割
 
 - Action Type内でGoal Executionを一意に識別する。
 - ClientとServer間の相関キーとして使用する。
+- 同一Action Typeの複数Goal Executionを独立して管理する。
 - ROS 2 Goal UUIDなど、外部Action実装の識別子と対応付けられるようにする。
 - Service RPCの`client_name + request_id`へ依存しないAction固有の識別子とする。
 
-### 5.2 未確定事項
+### 5.2 生成と管理の責務
 
-- `goal_id`をClientが生成するか、Runtimeが生成するか。
-- 一意性の範囲をAction単位、Endpoint単位、システム全体のどこまで要求するか。
+`goal_id`は、Goal送信前にAction Client RuntimeがUUIDとして生成します。
+
+ROS 2 Bridgeなど、外部Actionシステムが既に互換性のあるUUIDを持つAdapterは、その外部UUIDを`goal_id`として指定できます。
+
+```text
+通常のHakoniwa Client
+  Action Client RuntimeがUUIDを生成
+
+ROS 2 Adapter
+  ROS Goal UUIDをgoal_idとして指定
+```
+
+Action Server Runtimeは受信した`goal_id`について、以下を担当します。
+
+- UUID形式などProtocol上の妥当性確認
+- 実行中Goalとの重複検査
+- Goal Execution状態との対応付け
+- 終了済みGoalの保持と重複再送の検出
+
+したがって、`goal_id`の値を作る責務はClient側にあり、一意性を検査しGoal lifecycleを管理する責務はServer Runtime側にあります。
+
+### 5.3 未確定事項
+
+- 一意性の範囲をAction Endpoint単位、Server単位、システム全体のどこまで要求するか。
 - 終了済み`goal_id`をどれだけ保持し、重複Goalを検出するか。
-
-初稿では、Client側で生成され、少なくとも通信相手との関係において十分に一意であることを前提候補とします。
+- UUIDの特定versionを規定するか。
 
 ## 6. Goal AcceptanceとGoal Rejection
 
@@ -108,7 +157,7 @@ Serverは受信したGoalを受理または拒否します。
 
 Goal Acceptanceは、ServerがそのGoal Executionを管理対象として引き受けたことを表します。
 
-受理後は、ServerはFeedback、Cancel処理、Resultまたは異常終端について責任を持ちます。
+受理後は、Server RuntimeはProtocol上のGoal lifecycleを管理し、Action Server Applicationは実処理、Feedback生成、Result生成、Cancel処理について責任を持ちます。
 
 ### Goal Rejection
 
@@ -118,11 +167,12 @@ Goal Rejectionは、ServerがそのGoalを実行対象として受理しなか�
 
 - Action固有入力が不正
 - 実行に必要な資源が不足
-- 同時実行上限を超過
+- Applicationが定めた同時実行上限を超過
+- Applicationの排他、優先度、運用ポリシー上、実行不可
 - Serverが停止処理中
-- ポリシー上実行不可
+- duplicate `goal_id`やProtocol不正
 
-BUSYをGoal Rejectionの理由として扱うか、独立したProtocol Errorとして扱うかは後続設計で決定します。
+業務上の`BUSY`や同時実行制限はApplication判断です。Protocol不正、duplicate `goal_id`、Runtime shutdownなどはRuntimeが自動拒否できる条件として分離します。
 
 ## 7. Feedback
 
@@ -204,6 +254,8 @@ Client                     Server
 
 Cancel Responseと最終Resultの両方を必須とするか、Cancel Responseが何を保証するかはProtocol設計で決定します。
 
+複数Goal Executionが存在する場合、Cancelは指定された`goal_id`のGoalだけを対象とし、他のGoal Executionへ影響を与えません。ただし、共有資源の停止が他Goalへ影響する場合、その調停はApplication Policyです。
+
 ## 11. ClientとServer
 
 ### Client
@@ -212,11 +264,13 @@ ClientはGoalを提示し、Goal Response、Feedback、Resultを受信し、必�
 
 ClientはAction固有のGoal bodyを生成しますが、Goalを受理するかどうかや業務処理を実行する責任は持ちません。
 
+Action Client RuntimeはGoal送信前にUUID形式の`goal_id`を生成し、複数のGoal Executionをそれぞれ独立して追跡できるようにします。
+
 ### Server
 
-ServerはGoalを受信し、受理または拒否し、受理したGoal Executionのライフサイクルを管理します。
+Server RuntimeはGoalを受信し、Protocol上の妥当性を確認し、各`goal_id`に対応するGoal Executionのライフサイクルを独立して管理します。
 
-ただし、RPC Runtimeそのものが業務処理を実行するわけではありません。受理判断や実際の処理は、Server Runtimeを利用するアプリケーションと協調して行います。
+RPC Runtimeそのものが業務処理や同時実行方針を決定するわけではありません。Goalの業務上の受理判断、並列実行、直列化、キュー、排他、優先度、preemptionは、Server Runtimeを利用するApplicationが所有します。
 
 ## 12. Service RPCとの違い
 
@@ -227,20 +281,25 @@ ServerはGoalを受信し、受理または拒否し、受理したGoal Executio
 | 中間通知 | 原則なし | 0回以上のFeedback |
 | 終了前操作 | Cancelは既存RPC契約に依存 | Goal Executionに対するCancel |
 | ライフサイクル | 1往復を中心とする | Goal Executionセッションを持つ |
+| 複数実行 | RPC実装のsession構造に依存 | 同一Action Typeの複数GoalをProtocol上許容 |
 | 終端状態 | Responseの成否 | Succeeded / Canceled / Aborted / Error |
 | ROS依存 | なし | なし |
 
 Action対応のために既存Service RPCの意味やPDUレイアウトを変更しません。
 
-## 13. 初稿で提案する概念上の結論
+## 13. 現時点の概念上の設計判断
 
 1. Actionは「長時間RPC」ではなく、RPC基盤上に構築されるGoal Executionセッションとする。
-2. 1回のGoal Executionは128-bitの`goal_id`で識別する。
-3. Goalの送信と受理を区別する。
-4. Feedbackは非終端通知とする。
-5. Result bodyとTerminal Statusを区別する。
-6. Cancel Request、Cancel Response、Canceled終端を区別する。
-7. ROS 2はHakoniwa Actionの利用先・Adapterであり、概念定義の所有者ではない。
+2. 1回のGoal Executionは128-bit UUIDの`goal_id`で識別する。
+3. `goal_id`は原則としてAction Client Runtimeが送信前に生成し、Server Runtimeが重複検査とlifecycle管理を行う。
+4. 同一Action Typeおよび同一Endpointに複数のGoal Executionが同時に存在することをProtocol上許容する。
+5. 並列実行、直列化、キュー、拒否、排他、優先度、preemptionはAction Server Applicationの実行ポリシーとする。
+6. `maxClients`はTransportの接続収容数であり、Actionの同時実行上限とは定義しない。
+7. Goalの送信と受理を区別する。
+8. Feedbackは非終端通知とする。
+9. Result bodyとTerminal Statusを区別する。
+10. Cancel Request、Cancel Response、Canceled終端を区別する。
+11. ROS 2はHakoniwa Actionの利用先・Adapterであり、概念定義の所有者ではない。
 
 ## 14. レビューで問答したい事項
 
@@ -250,4 +309,5 @@ Action対応のために既存Service RPCの意味やPDUレイアウトを変更
 4. Goal Rejectionは終端状態に含めるか、それともGoal Execution成立前として扱うか。
 5. Cancel Responseは「要求を受理した」ことだけを示すのか、「停止可能と判断した」ことまで示すのか。
 6. `ABORTED`と`ERROR`をどの責務境界で分けるか。
-7. `goal_id`の生成責任をClient、Runtime、Adapterのどこへ置くか。
+7. Applicationが複数Goalを管理するために、Runtime APIはどの単位でGoalHandleまたはContextを提供すべきか。
+8. ApplicationのキューイングやpreemptionをProtocolで観測可能にする必要があるか。
