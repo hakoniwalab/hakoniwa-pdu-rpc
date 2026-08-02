@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -36,6 +37,7 @@ def make_args(**overrides):
         "build_type": None,
         "endpoint_root": None,
         "vcpkg_root": None,
+        "python_venv": None,
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -334,6 +336,64 @@ class OperationCompatibilityTests(unittest.TestCase):
 
 
 class FoundationInstallTests(unittest.TestCase):
+    def test_python_install_resolves_declared_dependencies(self):
+        context = SimpleNamespace(
+            venv_python=Path("/foundation/python/bin/python"),
+            repo_root=Path("/src/hakoniwa-pdu-rpc"),
+        )
+        with patch.object(HAKO, "run") as run_command:
+            HAKO.install_python_package(context)
+
+        command = run_command.call_args.args[0]
+        self.assertIn("--force-reinstall", command)
+        self.assertNotIn("--no-deps", command)
+        self.assertNotIn("--no-build-isolation", command)
+
+    def test_python_venv_is_optional_and_resolved_under_cli_control(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            endpoint = root / "endpoint"
+            write_endpoint_package(endpoint)
+            venv = root / "install" / "python"
+            interpreter = (
+                venv / "Scripts" / "python.exe"
+                if HAKO.host_platform()[0] == "windows"
+                else venv / "bin" / "python"
+            )
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_text("test\n", encoding="utf-8")
+            (root / "hakoniwa-pdu-registry" / "pdu" / "types").mkdir(
+                parents=True
+            )
+            ctx = HAKO.Context(
+                make_args(
+                    endpoint_root=str(endpoint),
+                    python_venv=str(venv),
+                ),
+                {
+                    "version": 1,
+                    "build": {
+                        "type": "Release",
+                        "dir": "build",
+                        "install_dir": "install",
+                    },
+                    "paths": {
+                        "pdu_endpoint_root": "",
+                        "vcpkg_root": "",
+                    },
+                },
+                root / "hakoniwa-build.yaml",
+                root,
+            )
+
+            self.assertEqual(ctx.python_venv, venv.resolve())
+            self.assertEqual(ctx.venv_python, interpreter.resolve())
+            self.assertEqual(HAKO.doctor(ctx), [])
+            self.assertEqual(
+                HAKO.resolved_record(ctx, "install")["paths"]["python_venv"],
+                str(venv.resolve()),
+            )
+
     def test_dependency_receipt_reads_endpoint_contract_fields(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             prefix = Path(temp_dir)
@@ -399,6 +459,39 @@ artifacts:
                 artifacts,
             )
             self.assertLess(len(artifacts), 10)
+
+    def test_python_artifacts_include_schema_below_selected_venv(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prefix = Path(temp_dir)
+            venv = prefix / "python"
+            package = venv / "lib" / "site-packages" / "hakoniwa_pdu_rpc"
+            schema = venv / "share" / "hakoniwa-pdu-rpc" / "schema"
+            package.mkdir(parents=True)
+            schema.mkdir(parents=True)
+            context = SimpleNamespace(
+                install_dir=prefix.resolve(),
+                python_venv=venv.resolve(),
+                venv_python=venv / "bin" / "python",
+            )
+
+            with patch.object(
+                HAKO.subprocess,
+                "run",
+                return_value=SimpleNamespace(stdout=f"{package}\n"),
+            ):
+                artifacts = HAKO._python_package_artifacts(context)
+
+            self.assertIn(
+                (Path("python/lib/site-packages/hakoniwa_pdu_rpc"), "python-package"),
+                artifacts,
+            )
+            self.assertIn(
+                (
+                    Path("python/share/hakoniwa-pdu-rpc/schema"),
+                    "schema-directory",
+                ),
+                artifacts,
+            )
 
 
 if __name__ == "__main__":

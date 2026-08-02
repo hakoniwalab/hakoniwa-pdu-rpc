@@ -319,6 +319,27 @@ python tools/hako.py install
 python tools/hako.py package-test
 ```
 
+`install` keeps the native/CMake-only behavior by default. To also install the
+`hakoniwa_pdu_rpc` Python package into a Foundation-owned virtual environment,
+select that environment explicitly:
+
+```bash
+python tools/hako.py install \
+  --install-dir /path/to/foundation/install \
+  --endpoint-root /path/to/foundation/install \
+  --python-venv /path/to/foundation/install/python
+```
+
+The virtual environment must already exist. With `--python-venv`, the
+Component Receipt records the Python package and enables the
+`python_rpc_mux_server`, `typed_async_client`, `shared_native_library`, and
+`python_package` capabilities. Without it, the Python capabilities remain
+disabled and the existing native install contract is preserved.
+Python build and runtime dependencies are resolved from `pyproject.toml` by
+`pip`. A clean environment therefore works without preinstalling CFFI,
+jsonschema, or setuptools, but the initial install may require package-index
+access when those dependencies are not already cached.
+
 ### Inspect the generated CMake command
 
 ```bash

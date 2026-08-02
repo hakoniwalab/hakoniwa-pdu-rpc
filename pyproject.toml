@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hakoniwa-pdu-rpc"
+version = "0.1.0"
+description = "Hakoniwa PDU RPC Python bindings"
+requires-python = ">=3.12"
+dependencies = [
+  "cffi>=1.0",
+  "jsonschema>=4.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.setuptools.data-files]
+"share/hakoniwa-pdu-rpc/schema" = [
+  "config/schema/endpoints-schema.json",
+  "config/schema/service-schema.json",
+]

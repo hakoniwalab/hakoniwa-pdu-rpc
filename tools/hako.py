@@ -355,10 +355,23 @@ class Context:
             cfg["paths"]["vcpkg_root"],
             self.repo_root,
         )
+        self.python_venv = (
+            _path_from(args.python_venv, self.repo_root)
+            if args.python_venv is not None
+            else None
+        )
 
     @property
     def vcpkg_triplet(self) -> str:
         return f"{self.arch}-windows"
+
+    @property
+    def venv_python(self) -> Path | None:
+        if self.python_venv is None:
+            return None
+        if self.platform_name == "windows":
+            return self.python_venv / "Scripts" / "python.exe"
+        return self.python_venv / "bin" / "python"
 
 
 def doctor(ctx: Context) -> list[str]:
@@ -389,6 +402,13 @@ def doctor(ctx: Context) -> list[str]:
                 "vcpkg was not found at the selected path "
                 f"({ctx.vcpkg_source}); set --vcpkg-root, paths.vcpkg_root, or VCPKG_ROOT"
             )
+    if ctx.python_venv is not None:
+        interpreter = ctx.venv_python
+        if interpreter is None or not interpreter.is_file():
+            errors.append(
+                "Foundation Python venv was not found: "
+                f"{ctx.python_venv}"
+            )
     return errors
 
 
@@ -399,6 +419,7 @@ def print_summary(ctx: Context, errors: list[str]) -> None:
     print(f"  Build type     : {ctx.build_type}")
     print(f"  Build directory: {ctx.build_dir}")
     print(f"  Install prefix : {ctx.install_dir}")
+    print(f"  Python venv    : {ctx.python_venv or 'not selected'}")
     print(
         f"  Endpoint root  : {ctx.endpoint_root or 'not resolved'} "
         f"({ctx.endpoint_source})"
@@ -490,6 +511,7 @@ def resolved_record(ctx: Context, operation: str) -> Dict[str, Any]:
                 "value": str(ctx.vcpkg_root) if ctx.vcpkg_root else "",
                 "source": ctx.vcpkg_source,
             },
+            "python_venv": str(ctx.python_venv) if ctx.python_venv else "",
         },
         "components": {"examples": True},
         "operation_semantics": {"tests": spec.tests},
@@ -611,6 +633,58 @@ def _rpc_artifacts(install_dir: Path) -> list[tuple[Path, str]]:
     return sorted(set(artifacts), key=lambda item: item[0].as_posix())
 
 
+def _python_package_artifacts(ctx: Context) -> list[tuple[Path, str]]:
+    interpreter = ctx.venv_python
+    if interpreter is None:
+        return []
+    result = subprocess.run(
+        [
+            str(interpreter),
+            "-c",
+            "import pathlib, hakoniwa_pdu_rpc; "
+            "print(pathlib.Path(hakoniwa_pdu_rpc.__file__).resolve().parent)",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    package_dir = Path(result.stdout.strip()).resolve()
+    try:
+        relative = package_dir.relative_to(ctx.install_dir)
+    except ValueError as exc:
+        raise HakoError(
+            "installed hakoniwa_pdu_rpc package is outside the selected "
+            f"install prefix: {package_dir}"
+        ) from exc
+    artifacts = [(relative, "python-package")]
+    # setuptools data_files are installed relative to the selected Python
+    # environment, which is intentionally allowed to be a subdirectory of the
+    # shared Foundation prefix.
+    schema_dir = ctx.python_venv / "share" / "hakoniwa-pdu-rpc" / "schema"
+    if schema_dir.is_dir():
+        artifacts.append(
+            (schema_dir.relative_to(ctx.install_dir), "schema-directory")
+        )
+    return artifacts
+
+
+def install_python_package(ctx: Context) -> None:
+    interpreter = ctx.venv_python
+    if interpreter is None:
+        return
+    run(
+        [
+            str(interpreter),
+            "-m",
+            "pip",
+            "install",
+            "--force-reinstall",
+            str(ctx.repo_root),
+        ],
+        cwd=ctx.repo_root,
+    )
+
+
 def write_receipt(ctx: Context) -> Path:
     if ctx.endpoint_root is None:
         raise HakoError("Endpoint package root is required for Component Receipt")
@@ -628,7 +702,7 @@ def write_receipt(ctx: Context) -> Path:
         ctx.install_dir / resolved_relative,
     )
 
-    artifacts = _rpc_artifacts(ctx.install_dir)
+    artifacts = _rpc_artifacts(ctx.install_dir) + _python_package_artifacts(ctx)
     if not any(kind == "cmake-package" for _, kind in artifacts):
         raise HakoError(f"installed RPC CMake package not found under: {ctx.install_dir}")
 
@@ -652,6 +726,11 @@ def write_receipt(ctx: Context) -> Path:
         "capabilities:",
         "  rpc_client: true",
         "  rpc_server: true",
+        "  tcp_mux: true",
+        f"  python_rpc_mux_server: {_yaml_scalar(ctx.python_venv is not None)}",
+        f"  typed_async_client: {_yaml_scalar(ctx.python_venv is not None)}",
+        "  shared_native_library: true",
+        f"  python_package: {_yaml_scalar(ctx.python_venv is not None)}",
         "  cmake_package: true",
     ]
     build_limits = dependency["build_limits"]
@@ -705,6 +784,7 @@ def install(ctx: Context) -> None:
         ],
         cwd=ctx.repo_root,
     )
+    install_python_package(ctx)
     receipt = write_receipt(ctx)
     print(f"Component Receipt: {receipt}")
 
@@ -829,6 +909,11 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--build-type", default=None, choices=sorted(VALID_BUILD_TYPES))
     parser.add_argument("--endpoint-root", default=None)
     parser.add_argument("--vcpkg-root", default=None)
+    parser.add_argument(
+        "--python-venv",
+        default=None,
+        help="optional Foundation Python venv receiving hakoniwa-pdu-rpc",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
