@@ -374,16 +374,18 @@ Client側が観測する状態とServer Runtimeの内部状態は同一である
 
 ## 15. レビューで確認する事項
 
-1. `CANCELING`中のFeedbackを許可するか。
-2. `CANCELING`中の`COMPLETE_SUCCEEDED`を常に拒否するか。
-3. `DOING`中の`COMPLETE_CANCELED`を常に拒否するか。
-4. Cancel判断待ち中に通常完了した場合、未回答Cancelへ何を返すか。
-5. `CANCELING`中の重複Cancel Requestを冪等応答にするか。
-6. `FINISHING`中のCancel Requestへ何を返すか。
-7. 重複`COMPLETE_*`を冪等またはエラーのどちらにするか。
-8. Result送信失敗時の保持、再送、解放条件をどこで定義するか。
-9. Transport切断時にApplication実行を継続するかをProtocolが規定するか。
-10. 状態をClientへ明示公開する必要があるか。
+1. イベントの洗い出しに不足がないか。
+2. 各イベントの発生元と受信側が正しいか。
+3. `CANCELING`中のFeedbackを許可するか。
+4. `CANCELING`中の`COMPLETE_SUCCEEDED`を常に拒否するか。
+5. `DOING`中の`COMPLETE_CANCELED`を常に拒否するか。
+6. Cancel判断待ち中に通常完了した場合、未回答Cancelへ何を返すか。
+7. `CANCELING`中の重複Cancel Requestを冪等応答にするか。
+8. `FINISHING`中のCancel Requestへ何を返すか。
+9. 重複`COMPLETE_*`を冪等またはエラーのどちらにするか。
+10. Result送信失敗時の保持、再送、解放条件をどこで定義するか。
+11. Transport切断時にApplication実行を継続するかをProtocolが規定するか。
+12. 状態をClientへ明示公開する必要があるか。
 
 ## 16. 対象外
 
