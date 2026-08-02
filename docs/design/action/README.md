@@ -20,15 +20,15 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 ## 基本方針
 
 - ActionはROS 2固有機能ではなく、箱庭で利用できる独立した通信・実行ライフサイクルとして定義します。
-- Actionは単に応答時間の長いService RPCではなく、`goal_id`で識別されるGoal実行セッションとして扱います。
+- Actionは単に応答時間の長いService RPCではなく、`goal_id`で識別されるGoal Executionセッションとして扱います。
 - 1回のGoal Executionは128-bit UUIDの`goal_id`で識別します。
 - `goal_id`は原則としてAction Client RuntimeがGoal送信前に生成し、Server Runtimeが重複検査とlifecycle管理を行います。
 - 同一Action Typeに対して、異なる`goal_id`を持つ複数のGoal Executionが同時に存在することをProtocol上許容します。
-- Action EndpointおよびClient Sessionは配送・通信コンテキストであり、Goal Executionの同一性を決める条件には使用しません。
+- Goal、Goal Response、Feedback、Cancel、Resultは、通信経路や接続方法に依存せず`goal_id`で相関します。
 - RPC Runtimeは、複数Goalを`goal_id`ごとに独立して相関・配送・状態管理できる能力を提供します。
 - Goalを並列実行するか、直列化するか、キューへ入れるか、拒否するかはAction Server Applicationの実行ポリシーとします。
-- Runtimeは一律の「1 Actionにつき1 Goal」または「1 Clientにつき1 Goal」という制約をProtocolへ埋め込みません。
-- `tcp_mux`の`maxClients`はTransportのClient接続数上限であり、Actionの同時実行数とは定義しません。
+- Runtimeは一律の「1 Action Typeにつき1 Goal」という制約をProtocolへ埋め込みません。
+- Endpoint、接続、multiplex、transport capacityなどの実現方式はProtocolの識別モデルから分離します。
 - Feedbackは0回以上送信できる非終端通知とします。
 - Resultのデータと、Succeeded、Canceled、Abortedなどの終端状態を区別します。
 - Cancel要求、Cancel受理、Canceled終端を同一概念として扱いません。
@@ -67,11 +67,12 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 - 通常のHakoniwa ClientではAction Client Runtimeが`goal_id`を生成する。
 - ROS BridgeなどのAdapterは、外部で生成された互換UUIDを指定できる。
 - Server Runtimeは`goal_id`の形式検査、重複検査、登録、相関、状態管理を担当する。
+- `goal_id`は、Goal Requestから終端Resultまで続くGoal Executionセッションの相関キーである。
 - 同一Action Typeに対して、異なる`goal_id`を持つ複数のGoal ExecutionをProtocol上許容する。
-- Action EndpointおよびClient SessionはGoal Executionの配送・通信コンテキストとして関連付けるが、識別条件には含めない。
+- 同じ`goal_id`を持つGoal Requestは、新しいGoal Executionとして扱わない。
 - RPC Runtimeは各Goalを`goal_id`ごとに独立管理する。
 - 同時実行数、直列化、キュー、排他、優先度、preemptionはApplication Policyとする。
-- `maxClients`とAction同時実行能力を分離する。
+- Endpoint、Client接続、multiplex、transport capacityはProtocolの識別モデルに含めない。
 - Transport接続失敗、Runtime拒否、Application拒否を異なる失敗として扱う。
 - Action Request、Action Response、Action FeedbackをServiceとは独立したPDU契約として定義する。
 - Feedbackに`sequence_no`を持たせる。
@@ -85,8 +86,6 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 - 同じ`goal_id`を持つGoal Request再送の扱い
 - Goalの受理前に届いたCancelの扱い
 - Applicationがキューへ入れたGoalについて、`ACCEPTED`、`QUEUED`、`EXECUTING`をProtocol上区別するか
-- Client Session切断時にGoal Executionを継続するかCancelするか
-- 同一Client Session上の複数Goalイベントに対する順序保証
 - Cancel ResponseとCanceled Resultの役割分担
 - Resultとterminal statusをAPI上でどのように返すか
 - Feedbackのキュー方式、容量、欠落および順序の扱い
@@ -106,15 +105,15 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 
 ## 現在のレビュー方針
 
-今回のレビューでは、前段で合意した概念と責務境界を、複数Goalを狭めないデータモデルとして具体化します。
+今回のレビューでは、前段で合意した概念と責務境界を、実現方式に依存しない複数Goalのデータモデルとして具体化します。
 
 主な確認事項は以下です。
 
 1. `goal_id`をClient Runtime生成、Server Runtime管理とする責務分担。
-2. 同一Action Typeに対して、異なる`goal_id`を持つ複数のGoal Executionを許容すること。
-3. Action EndpointおよびClient Sessionを、Goal Executionの識別条件ではなく配送・通信コンテキストとして扱うこと。
-4. RPC Runtimeが複数Goalを独立管理できる共通能力を持つこと。
-5. Goalの並列実行、直列化、キュー、排他、優先度、preemptionをApplication Policyとすること。
-6. `tcp_mux.maxClients`をTransport接続容量として、active Goal数と分離すること。
+2. `goal_id`をGoal Executionセッション全体の相関キーとすること。
+3. 同一Action Typeに対して、異なる`goal_id`を持つ複数のGoal Executionを許容すること。
+4. EndpointやClient接続などの実現方式をProtocolの識別モデルへ持ち込まないこと。
+5. RPC Runtimeが複数Goalを独立管理できる共通能力を持つこと。
+6. Goalの並列実行、直列化、キュー、排他、優先度、preemptionをApplication Policyとすること。
 
 このデータモデルが合意できた後、各Goal Executionがどのように状態遷移するかを`04-state-model.md`で設計します。
