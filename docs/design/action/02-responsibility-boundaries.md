@@ -13,6 +13,7 @@ Action対応では、以下の異なる関心事が同時に現れます。
 - Goal Executionの状態と通信ライフサイクル
 - ROS 2 Action APIとの変換
 - Goalを実際に処理する業務ロジック
+- 同一Action Typeに対する複数Goalの実行ポリシー
 - EndpointおよびTransportによる配送
 
 これらを一つの実装へ集約せず、それぞれの層が所有する責務を明確にします。
@@ -61,19 +62,21 @@ hakoniwa-pdu-registry
 - Action Request、Action Response、Action FeedbackのPDU定義生成
 - Action共通ヘッダの定義
 - `request_kind`、`response_kind`、`status`などの数値契約
-- `goal_id`、`sequence_no`などのフィールドレイアウト
+- UUID形式の`goal_id`、`sequence_no`などのフィールドレイアウト
 - 通常のPDU生成パイプラインによる各言語型とconverterの生成
 - offset、aligned size、CDR size、type metadataの生成
 - 生成物の決定性と既存Service生成物との互換性
 
 ### 3.2 所有しない責務
 
+- `goal_id`の生成
 - Goalを受理または拒否する判断
 - ClientおよびServerの状態機械
 - Feedbackの送信タイミング
 - CancelとResultの競合解決
 - Action APIの実行時挙動
 - ROS 2 Goal UUIDとの対応管理
+- 同一Action Typeの並列実行、直列化、キュー、排他判断
 - Action固有の業務処理
 
 Registryはデータを表現できるようにしますが、そのデータをいつ送るか、受信後にどう状態遷移するかは決定しません。
@@ -84,19 +87,23 @@ Registryはデータを表現できるようにしますが、そのデータを
 
 `hakoniwa-pdu-rpc`は、Hakoniwa Actionの通信ライフサイクルと実行時Protocolを所有します。
 
+- Action Client RuntimeによるUUID形式の`goal_id`生成
+- 外部Adapterが指定した互換UUIDの受け入れ
 - Goal送信、Goal Response受信、および相関
-- `goal_id`によるGoal Execution管理
+- `goal_id`による複数Goal Executionの独立管理
+- 同一Action Typeおよび同一Endpointに存在する複数Goalの状態管理
 - Feedbackの非終端配送
 - Cancel RequestおよびCancel Responseの配送
 - ResultおよびTerminal Statusの配送
-- ClientおよびServerの状態機械
+- GoalごとのClientおよびServer状態機械
 - 許可された状態遷移と不正操作の検出
-- 重複、遅延、未知の`goal_id`の扱い
+- duplicate、遅延、未知の`goal_id`の扱い
 - CancelとResultなどの競合規約
-- 同時Goal数、BUSY、キューなどのRuntime Policy
 - timeout、shutdown、transport errorをProtocol/APIへ反映する方法
 - C++ APIとPython Bindingが共有すべき意味論
 - 既存Service RPCとの後方互換性
+
+RPC Runtimeは、各Goal Executionを独立して識別し、配送し、状態管理できなければなりません。ProtocolまたはRuntime APIを、同一Action Typeにつき1 Goal、1 Clientにつき1 Goalという前提へ固定しません。
 
 ### 4.2 所有しない責務
 
@@ -104,10 +111,14 @@ Registryはデータを表現できるようにしますが、そのデータを
 - ROS 2 Node、Action Server、GoalHandleの実装
 - ROS 2固有ステータスへの変換
 - Goalの業務上の妥当性判断
+- 同一Action TypeのGoalを何件受理するかの判断
+- Goalの並列実行、直列化、キューイング、優先度、排他、preemption方針
 - ロボット制御、経路計画、計算処理などAction固有の実処理
 - Transport固有のSocket、共有メモリ、再接続処理の詳細
 
-RPC Runtimeは通信とライフサイクルを管理しますが、Goalを実際に達成する処理は行いません。
+RPC Runtimeは通信とGoal lifecycleを管理しますが、Goalを実際に達成する処理や、その実行資源の配分を決定しません。
+
+Runtime自身のメモリ、接続、バッファなどの技術的な資源枯渇はRuntime Errorとして扱えますが、それをActionの業務上の同時実行ポリシーとは定義しません。
 
 ## 5. hakoniwa-pdu-ros
 
@@ -119,9 +130,10 @@ RPC Runtimeは通信とライフサイクルを管理しますが、Goalを実�
 - ROS 2 Goal messageから生成済みHakoniwa Goal PDU bodyへの変換
 - Hakoniwa Feedback PDU bodyからROS 2 Feedback messageへの変換
 - Hakoniwa Result PDU bodyからROS 2 Result messageへの変換
-- ROS 2 Goal UUIDとHakoniwa `goal_id`の対応付け
+- ROS 2 Goal UUIDをHakoniwa `goal_id`として指定する処理
 - ROS 2 cancel callbackとHakoniwa Cancel APIの接続
 - ROS 2 GoalHandleの状態とHakoniwa terminal statusの対応
+- 複数のROS GoalHandleと複数のHakoniwa Goal Executionの対応管理
 - ROS executorおよび`rclpy` Futureへの非同期完了通知
 - ROS Binding設定の読み込みとHakoniwa Action Runtime設定への接続
 - ROS固有の変換失敗やNode lifecycleの診断
@@ -131,6 +143,7 @@ RPC Runtimeは通信とライフサイクルを管理しますが、Goalを実�
 - Hakoniwa Action Protocolそのものの状態機械
 - FeedbackキューやCancel/Result競合の独自実装
 - Action共通PDUレイアウトの定義
+- 同一Action Typeの業務上の同時実行方針
 - Action固有の業務処理
 - ROS 2以外の利用者に対するProtocol仕様
 
@@ -140,16 +153,35 @@ ROS BridgeがAction状態機械を再実装すると、C++、Python、ROSの各�
 
 ### 6.1 所有する責務
 
-Action Server Applicationは、Goalを実際に処理するドメインロジックを所有します。
+Action Server Applicationは、Goalを実際に処理するドメインロジックと実行ポリシーを所有します。
 
 - Goal bodyの業務上の検証
 - Goalを受理または拒否するアプリケーション判断
+- 同一Action Typeの複数Goalを受理するかどうかの判断
+- Goalの並列実行、直列化、キューイング
+- 同時実行数の上限
+- 共有資源の排他、優先度、fairness
+- 既存Goalと新規Goalのpreemption方針
 - 受理したGoalの実処理
 - Action固有Feedbackの生成
 - 成功時のResult body生成
 - 業務上の中断、失敗、abort判断
 - Cancel要求を受けた後の安全な停止処理
-- 資源競合や優先度に関するアプリケーションPolicy
+
+同じAction Typeであっても、Applicationによって適切なPolicyは異なります。
+
+```text
+画像変換Action
+  複数Goalを並列実行
+
+ロボットアーム操作Action
+  共有実機のため1 Goalだけ受理
+
+経路計画Action
+  最大N件を並列実行し、残りをキューへ格納
+```
+
+これらはProtocol差ではなくApplication Policyの差です。
 
 ### 6.2 Runtimeとの境界
 
@@ -169,18 +201,21 @@ Application -> Runtime
   canceled(goal_id, result_body)
 ```
 
-このAPI形状は未確定です。ここでは責務の方向だけを示します。
+複数Goalを扱うため、Applicationへ渡すContextまたはGoalHandleは`goal_id`ごとに独立していなければなりません。
+
+Applicationがキューへ入れたGoalを、Protocol上で`ACCEPTED`、`QUEUED`、`EXECUTING`のどこまで区別するかは、状態モデルで決定します。
 
 ### 6.3 所有しない責務
 
 - PDUヘッダの直接構築
 - `sequence_no`の採番方法
 - transport送受信
-- Clientとの相関管理
+- Clientとの通信相関管理
 - Protocol上の不正状態検出
+- duplicate `goal_id`のProtocol検査
 - ROS 2 APIへの直接変換
 
-アプリケーションはAction固有のbodyと意味を扱い、共通ヘッダや通信Protocolの詳細から分離されることが望まれます。
+アプリケーションはAction固有のbody、実行資源、同時実行Policyを扱い、共通ヘッダや通信Protocolの詳細から分離されることが望まれます。
 
 ## 7. hakoniwa-pdu-endpointとTransport
 
@@ -191,8 +226,14 @@ EndpointおよびTransportは、PDUを通信相手へ配送する責務を持ち
 - PDUサイズとバッファ管理
 - 送受信、切断、再接続、shutdownの低レベルイベント
 - RPC Runtimeが利用できるpollまたはwait primitive
+- `tcp_mux`による複数Client接続の収容
+- `maxClients`による接続数上限の管理
 
 Endpoint/TransportはActionのGoal、Feedback、Resultの意味や状態遷移を理解しません。
+
+`maxClients`はTransportが同時に収容できるClient接続数であり、同一Action Typeの同時Goal数やApplicationの実行能力を表しません。
+
+1 Clientが複数Goalを送信する場合も、複数Clientが同じAction TypeへGoalを送信する場合も、Goalの意味上の並列性は`goal_id`とApplication Policyで管理します。
 
 `requestChannelId`や`feedbackChannelId`などの物理配置情報をRPC設定とEndpoint設定のどちらが所有するかは、既存の設定分離Issueと整合させて後続設計で決定します。
 
@@ -202,9 +243,15 @@ Endpoint/TransportはActionのGoal、Feedback、Resultの意味や状態遷移�
 |---|---:|---:|---:|---:|---:|
 | `.action`解析 | 主 |  |  |  |  |
 | PDU型・レイアウト | 主 | 利用 | 利用 | 利用 | 配送 |
-| `goal_id`相関 | データ定義 | 主 | ROS UUID対応 | 利用 | 透過 |
+| `goal_id`データ定義 | 主 | 利用 | 利用 | 利用 | 透過 |
+| `goal_id`生成 |  | Client Runtime | ROS UUID指定 |  |  |
+| `goal_id`相関・状態管理 |  | 主 | ROS GoalHandle対応 | 利用 | 透過 |
 | Goal受理Protocol |  | 主 | Adapter | 判断 | 透過 |
+| Protocol上の自動拒否 |  | 主 | 透過 |  | 透過 |
 | 業務上の受理判断 |  | 支援 | 透過 | 主 |  |
+| 複数Goalの独立管理 | データ定義 | 主 | 対応管理 | 実行 | 配送 |
+| 並列・直列・キュー・排他 |  |  | 透過 | 主 |  |
+| Client接続数上限 |  | 利用 | 利用 |  | 主 |
 | Feedback配送 | データ定義 | 主 | ROS変換 | 生成 | 配送 |
 | Cancel状態遷移 |  | 主 | ROS変換 | 停止処理 | 配送 |
 | Result配送 | データ定義 | 主 | ROS変換 | 生成 | 配送 |
@@ -235,6 +282,16 @@ Cancel、timeout、late feedback、terminal raceの規約をBridgeごとに実�
 
 ActionのためにService Request/Responseヘッダや既存APIの意味を拡張しません。Actionは独立したデータ契約と明示的な設定で追加します。
 
+### 9.6 複数GoalをProtocol上で制限しない
+
+同一Action Typeおよび同一Endpointに複数のGoal Executionが同時に存在することを許容します。
+
+RuntimeはGoalごとに状態を独立管理しますが、それらを実際に並列実行するかどうかは決定しません。実行資源、排他、優先度、同時実行数はApplicationの責務です。
+
+### 9.7 Transport容量とAction実行能力を分離する
+
+`maxClients`はClient接続数の上限です。Actionの同時Goal数、Applicationのworker数、共有資源の数とは別の設定・概念として扱います。
+
 ## 10. 境界上の未確定事項
 
 ### 10.1 Goal受理判断の分割
@@ -244,27 +301,39 @@ Runtimeが自動的に拒否すべき条件と、Applicationへ判断を委ね�
 Runtime側候補:
 
 - duplicate `goal_id`
-- protocol version不正
-- 同時実行上限超過
-- shutdown中
+- UUIDまたはprotocol version不正
+- Runtime shutdown中
+- Runtime自身の技術的資源枯渇
 
 Application側候補:
 
 - Goal bodyの業務上の不正
 - ロボット状態が実行条件を満たさない
-- ドメイン上の優先度や排他
+- 同時実行数上限
+- workerまたは共有資源の不足
+- ドメイン上の優先度、排他、キュー、preemption
 
 ### 10.2 goal_id生成責任
 
-候補は以下です。
+現時点では以下を設計判断とします。
 
-- Action Client Application
-- RPC Client Runtime
-- ROS BridgeなどのAdapter
+- 通常のHakoniwa ClientではAction Client Runtimeが送信前にUUIDを生成する。
+- ROS BridgeなどのAdapterは、外部で生成された互換UUIDを指定できる。
+- Action Server Runtimeは重複検査、登録、状態管理、終了済みID保持を担当する。
 
-ROS Goal UUIDをそのまま使用する場合と、ROSを使わないClientの場合を共通に説明できる規約が必要です。
+UUID version、一意性の要求範囲、終了済みIDの保持期間は未確定です。
 
-### 10.3 Timeoutの所有者
+### 10.3 Application実行状態の公開範囲
+
+ApplicationがGoalを受理後にキューへ入れる場合、Protocol上で以下を区別するか決定する必要があります。
+
+- ACCEPTED
+- QUEUED
+- EXECUTING
+
+Application内部状態を過剰にProtocolへ露出すると汎用性を損なう一方、Clientが実行待ちを観測できないと運用上不便になる可能性があります。
+
+### 10.4 Timeoutの所有者
 
 以下を分離する必要があります。
 
@@ -273,28 +342,35 @@ ROS Goal UUIDをそのまま使用する場合と、ROSを使わないClientの�
 - Action execution deadline
 - Bridge側のROS request deadline
 - Application固有の処理期限
+- Application queue wait timeout
 
 すべてを一つのtimeoutへ統合すると、どの層がGoalを終了させたのか不明確になります。
 
-### 10.4 Feedback保持方針
+### 10.5 Feedback保持方針
 
 FeedbackをRuntimeがキューイングするか、Endpointイベントをそのまま通知するか、最新値だけを保持するかは、RPCと利用APIの境界に関わります。
 
-## 11. 初稿で提案する責務上の結論
+複数Goalを扱うため、Feedback保持は少なくとも`goal_id`単位で独立している必要があります。
+
+## 11. 現時点の責務上の設計判断
 
 1. Registryはデータ契約を所有し、状態機械を所有しない。
 2. RPCはHakoniwa ActionのProtocolとGoal Execution lifecycleを所有する。
-3. ROS BridgeはROS 2との変換を所有し、Action状態機械を独自に実装しない。
-4. ApplicationはGoalの業務処理、Feedback生成、Result生成、安全なCancel処理を所有する。
-5. Endpoint/Transportは配送を所有し、Action意味論を所有しない。
-6. Goalの受理判断は、Protocol上の自動拒否とApplication判断に分割する。
+3. RPCは同一Action Typeの複数Goal Executionを`goal_id`ごとに独立管理できる設計とする。
+4. ROS BridgeはROS 2との変換を所有し、Action状態機械を独自に実装しない。
+5. ApplicationはGoalの業務処理、受理判断、並列実行、直列化、キュー、排他、優先度、preemption、Feedback生成、Result生成、安全なCancel処理を所有する。
+6. Endpoint/Transportは配送とClient接続収容を所有し、Action意味論を所有しない。
+7. `maxClients`はTransportの接続数上限であり、Actionの同時実行数とは定義しない。
+8. `goal_id`はClient RuntimeまたはAdapterがUUIDとして送信前に用意し、Server Runtimeが重複検査とlifecycle管理を行う。
+9. Goalの受理判断は、Protocol上の自動拒否とApplication判断に分割する。
 
 ## 12. レビューで問答したい事項
 
 1. Goalのaccept/reject判断をRuntimeとApplicationでどこまで分けるか。
-2. `goal_id`生成をRPC Client Runtimeの責務とするべきか。
-3. Feedbackの`sequence_no`採番はRuntimeが所有すべきか。
-4. Result bodyの有効性をProtocolで規定するか、Action Typeの契約へ委ねるか。
-5. `ABORTED`をApplication判断、`ERROR`をRuntime判断として分けられるか。
-6. Action execution deadlineをRPC共通機能に含めるか。
-7. ROS Bridgeに残さざるを得ない状態管理はどこまでか。
+2. Applicationへ渡すGoalHandleまたはContextの最小責務は何か。
+3. ApplicationのQUEUEDとEXECUTINGをProtocol状態として区別するか。
+4. Feedbackの`sequence_no`採番はRuntimeが所有すべきか。
+5. Result bodyの有効性をProtocolで規定するか、Action Typeの契約へ委ねるか。
+6. `ABORTED`をApplication判断、`ERROR`をRuntime判断として分けられるか。
+7. Action execution deadlineとqueue wait timeoutをどの層が所有するか。
+8. ROS Bridgeに残さざるを得ない状態管理はどこまでか。
