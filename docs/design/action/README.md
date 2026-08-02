@@ -12,7 +12,7 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 - 基本概念と用語
 - リポジトリおよびレイヤ間の責務境界
 - PDUデータ契約
-- ClientおよびServerの状態機械
+- Goal lifecycleの状態機械
 - Goal、Feedback、Cancel、Resultの通信規約
 - エラー、競合、遅延メッセージの扱い
 - 公開API、設定、ファイル配置、ビルド契約
@@ -46,11 +46,11 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 1. [基本概念](01-concepts.md)
 2. [責務境界](02-responsibility-boundaries.md)
 3. [データモデル](03-data-model.md)
+4. [状態モデル](04-state-model.md)
 
 ### 後続で追加する文書
 
 ```text
-04-state-model.md
 05-protocol.md
 06-error-and-race-semantics.md
 07-api-design.md
@@ -87,21 +87,50 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 - 汎用的な進捗率を共通ヘッダへ入れず、Action固有のFeedback bodyへ置く。
 - 既存Service Request/Responseのバイナリ契約を変更しない。
 
+## 状態モデル初稿の提案
+
+今回のレビューでは、Goal lifecycleを二つのフェーズへ分けます。
+
+```text
+Goal Request lifecycle
+  PENDING_ACCEPTANCE
+    -> REJECTED
+    -> ACCEPTED
+
+Accepted Goal lifecycle
+  ACCEPTED
+    -> EXECUTING
+    -> terminal
+```
+
+初稿では以下を提案します。
+
+- `REJECTED`はGoal Request lifecycleの終端であり、accepted Goalの終端状態には含めない。
+- `ACCEPTED`と`EXECUTING`を区別する。
+- `ACCEPTED`は受理済みだが実行開始前のGoalを表現できる。
+- `QUEUED`を共通Protocol状態へ含めるかは未確定とする。
+- Cancel Request、Cancel Response、実際の停止、`CANCELED`終端を区別する。
+- Cancel拒否時は元のGoal状態を維持する。
+- accepted Goalの終端候補を`SUCCEEDED`、`CANCELED`、`ABORTED`、`ERROR`とする。
+- Clientローカル状態とServer正規状態を分離する。
+
 ## 現在の主要な未確定事項
 
+- `REJECTED`をGoal Request lifecycleの終端として整理してよいか
+- `ACCEPTED`と`EXECUTING`をProtocol上区別するか
+- queue待ちを`ACCEPTED`へ包含するか、`QUEUED`を追加するか
+- Cancel受理後の`CANCELING`をProtocol公開状態とするか
+- `ACCEPTED`状態から実行開始前に`CANCELED`または`ABORTED`へ遷移できるか
+- `ERROR`をGoal終端状態とするか、Runtime/通信エラーとして分離するか
+- ApplicationがGoal Requestへ応答しない場合のacceptance timeout
 - UUID versionと一意性を要求する範囲
 - 終了済み`goal_id`を保持する期間
 - 同じ`goal_id`を持つGoal Request再送の扱い
 - Protocol Runtimeによる拒否理由の標準化範囲
 - Application rejection reasonの表現方法
-- `reject_origin`を明示的に持たせるか、reason codeで区別するか
-- ApplicationがGoal Requestへ応答しない場合のacceptance timeout
-- Goalの受理前に届いたCancelの扱い
-- Applicationがキューへ入れたGoalについて、`ACCEPTED`、`QUEUED`、`EXECUTING`をProtocol上区別するか
 - Cancel ResponseとCanceled Resultの役割分担
 - Resultとterminal statusをAPI上でどのように返すか
 - Feedbackのキュー方式、容量、欠落および順序の扱い
-- タイムアウトをProtocol終端として扱うか、ローカル観測結果として扱うか
 - Applicationへ公開するGoalHandleまたはContextの責務
 
 未確定事項を確定仕様へ混在させず、各文書内で「設計判断」と「未決定」を明示します。
@@ -112,22 +141,21 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 - 設計文書全体: #44
 - 概念と責務境界: #45
 - Goal identityと複数Goalデータモデル: #48
+- Goal lifecycle状態モデル: #50
 - Registry Action生成: hakoniwalab/hakoniwa-pdu-registry#17
 - ROS 2 Service/Action Bridge: hakoniwalab/hakoniwa-pdu-ros#1
 
 ## 現在のレビュー方針
 
-今回のレビューでは、前段で合意した概念と責務境界を、実現方式に依存しない複数Goalのデータモデルとして具体化します。
+今回のレビューでは、前段で合意したデータモデルを前提として、1つのGoalが受理判定から終端までどのように状態遷移するかを整理します。
 
 主な確認事項は以下です。
 
-1. `goal_id`をClient Runtime生成、Server Runtime管理とする責務分担。
-2. `goal_id`をGoal lifecycle全体の相関キーとすること。
-3. 同一Action Typeに対して、異なる`goal_id`を持つ複数のGoalを許容すること。
-4. 重複`goal_id`などProtocol上の不正はRuntimeが自動拒否すること。
-5. Protocol上有効で新しい`goal_id`を持つGoal RequestはApplicationへ通知すること。
-6. ApplicationがGoalの受理・拒否と実行Policyを決定すること。
-7. Runtime拒否とApplication拒否を識別可能にすること。
-8. EndpointやClient接続などの実現方式をProtocolの識別モデルへ持ち込まないこと。
+1. Goal Requestの受理判定フェーズと、accept後の実行フェーズを分けること。
+2. `REJECTED`をaccepted Goalの終端状態へ含めないこと。
+3. `ACCEPTED`と`EXECUTING`を区別すること。
+4. queue、Cancel、終端状態をProtocolとApplication Policyの境界で整理すること。
+5. Clientローカル状態とServer正規状態を分離すること。
+6. 各Goalが`goal_id`ごとに独立して状態遷移すること。
 
-このデータモデルが合意できた後、各Goalがどのように状態遷移するかを`04-state-model.md`で設計します。
+この状態モデルが合意できた後、各状態遷移をどのmessage交換で成立させるかを`05-protocol.md`で設計します。
