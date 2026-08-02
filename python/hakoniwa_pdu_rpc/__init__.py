@@ -12,6 +12,7 @@ from .cffi_api import (
 )
 from .client import RpcCanceledError, RpcClient, RpcTimeoutError
 from .future import RpcFuture
+from .mux_server import RpcMuxServer
 
 __all__ = [
     "CffiRpcClient",
@@ -21,6 +22,7 @@ __all__ = [
     "RpcClient",
     "RpcError",
     "RpcFuture",
+    "RpcMuxServer",
     "RpcServer",
     "RpcTimeoutError",
     "ServerEvent",
