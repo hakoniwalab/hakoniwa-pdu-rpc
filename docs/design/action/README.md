@@ -21,6 +21,11 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 
 - ActionはROS 2固有機能ではなく、箱庭で利用できる独立した通信・実行ライフサイクルとして定義します。
 - Actionは単に応答時間の長いService RPCではなく、`goal_id`で識別されるGoal実行セッションとして扱います。
+- 1回のGoal Executionは128-bit UUIDの`goal_id`で識別します。
+- `goal_id`は原則としてAction Client RuntimeがGoal送信前に生成し、Server Runtimeが重複検査とlifecycle管理を行います。
+- 同一Action Typeおよび同一Endpointに、複数のGoal Executionが同時に存在することをProtocol上許容します。
+- Goalを並列実行するか、直列化するか、キューへ入れるか、拒否するかはAction Server Applicationの実行ポリシーとします。
+- `tcp_mux`の`maxClients`はTransportのClient接続数上限であり、Actionの同時実行数とは定義しません。
 - Feedbackは0回以上送信できる非終端通知とします。
 - Resultのデータと、Succeeded、Canceled、Abortedなどの終端状態を区別します。
 - Cancel要求、Cancel受理、Canceled終端を同一概念として扱いません。
@@ -51,11 +56,18 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 
 推奨する読み順は、概念、責務境界、データモデル、状態モデル、通信プロトコル、競合規約、実装契約の順です。
 
-## 確定に近い前提
+## 現時点の設計判断
 
-以下はRegistry側のAction PDU設計および関連Issueで採用されている前提です。ただし、本設計文書のレビューによって表現や責務境界を調整する可能性があります。
+以下は、今回のレビューで合意した方向性です。後続のデータモデル、状態モデル、API設計では、この前提を狭めない形で具体化します。
 
-- 1回のAction実行を128-bitの`goal_id`で識別する。
+- 1回のAction実行を128-bit UUIDの`goal_id`で識別する。
+- 通常のHakoniwa ClientではAction Client Runtimeが`goal_id`を生成する。
+- ROS BridgeなどのAdapterは、外部で生成された互換UUIDを指定できる。
+- Server Runtimeは`goal_id`の重複検査、登録、状態管理を担当する。
+- 同一Action Typeの複数Goal ExecutionをProtocol上許容する。
+- RPC Runtimeは各Goalを`goal_id`ごとに独立管理する。
+- 同時実行数、直列化、キュー、排他、優先度、preemptionはApplication Policyとする。
+- `maxClients`とAction同時実行能力を分離する。
 - Action Request、Action Response、Action FeedbackをServiceとは独立したPDU契約として定義する。
 - Feedbackに`sequence_no`を持たせる。
 - 汎用的な進捗率を共通ヘッダへ入れず、Action固有のFeedback bodyへ置く。
@@ -63,15 +75,17 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 
 ## 現在の主要な未確定事項
 
-- 同一Actionに複数の同時Goalを許可する範囲
+- UUID versionと一意性を要求する範囲
+- 終了済み`goal_id`を保持する期間
 - Goalの受理前に届いたCancelの扱い
+- Applicationがキューへ入れたGoalについて、`ACCEPTED`、`QUEUED`、`EXECUTING`をProtocol上区別するか
 - Cancel ResponseとCanceled Resultの役割分担
 - Resultとterminal statusをAPI上でどのように返すか
 - Feedbackのキュー方式、容量、欠落および順序の扱い
-- 終了済み`goal_id`を保持する期間
 - タイムアウトをProtocol終端として扱うか、ローカル観測結果として扱うか
+- Applicationへ公開するGoalHandleまたはContextの責務
 
-未確定事項を確定仕様へ混在させず、各文書内で「提案」「決定」「未決定」を明示します。
+未確定事項を確定仕様へ混在させず、各文書内で「設計判断」と「未決定」を明示します。
 
 ## 関連Issue
 
@@ -88,5 +102,7 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 1. Actionをどのような抽象概念として扱うか。
 2. Goal、Feedback、Result、Cancelをどのように区別するか。
 3. Registry、RPC、ROS Bridge、利用アプリケーションの責務をどこで分けるか。
+4. 同一Action Typeの複数GoalをProtocolとRuntimeでどのように独立管理するか。
+5. Goalの実行ポリシーをApplication境界へどのように渡すか。
 
 これらが合意できた後、データモデルと状態モデルの設計へ進みます。
