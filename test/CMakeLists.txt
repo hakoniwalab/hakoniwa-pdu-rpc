@@ -32,6 +32,13 @@ target_link_libraries(hakoniwa_pdu_rpc_basic_test PRIVATE ${HAKO_PDU_RPC_NATIVE_
 add_test(NAME hakoniwa_pdu_rpc_basic_test COMMAND hakoniwa_pdu_rpc_basic_test)
 set_tests_properties(hakoniwa_pdu_rpc_basic_test PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
 
+add_executable(hakoniwa_pdu_rpc_mux_server_test
+  rpc_mux_server_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_rpc_mux_server_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+add_test(NAME hakoniwa_pdu_rpc_mux_server_test COMMAND hakoniwa_pdu_rpc_mux_server_test)
+set_tests_properties(hakoniwa_pdu_rpc_mux_server_test PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+
 # C API parity test for the same two basic contracts. It remains a native
 # contract test and therefore links the static RPC target as well.
 add_executable(hakoniwa_pdu_rpc_c_api_basic_test
