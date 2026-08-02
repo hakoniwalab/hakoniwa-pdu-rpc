@@ -355,9 +355,10 @@ class Context:
             cfg["paths"]["vcpkg_root"],
             self.repo_root,
         )
+        python_venv = getattr(args, "python_venv", None)
         self.python_venv = (
-            _path_from(args.python_venv, self.repo_root)
-            if args.python_venv is not None
+            _path_from(python_venv, self.repo_root)
+            if python_venv is not None
             else None
         )
 

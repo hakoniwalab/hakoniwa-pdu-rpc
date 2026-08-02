@@ -21,6 +21,7 @@ def make_args(**overrides):
         "build_type": None,
         "endpoint_root": None,
         "vcpkg_root": None,
+        "python_venv": None,
         "dry_run": False,
         "command": "build",
         "config": None,
