@@ -25,10 +25,12 @@
 
 - Action Type全体の状態
 - Application内部のworker、thread、task、queueの状態
+- Applicationがcompleteしない、またはハングした場合の監視・強制終了
 - Goal Requestのaccept/reject判定前の一時Context
 - Client Runtimeのローカルな送受信待ち状態
 - Transport接続そのものの状態
 - Goalインスタンスを特定する前のRuntime dispatcher処理
+- Runtime自身が正規のイベント処理を継続できない致命的内部障害
 
 同一Action Typeに複数Goalが存在する場合、それぞれが独立した状態を持ちます。
 
@@ -143,9 +145,9 @@ cancel rejected:
 - `RESULT_SEND_COMPLETED(goal_id)`
 - `RESULT_SEND_FAILED(goal_id)`
 - `TRANSPORT_DISCONNECTED`
+- `RUNTIME_CANCEL_REQUESTED(goal_id, cause)`
 - `APPLICATION_RESPONSE_TIMEOUT(goal_id)`
 - `SERVER_SHUTDOWN_REQUESTED`
-- `RUNTIME_FORCED_TERMINATION(goal_id, reason)`
 
 イベント名は説明用の抽象名です。公開APIの関数名やPDU種別をこの文書では確定しません。
 
@@ -201,10 +203,10 @@ Next:
 | `COMPLETE_SUCCEEDED` | `ALLOW`: terminal statusとResultを確定。`FINISHING` | `APPLICATION_API_ERROR`: Cancel受理後の成功完了は不正。`SAME` | `APPLICATION_API_ERROR`または冪等判定。`SAME` |
 | `COMPLETE_CANCELED` | 原則`APPLICATION_API_ERROR`: Cancel未受理。`SAME` | `ALLOW`: Canceled Resultを確定。`FINISHING` | `APPLICATION_API_ERROR`または冪等判定。`SAME` |
 | `COMPLETE_ABORTED` | `ALLOW`: Aborted Resultを確定。`FINISHING` | `ALLOW`: Cancel処理中のabortを許容。`FINISHING` | `APPLICATION_API_ERROR`または冪等判定。`SAME` |
-| `ACCEPT_CANCEL` | `cancel_decision_pending=true`なら`ALLOW`し`CANCELING`へ。falseなら`APPLICATION_API_ERROR`で`SAME` | `IDEMPOTENT`または`APPLICATION_API_ERROR`: 重複accept。`SAME` | `APPLICATION_API_ERROR`: すでにResult確定済み。`SAME` |
-| `REJECT_CANCEL` | `cancel_decision_pending=true`なら`ALLOW`しCancel Responseを返して`SAME`。falseなら`APPLICATION_API_ERROR` | `APPLICATION_API_ERROR`: すでにcancel accept済み。`SAME` | `APPLICATION_API_ERROR`: すでにResult確定済み。`SAME` |
+| `ACCEPT_CANCEL` | `cancel_decision_pending=true`なら`ALLOW`し`CANCELING`へ。falseなら`APPLICATION_API_ERROR`で`SAME` | `APPLICATION_API_ERROR`: 重複accept。`SAME` | `APPLICATION_API_ERROR`: すでにResult確定済み。`SAME` |
+| `REJECT_CANCEL` | `cancel_decision_pending=true`なら`ALLOW`し、Client起因の場合はCancel Responseを返して`SAME`。falseなら`APPLICATION_API_ERROR` | `APPLICATION_API_ERROR`: すでにcancel accept済み。`SAME` | `APPLICATION_API_ERROR`: すでにResult確定済み。`SAME` |
 
-`ACCEPT_CANCEL`および`REJECT_CANCEL`は、Cancel判断待ちContextが存在する場合だけ有効です。Contextが存在しない呼び出しは、Protocol上の拒否ではなくApplication APIの誤用として扱います。
+`ACCEPT_CANCEL`および`REJECT_CANCEL`は、Cancel判断待ちContextが存在する場合だけ有効です。Contextが存在しない呼び出しや同じ判断の二重呼び出しは、Protocol上の拒否ではなくApplication APIの誤用として扱います。
 
 ## 10. Client / Protocolイベント × 状態マトリクス
 
@@ -214,15 +216,21 @@ Next:
 | `DUPLICATE_CANCEL_REQUEST_RECEIVED` | Cancel判断中なら重複Policyを適用。`SAME` | 既存のCancel受理結果を再応答する候補。`SAME` | 完了処理中として拒否する候補。`SAME` |
 | `DUPLICATE_GOAL_REQUEST_RECEIVED` | `PROTOCOL_REJECT`。既存Goalは`SAME` | `PROTOCOL_REJECT`。既存Goalは`SAME` | `PROTOCOL_REJECT`または再照会Policy。既存Goalは`SAME` |
 
+Cancel Requestの再送と別個の重複要求を識別する相関方式は、本状態モデルでは定義しません。request IDを追加するか、`goal_id`と未処理Cancel Contextだけで判定するかは、後続のProtocol文書で定義します。本書では、Runtimeが重複と判定した後の状態処理だけを扱います。
+
 ## 11. Cancel判断待ちContext
 
-`CANCEL_REQUEST_RECEIVED`からApplicationの`ACCEPT_CANCEL`または`REJECT_CANCEL`まで、Goalの主状態は`EXECUTING`を維持します。
+Client起因の`CANCEL_REQUEST_RECEIVED`またはRuntime起因の`RUNTIME_CANCEL_REQUESTED`から、Applicationの`ACCEPT_CANCEL`または`REJECT_CANCEL`まで、Goalの主状態は`EXECUTING`を維持します。
 
 ```text
 cancel_decision_pending = true / false
+cancel_origin = CLIENT / RUNTIME
+cancel_cause = CLIENT_REQUEST / TRANSPORT_DISCONNECTED / SERVER_SHUTDOWN / ...
 ```
 
-これはGoalの実行状態ではなく、未完了のProtocol要求を相関するためのRuntime管理情報です。
+これはGoalの実行状態ではなく、未完了のCancel判断を相関するためのRuntime管理情報です。
+
+Client起因の場合は判断結果をCancel Responseとして配送します。Runtime起因の場合はApplicationへ同じ正規Cancel経路を提供しますが、Cancel Responseの配送先は存在しないためClient応答を生成しません。
 
 ## 12. Runtime / Transportイベント × 状態マトリクス
 
@@ -232,16 +240,38 @@ cancel_decision_pending = true / false
 | `FEEDBACK_SEND_FAILED` | Runtime Policyに従いdrop、retry、Application通知。`SAME` | 同左。`SAME` | 同左。ただしResult送信を妨げない。`SAME` |
 | `RESULT_SEND_COMPLETED` | `INVARIANT_VIOLATION`: Result未確定 | `INVARIANT_VIOLATION`: Result未確定 | `ALLOW`: 保持責務完了後に`RELEASE` |
 | `RESULT_SEND_FAILED` | `INVARIANT_VIOLATION`: Result未確定 | `INVARIANT_VIOLATION`: Result未確定 | retry、保持、Runtime error通知のPolicyを適用。`SAME`または`RELEASE`は後続規約で決定 |
-| `TRANSPORT_DISCONNECTED` | Goal実行を継続、abort、保持のいずれかを設定・Protocolで決定 | 停止処理を継続するかを設定・Protocolで決定 | Result保持・再送・破棄Policyを決定 |
-| `APPLICATION_RESPONSE_TIMEOUT` | Cancel判断timeoutとして扱う場合、RuntimeがCancel Responseを拒否する候補。`SAME` | 通常は対象外 | 通常は対象外 |
-| `SERVER_SHUTDOWN_REQUESTED` | shutdown policyへ`DEFER`。`SAME`または`FINISHING`は後続規約で決定 | shutdown policyへ`DEFER`。`SAME`または`FINISHING`は後続規約で決定 | Result配送・保持を含むshutdown policyへ`DEFER` |
-| `RUNTIME_FORCED_TERMINATION` | 可能ならterminal通知を試み、Runtime errorを記録。解放条件は後続規約で決定 | 同左 | Result配送不能を含むRuntime errorを記録し、解放条件は後続規約で決定 |
+| `TRANSPORT_DISCONNECTED` | disconnect policyへ`DEFER`。Cancel方針なら`RUNTIME_CANCEL_REQUESTED(cause=TRANSPORT_DISCONNECTED)`を発生。`SAME` | 停止処理を継続。Client応答は送信不能。`SAME` | Result保持・再送・破棄Policyを適用。`SAME`または`RELEASE`は後続規約で決定 |
+| `RUNTIME_CANCEL_REQUESTED` | `DEFER`: Runtime起因CancelとしてApplicationへ通知。判断までは`SAME` | `IDEMPOTENT`: すでに停止処理中。`SAME` | `IGNORE`: terminal結果を変更しない。`SAME` |
+| `APPLICATION_RESPONSE_TIMEOUT` | Cancel判断timeoutとして扱う場合、Runtimeが判断待ちContextを終了する候補。`SAME` | 通常は対象外 | 通常は対象外 |
+| `SERVER_SHUTDOWN_REQUESTED` | shutdown policyへ`DEFER`。Cancel方針なら`RUNTIME_CANCEL_REQUESTED(cause=SERVER_SHUTDOWN)`を発生。`SAME` | 停止処理を継続するかをshutdown policyで決定。`SAME` | Result配送・保持を含むshutdown policyへ`DEFER` |
 
-### 12.1 ShutdownとRuntime強制終了
+### 12.1 Runtime起因Cancel
 
-`SERVER_SHUTDOWN_REQUESTED`は、graceful shutdown、猶予時間、強制終了などのPolicyへ委譲します。本状態モデルでは具体的なtimeoutや停止方式を固定しません。
+`TRANSPORT_DISCONNECTED`は、通信切断を観測したイベントです。このイベント自体がGoalを`CANCELED`へ変更することはありません。
 
-`RUNTIME_FORCED_TERMINATION`は、Runtime自身の資源枯渇や内部障害によってGoal処理を継続できないケースを表します。この場合、terminal Resultを送信できるとは限りません。
+```text
+TRANSPORT_DISCONNECTED
+  -> disconnect policy
+  -> RUNTIME_CANCEL_REQUESTED(
+       goal_id,
+       cause = TRANSPORT_DISCONNECTED)
+```
+
+`RUNTIME_CANCEL_REQUESTED`は、Client Cancelを偽装するイベントではありません。RuntimeがApplicationへ正規の停止要求を通知するための内部イベントです。
+
+```text
+EXECUTING
+  -> RUNTIME_CANCEL_REQUESTED
+  -> Application notified
+  -> ACCEPT_CANCEL
+  -> CANCELING
+  -> COMPLETE_CANCELED
+  -> FINISHING
+```
+
+RuntimeはApplicationに安全停止を委ね、勝手にterminal statusを`CANCELED`へ変更しません。Client endpointが切断済みの場合、Cancel Responseは配送しません。停止後のResult保持、再接続、再取得、破棄条件は後続のProtocolおよびRuntime設定で定義します。
+
+Applicationがcompleteしない、ハングする、または内部workerが停止するケースについて、初版のRuntimeはwatchdog、強制Cancel、強制`ERROR`終端を提供しません。Runtime自身が正規のイベント処理を継続できない致命的障害も本状態モデルの対象外です。
 
 ## 13. イレギュラーケースの洗い出し
 
@@ -253,9 +283,8 @@ cancel_decision_pending = true / false
 - 重複完了
 - `FINISHING`中のCancel
 - Result送信失敗
-- Transport切断
+- Transport切断後のRuntime起因Cancel
 - Server shutdown中の既存Goal
-- Runtime強制終了時の通知・解放
 
 ## 14. Feedback規則
 
@@ -303,23 +332,25 @@ CANCELING + COMPLETE_SUCCEEDED -> APPLICATION_API_ERROR
 
 `CANCELING`中のFeedbackは箱庭Protocolでは許可します。停止処理の進捗を通知できるようにするためであり、ROS 2の一般的なServer APIより広い箱庭独自仕様です。ROS Bridgeでは、必要に応じてdrop、別経路への変換、または対応Runtimeの能力に合わせた写像を行います。
 
-### 15.1 `ABORTED`とRuntime内部エラーの分離
+### 15.1 `ABORTED`とRuntime／Transport異常の分離
 
 `ABORTED`はServer ApplicationがActionの意味論に基づき、Goalを達成できないと判断して`COMPLETE_ABORTED`を発行した正常な終端結果です。
 
-一方、Runtimeの資源枯渇、内部不変条件違反、Transport障害、Result配送不能などはRuntime Errorです。Runtime Errorを自動的に`ABORTED`へ変換しません。
+一方、通信切断はRuntimeが観測可能なTransport異常です。初版では、通信切断を新しいterminal statusへ変換せず、disconnect policyにより`RUNTIME_CANCEL_REQUESTED`を発生させ、Applicationの正規Cancel経路へ流せます。
 
 ```text
 Application semantic failure
   -> COMPLETE_ABORTED
   -> terminal status = ABORTED
 
-Runtime / Transport failure
-  -> Runtime Error
-  -> terminal Resultを送信できるとは限らない
+Transport disconnected
+  -> RUNTIME_CANCEL_REQUESTED
+  -> Application accepts cancel
+  -> COMPLETE_CANCELED
+  -> terminal status = CANCELED
 ```
 
-Runtime障害時にterminal通知を試行する条件、Resultを生成できない場合の記録、Goal Contextの解放条件は、後続のErrorおよびProtocol規約で定義します。
+Applicationハング、complete忘れ、Runtimeの致命的内部障害をterminal statusへ変換するエラーハンドリングは初版では定義しません。これらを`ABORTED`へ自動変換することもありません。
 
 ## 16. 現時点の設計判断
 
@@ -329,11 +360,14 @@ Runtime障害時にterminal通知を試行する条件、Resultを生成でき�
 - accept済みGoalは`EXECUTING`、`CANCELING`、`FINISHING`の3状態をMUSTで持つ。
 - `UNKNOWN_GOAL_ID_REQUEST_RECEIVED`はper-goal状態マトリクスではなくRuntime dispatcherで扱う。
 - Cancel Request受信だけでは`CANCELING`へ遷移しない。
-- `ACCEPT_CANCEL`および`REJECT_CANCEL`はCancel判断待ちContextが存在する場合だけ有効とする。
+- `ACCEPT_CANCEL`および`REJECT_CANCEL`はCancel判断待ちContextが存在する場合だけ有効とし、二重呼び出しは`APPLICATION_API_ERROR`とする。
+- Cancel Requestの重複相関方式は後続のProtocol文書で定義する。
+- Runtime起因の停止要求は`RUNTIME_CANCEL_REQUESTED(goal_id, cause)`でApplicationの正規Cancel経路へ流す。
+- 通信切断だけではGoalのterminal statusを変更しない。
 - Application APIの誤用、Protocol拒否、Runtime不変条件違反を区別する。
 - terminal statusとResult確定時に`FINISHING`へ遷移する。
-- `ABORTED`とRuntime Errorを区別し、Runtime Errorを自動的に`ABORTED`へ変換しない。
-- `SERVER_SHUTDOWN_REQUESTED`と`RUNTIME_FORCED_TERMINATION`をRuntime起因イベントとして検討対象に含める。
+- `ABORTED`はApplicationによる意味論上の失敗とし、通信異常や基盤異常へ流用しない。
+- ApplicationハングおよびRuntimeの致命的内部障害の救済は初版の対象外とする。
 - Result送信後のRuntime保持責務が完了した時点でGoalインスタンスを破棄する。
 
 ## 17. レビューで確認する事項
@@ -344,8 +378,8 @@ Runtime障害時にterminal通知を試行する条件、Resultを生成でき�
 4. `FINISHING`中のCancel Requestへ何を返すか。
 5. 重複`COMPLETE_*`を冪等またはエラーのどちらにするか。
 6. Result送信失敗時の保持、再送、解放条件をどこで定義するか。
-7. shutdown policyをProtocol、Runtime設定、Application Policyのどこへ置くか。
-8. Runtime強制終了時にterminal通知を試行する条件をどう定義するか。
+7. `RUNTIME_CANCEL_REQUESTED`のcause集合と、切断時の既定Policyをどこで定義するか。
+8. shutdown policyをProtocol、Runtime設定、Application Policyのどこへ置くか。
 
 ## 18. 対象外
 
@@ -353,5 +387,7 @@ Runtime障害時にterminal通知を試行する条件、Resultを生成でき�
 - 公開APIの具体的な関数シグネチャ
 - Transport固有のretry実装
 - Application内部のworkerおよびqueue状態
+- Applicationのハング、complete忘れ、watchdog
+- Runtimeが正規のイベント処理を継続できない致命的障害
 - 状態・イベント処理の排他実装
 - Resultおよび終了済み`goal_id`の具体的な保持時間

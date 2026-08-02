@@ -100,6 +100,7 @@ Registryはデータを表現できるようにしますが、そのデータを
 - duplicate、遅延、未知の`goal_id`の扱い
 - CancelとResultなどの競合規約
 - timeout、shutdown、transport errorをProtocol/APIへ反映する方法
+- Runtime起因の停止要求をApplicationの正規Cancel経路へ渡す方法
 - C++ APIとPython Bindingが共有すべき意味論
 - 既存Service RPCとの後方互換性
 
@@ -114,11 +115,12 @@ RPC Runtimeは、各Goal Executionを独立して識別し、配送し、状態�
 - 同一Action TypeのGoalを何件受理するかの判断
 - Goalの並列実行、直列化、キューイング、優先度、排他、preemption方針
 - ロボット制御、経路計画、計算処理などAction固有の実処理
+- Applicationのハング、complete忘れ、worker停止の監視・救済
 - Transport固有のSocket、共有メモリ、再接続処理の詳細
 
 RPC Runtimeは通信とGoal lifecycleを管理しますが、Goalを実際に達成する処理や、その実行資源の配分を決定しません。
 
-Runtime自身のメモリ、接続、バッファなどの技術的な資源枯渇はRuntime Errorとして扱えますが、それをActionの業務上の同時実行ポリシーとは定義しません。
+Runtime自身のメモリ、接続、バッファなどの技術的な問題はApplicationの業務上の`ABORTED`と区別します。初版では、ApplicationのハングやRuntimeの致命的内部障害をterminal statusへ変換する救済処理を定義しません。
 
 ## 5. hakoniwa-pdu-ros
 
@@ -190,7 +192,7 @@ RuntimeはProtocol上妥当なGoalをApplicationへ渡し、Applicationが返し
 ```text
 Runtime -> Application
   on_goal(goal_id, goal_body)
-  on_cancel(goal_id)
+  on_cancel(goal_id, cause)
 
 Application -> Runtime
   accept(goal_id)
@@ -203,7 +205,17 @@ Application -> Runtime
 
 複数Goalを扱うため、Applicationへ渡すContextまたはGoalHandleは`goal_id`ごとに独立していなければなりません。
 
-Applicationがキューへ入れたGoalを、Protocol上で`ACCEPTED`、`QUEUED`、`EXECUTING`のどこまで区別するかは、状態モデルで決定します。
+状態モデル（`04-state-model.md`）では、ApplicationがGoalをacceptした時点でProtocol上のGoalインスタンスを`EXECUTING`として生成します。Protocol状態として`ACCEPTED`、`QUEUED`、`EXECUTING`を分離しません。
+
+Applicationは、accept後のGoalを内部queueへ格納したりworker待ちにしたりできます。ただし、それらはApplication内部状態であり、初版の共通Protocol状態へ露出しません。
+
+```text
+Protocol Runtime:
+  accept -> EXECUTING
+
+Application:
+  internal queue / worker wait / actual processing
+```
 
 ### 6.3 所有しない責務
 
@@ -254,6 +266,7 @@ Endpoint/TransportはActionのGoal、Feedback、Resultの意味や状態遷移�
 | Client接続数上限 |  | 利用 | 利用 |  | 主 |
 | Feedback配送 | データ定義 | 主 | ROS変換 | 生成 | 配送 |
 | Cancel状態遷移 |  | 主 | ROS変換 | 停止処理 | 配送 |
+| Runtime起因Cancel |  | 主 | Adapter | 停止判断・処理 | 切断通知 |
 | Result配送 | データ定義 | 主 | ROS変換 | 生成 | 配送 |
 | terminal status意味論 | 数値契約 | 主 | ROS対応 | 選択 | 透過 |
 | ROS GoalHandle |  |  | 主 |  |  |
@@ -323,15 +336,15 @@ Application側候補:
 
 UUID version、一意性の要求範囲、終了済みIDの保持期間は未確定です。
 
-### 10.3 Application実行状態の公開範囲
+### 10.3 Application実行状態の公開範囲（解決済み）
 
-ApplicationがGoalを受理後にキューへ入れる場合、Protocol上で以下を区別するか決定する必要があります。
+`04-state-model.md`により、初版ではApplicationがGoalをacceptした時点でProtocol状態を`EXECUTING`とすることを決定しました。
 
-- ACCEPTED
-- QUEUED
-- EXECUTING
+- `ACCEPTED`相当の独立状態は設けない。
+- `QUEUED`相当の共通Protocol状態は設けない。
+- Application内部のqueue、worker待ち、実処理状態はApplicationが管理する。
 
-Application内部状態を過剰にProtocolへ露出すると汎用性を損なう一方、Clientが実行待ちを観測できないと運用上不便になる可能性があります。
+Clientへ実行待ち状況を公開する必要が生じた場合は、Action固有Feedbackまたは将来のProtocol拡張として検討します。
 
 ### 10.4 Timeoutの所有者
 
@@ -363,14 +376,16 @@ FeedbackをRuntimeがキューイングするか、Endpointイベントをその
 7. `maxClients`はTransportの接続数上限であり、Actionの同時実行数とは定義しない。
 8. `goal_id`はClient RuntimeまたはAdapterがUUIDとして送信前に用意し、Server Runtimeが重複検査とlifecycle管理を行う。
 9. Goalの受理判断は、Protocol上の自動拒否とApplication判断に分割する。
+10. Applicationのaccept後、Protocol状態は直ちに`EXECUTING`とし、Application内部のqueue状態はProtocolへ露出しない。
+11. 通信切断などRuntimeが観測可能な条件から停止を要求する場合、RuntimeはApplicationの正規Cancel経路を利用する。
+12. Applicationハングやcomplete忘れの監視・強制終了は初版のRuntime責務に含めない。
 
 ## 12. レビューで問答したい事項
 
 1. Goalのaccept/reject判断をRuntimeとApplicationでどこまで分けるか。
 2. Applicationへ渡すGoalHandleまたはContextの最小責務は何か。
-3. ApplicationのQUEUEDとEXECUTINGをProtocol状態として区別するか。
-4. Feedbackの`sequence_no`採番はRuntimeが所有すべきか。
-5. Result bodyの有効性をProtocolで規定するか、Action Typeの契約へ委ねるか。
-6. `ABORTED`をApplication判断、`ERROR`をRuntime判断として分けられるか。
-7. Action execution deadlineとqueue wait timeoutをどの層が所有するか。
-8. ROS Bridgeに残さざるを得ない状態管理はどこまでか。
+3. Feedbackの`sequence_no`採番はRuntimeが所有すべきか。
+4. Result bodyの有効性をProtocolで規定するか、Action Typeの契約へ委ねるか。
+5. Action execution deadlineとqueue wait timeoutをどの層が所有するか。
+6. ROS Bridgeに残さざるを得ない状態管理はどこまでか。
+7. Runtime起因Cancelのcause集合と切断時Policyをどの層で定義するか。
