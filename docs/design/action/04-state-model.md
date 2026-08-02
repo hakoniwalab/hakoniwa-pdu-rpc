@@ -34,7 +34,7 @@
 
 ```text
 Action Type A
-  goal_id = X : DOING
+  goal_id = X : EXECUTING
   goal_id = Y : CANCELING
   goal_id = Z : FINISHING
 ```
@@ -48,13 +48,13 @@ Goal Request
   -> Runtime validation
   -> Application decision
        -> reject: Goalインスタンスを生成しない
-       -> accept: GoalインスタンスをDOINGで生成する
+       -> accept: GoalインスタンスをEXECUTINGで生成する
 ```
 
-初期状態を表す実体stateは設けません。状態図上ではinitial pseudo-stateから`DOING`へ遷移します。
+初期状態を表す実体stateは設けません。状態図上ではinitial pseudo-stateから`EXECUTING`へ遷移します。
 
 ```text
-[*] -> DOING
+[*] -> EXECUTING
 ```
 
 Goalの終端Result送信処理が完了し、Runtimeの保持責務が終了した時点でGoalインスタンスを破棄します。
@@ -70,12 +70,12 @@ FINISHING -> [*]
 Runtimeはaccept済みGoalについて、少なくとも次の3状態を管理します。
 
 ```text
-DOING
+EXECUTING
 CANCELING
 FINISHING
 ```
 
-### 4.1 DOING
+### 4.1 EXECUTING
 
 ApplicationがGoalを実行している状態です。
 
@@ -86,21 +86,21 @@ ApplicationがCancel Requestをacceptし、非同期の停止処理を行って�
 Cancel Requestを受信しただけでは`CANCELING`へ遷移しません。ApplicationがCancelをacceptした時点で遷移します。
 
 ```text
-DOING
+EXECUTING
   -> Cancel Request received
   -> Application notified
   -> Application accepts cancel
   -> CANCELING
 ```
 
-ApplicationがCancelをrejectした場合は`DOING`を維持します。
+ApplicationがCancelをrejectした場合は`EXECUTING`を維持します。
 
 ### 4.3 FINISHING
 
 Applicationが終端statusおよびResult bodyを確定し、RuntimeがResult送信とGoalインスタンス破棄を処理している状態です。
 
 ```text
-DOING      -> FINISHING
+EXECUTING  -> FINISHING
 CANCELING  -> FINISHING
 ```
 
@@ -110,13 +110,13 @@ CANCELING  -> FINISHING
 
 ```text
 normal:
-  [*] -> DOING -> FINISHING -> [*]
+  [*] -> EXECUTING -> FINISHING -> [*]
 
 cancel:
-  [*] -> DOING -> CANCELING -> FINISHING -> [*]
+  [*] -> EXECUTING -> CANCELING -> FINISHING -> [*]
 
 cancel rejected:
-  DOING -> DOING
+  EXECUTING -> EXECUTING
 ```
 
 ## 6. イベント発生元
@@ -180,7 +180,7 @@ Action:
   RuntimeまたはApplicationが実行する処理
 
 Next:
-  DOING / CANCELING / FINISHING / RELEASE / SAME
+  EXECUTING / CANCELING / FINISHING / RELEASE / SAME
 ```
 
 - `ALLOW`: 現在状態で正規に受理する。
@@ -195,10 +195,10 @@ Next:
 
 ## 9. Server Applicationイベント × 状態マトリクス
 
-| Event | DOING | CANCELING | FINISHING |
+| Event | EXECUTING | CANCELING | FINISHING |
 | --- | --- | --- | --- |
-| `PUBLISH_FEEDBACK` | `ALLOW`: Feedbackを採番・送信。`SAME` | **レビュー対象**: 原則`APPLICATION_API_ERROR`。停止進捗を許す場合は`ALLOW`。`SAME` | `APPLICATION_API_ERROR`: Result確定後のFeedback。`SAME` |
-| `COMPLETE_SUCCEEDED` | `ALLOW`: terminal statusとResultを確定。`FINISHING` | **レビュー対象**: `APPLICATION_API_ERROR`または競合規約適用。`SAME` | `APPLICATION_API_ERROR`または冪等判定。`SAME` |
+| `PUBLISH_FEEDBACK` | `ALLOW`: Feedbackを採番・送信。`SAME` | `ALLOW`: 停止処理中のFeedbackを採番・送信。`SAME` | `APPLICATION_API_ERROR`: Result確定後のFeedback。`SAME` |
+| `COMPLETE_SUCCEEDED` | `ALLOW`: terminal statusとResultを確定。`FINISHING` | `APPLICATION_API_ERROR`: Cancel受理後の成功完了は不正。`SAME` | `APPLICATION_API_ERROR`または冪等判定。`SAME` |
 | `COMPLETE_CANCELED` | 原則`APPLICATION_API_ERROR`: Cancel未受理。`SAME` | `ALLOW`: Canceled Resultを確定。`FINISHING` | `APPLICATION_API_ERROR`または冪等判定。`SAME` |
 | `COMPLETE_ABORTED` | `ALLOW`: Aborted Resultを確定。`FINISHING` | `ALLOW`: Cancel処理中のabortを許容。`FINISHING` | `APPLICATION_API_ERROR`または冪等判定。`SAME` |
 | `ACCEPT_CANCEL` | `cancel_decision_pending=true`なら`ALLOW`し`CANCELING`へ。falseなら`APPLICATION_API_ERROR`で`SAME` | `IDEMPOTENT`または`APPLICATION_API_ERROR`: 重複accept。`SAME` | `APPLICATION_API_ERROR`: すでにResult確定済み。`SAME` |
@@ -208,7 +208,7 @@ Next:
 
 ## 10. Client / Protocolイベント × 状態マトリクス
 
-| Event | DOING | CANCELING | FINISHING |
+| Event | EXECUTING | CANCELING | FINISHING |
 | --- | --- | --- | --- |
 | `CANCEL_REQUEST_RECEIVED` | `DEFER`: Applicationへ通知。判断までは`SAME` | **レビュー対象**: 冪等に既存Cancel Responseを返す、または重複として拒否。`SAME` | **レビュー対象**: completion committedとして拒否、または別の規約を適用。`SAME` |
 | `DUPLICATE_CANCEL_REQUEST_RECEIVED` | Cancel判断中なら重複Policyを適用。`SAME` | 既存のCancel受理結果を再応答する候補。`SAME` | 完了処理中として拒否する候補。`SAME` |
@@ -216,7 +216,7 @@ Next:
 
 ## 11. Cancel判断待ちContext
 
-`CANCEL_REQUEST_RECEIVED`からApplicationの`ACCEPT_CANCEL`または`REJECT_CANCEL`まで、Goalの主状態は`DOING`を維持します。
+`CANCEL_REQUEST_RECEIVED`からApplicationの`ACCEPT_CANCEL`または`REJECT_CANCEL`まで、Goalの主状態は`EXECUTING`を維持します。
 
 ```text
 cancel_decision_pending = true / false
@@ -226,7 +226,7 @@ cancel_decision_pending = true / false
 
 ## 12. Runtime / Transportイベント × 状態マトリクス
 
-| Event | DOING | CANCELING | FINISHING |
+| Event | EXECUTING | CANCELING | FINISHING |
 | --- | --- | --- | --- |
 | `FEEDBACK_SEND_COMPLETED` | `ALLOW`: 送信済み情報を更新。`SAME` | 送信開始済みFeedbackについて完了処理。`SAME` | 送信開始済みFeedbackについて完了処理。`SAME` |
 | `FEEDBACK_SEND_FAILED` | Runtime Policyに従いdrop、retry、Application通知。`SAME` | 同左。`SAME` | 同左。ただしResult送信を妨げない。`SAME` |
@@ -270,34 +270,84 @@ Protocolは次のみを規定します。
 - Runtimeが`sequence_no`を採番することを推奨する。
 - `FINISHING`へ遷移した後、新規Feedbackを受理しない。
 
-`CANCELING`中のFeedbackを許可するかはレビュー対象です。
+`CANCELING`中のFeedbackも`ALLOW`とします。停止処理の進捗を通知するかどうか、またその内容と周期はServer Applicationが決定します。これはROS 2の一般的なServer APIより広い箱庭独自の許容仕様です。
 
-## 15. 現時点の設計判断
+## 15. ROS 2 Actionとの親和性
 
-- GoalインスタンスはApplicationのaccept後、`DOING`で生成する。
-- accept済みGoalは`DOING`、`CANCELING`、`FINISHING`の3状態をMUSTで持つ。
+本状態モデルはROS 2 ActionのGoal lifecycleと意味論上整合することを重視します。ただし、箱庭Runtime固有の配送・保持責務を扱うため、一部に箱庭独自の補強があります。
+
+対応関係は次のとおりです。
+
+| Hakoniwa Server Runtime | ROS 2 Action | 考え方 |
+| --- | --- | --- |
+| Goalインスタンス未生成 | Goal未受理またはreject | rejectされたGoalを実行状態として保持しない |
+| `EXECUTING` | `EXECUTING` | accept済みGoalをApplicationが実行中 |
+| `CANCELING` | `CANCELING` | Cancel RequestをApplicationがacceptし、非同期停止処理中 |
+| `FINISHING` | 直接対応する公開状態なし | terminal statusとResult確定後の配送・保持を管理する箱庭内部状態 |
+| `SUCCEEDED` | `SUCCEEDED` | Goalの目的を正常に達成 |
+| `CANCELED` | `CANCELED` | Cancel受理後の停止処理を完了 |
+| `ABORTED` | `ABORTED` | ApplicationがGoalを達成できないと判断して正常なAction API経路で終了 |
+
+箱庭ではROS 2の`ACCEPTED`と`EXECUTING`を分離せず、ApplicationがGoalをacceptした時点でGoalインスタンスを`EXECUTING`として生成します。遅延実行やRuntime共通queue状態が必要にならない限り、`ACCEPTED`相当の状態は追加しません。
+
+終端Application APIの有効状態もROS 2と同じ方向に制約します。
+
+```text
+EXECUTING + COMPLETE_SUCCEEDED -> FINISHING
+EXECUTING + COMPLETE_ABORTED   -> FINISHING
+CANCELING + COMPLETE_CANCELED  -> FINISHING
+CANCELING + COMPLETE_SUCCEEDED -> APPLICATION_API_ERROR
+```
+
+`FINISHING`はGoalの意味論的な実行状態ではありません。terminal statusとResultが確定した後に、遅延Feedback、遅延Cancel、重複完了、Result配送完了・失敗を制御するためのServer Runtime内部状態です。この状態により、ROS 2のGoal意味論を変えずに箱庭PDU Runtimeの非同期処理を補強します。
+
+`CANCELING`中のFeedbackは箱庭Protocolでは許可します。停止処理の進捗を通知できるようにするためであり、ROS 2の一般的なServer APIより広い箱庭独自仕様です。ROS Bridgeでは、必要に応じてdrop、別経路への変換、または対応Runtimeの能力に合わせた写像を行います。
+
+### 15.1 `ABORTED`とRuntime内部エラーの分離
+
+`ABORTED`はServer ApplicationがActionの意味論に基づき、Goalを達成できないと判断して`COMPLETE_ABORTED`を発行した正常な終端結果です。
+
+一方、Runtimeの資源枯渇、内部不変条件違反、Transport障害、Result配送不能などはRuntime Errorです。Runtime Errorを自動的に`ABORTED`へ変換しません。
+
+```text
+Application semantic failure
+  -> COMPLETE_ABORTED
+  -> terminal status = ABORTED
+
+Runtime / Transport failure
+  -> Runtime Error
+  -> terminal Resultを送信できるとは限らない
+```
+
+Runtime障害時にterminal通知を試行する条件、Resultを生成できない場合の記録、Goal Contextの解放条件は、後続のErrorおよびProtocol規約で定義します。
+
+## 16. 現時点の設計判断
+
+- GoalインスタンスはApplicationのaccept後、`EXECUTING`で生成する。
+- `CANCELING`中のFeedbackを許可する。
+- `CANCELING`中の`COMPLETE_SUCCEEDED`は`APPLICATION_API_ERROR`とし、状態を変更しない。
+- accept済みGoalは`EXECUTING`、`CANCELING`、`FINISHING`の3状態をMUSTで持つ。
 - `UNKNOWN_GOAL_ID_REQUEST_RECEIVED`はper-goal状態マトリクスではなくRuntime dispatcherで扱う。
 - Cancel Request受信だけでは`CANCELING`へ遷移しない。
 - `ACCEPT_CANCEL`および`REJECT_CANCEL`はCancel判断待ちContextが存在する場合だけ有効とする。
 - Application APIの誤用、Protocol拒否、Runtime不変条件違反を区別する。
 - terminal statusとResult確定時に`FINISHING`へ遷移する。
+- `ABORTED`とRuntime Errorを区別し、Runtime Errorを自動的に`ABORTED`へ変換しない。
 - `SERVER_SHUTDOWN_REQUESTED`と`RUNTIME_FORCED_TERMINATION`をRuntime起因イベントとして検討対象に含める。
 - Result送信後のRuntime保持責務が完了した時点でGoalインスタンスを破棄する。
 
-## 16. レビューで確認する事項
+## 17. レビューで確認する事項
 
-1. `CANCELING`中のFeedbackを許可するか。
-2. `CANCELING`中の`COMPLETE_SUCCEEDED`を常にApplication API Errorとするか。
-3. `DOING`中の`COMPLETE_CANCELED`を常にApplication API Errorとするか。
-4. Cancel判断待ち中に通常完了した場合、未回答Cancelへ何を返すか。
-5. `CANCELING`中の重複Cancel Requestを冪等応答にするか。
-6. `FINISHING`中のCancel Requestへ何を返すか。
-7. 重複`COMPLETE_*`を冪等またはエラーのどちらにするか。
-8. Result送信失敗時の保持、再送、解放条件をどこで定義するか。
-9. shutdown policyをProtocol、Runtime設定、Application Policyのどこへ置くか。
-10. Runtime強制終了時にterminal通知を試行する条件をどう定義するか。
+1. `EXECUTING`中の`COMPLETE_CANCELED`を常にApplication API Errorとするか。
+2. Cancel判断待ち中に通常完了した場合、未回答Cancelへ何を返すか。
+3. `CANCELING`中の重複Cancel Requestを冪等応答にするか。
+4. `FINISHING`中のCancel Requestへ何を返すか。
+5. 重複`COMPLETE_*`を冪等またはエラーのどちらにするか。
+6. Result送信失敗時の保持、再送、解放条件をどこで定義するか。
+7. shutdown policyをProtocol、Runtime設定、Application Policyのどこへ置くか。
+8. Runtime強制終了時にterminal通知を試行する条件をどう定義するか。
 
-## 17. 対象外
+## 18. 対象外
 
 - PDUのバイトレイアウト
 - 公開APIの具体的な関数シグネチャ
