@@ -151,26 +151,30 @@ Action Server Runtimeは受信した`goal_id`について、以下を担当し�
 
 ## 6. Goal AcceptanceとGoal Rejection
 
-Serverは受信したGoalを受理または拒否します。
+Action Server Runtimeは受信したGoalのProtocol上の妥当性を確認し、妥当なGoalをAction Server Applicationへ渡します。業務上の受理または拒否はApplicationが判断し、その判断をRuntimeがClientへ返します。
 
 ### Goal Acceptance
 
-Goal Acceptanceは、ServerがそのGoal Executionを管理対象として引き受けたことを表します。
+Goal Acceptanceは、Action Server ApplicationがそのGoalを実行対象として引き受け、Server RuntimeがそのGoal Executionのlifecycle管理を開始したことを表します。
 
 受理後は、Server RuntimeはProtocol上のGoal lifecycleを管理し、Action Server Applicationは実処理、Feedback生成、Result生成、Cancel処理について責任を持ちます。
 
 ### Goal Rejection
 
-Goal Rejectionは、ServerがそのGoalを実行対象として受理しなかったことを表します。
+Goal Rejectionは、ApplicationまたはRuntimeがそのGoalを受理しなかったことを表します。
 
-拒否理由の例は以下です。
+Applicationによる拒否理由の例は以下です。
 
 - Action固有入力が不正
 - 実行に必要な資源が不足
 - Applicationが定めた同時実行上限を超過
 - Applicationの排他、優先度、運用ポリシー上、実行不可
-- Serverが停止処理中
-- duplicate `goal_id`やProtocol不正
+
+Runtimeによる自動拒否の例は以下です。
+
+- duplicate `goal_id`
+- UUIDまたはProtocol形式が不正
+- Runtimeがshutdown中
 
 業務上の`BUSY`や同時実行制限はApplication判断です。Protocol不正、duplicate `goal_id`、Runtime shutdownなどはRuntimeが自動拒否できる条件として分離します。
 
