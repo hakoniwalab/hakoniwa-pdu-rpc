@@ -185,7 +185,7 @@ Action Server Applicationは、Goalを実際に処理するドメインロジッ
 
 ### 6.2 Runtimeとの境界
 
-RuntimeとApplicationの境界では、少なくとも以下の操作が必要になる想定です。
+RuntimeはProtocol上妥当なGoalをApplicationへ渡し、Applicationが返したaccept/reject判断をClientへ通知します。
 
 ```text
 Runtime -> Application
