@@ -1,0 +1,580 @@
+# Hakoniwa Action Cancel／Result競合契約
+
+> **Status: Draft**  
+> 本文書は、`04-state-model.md`および`06-protocol.md`に対する規範的な追補です。
+>
+> Action Runtime実装およびContract Testでは、本書の競合規則を適用します。
+
+## 1. 目的
+
+Client起因CancelとServer Application起因の終端完了は、非同期に競合します。
+
+```text
+Client Runtime
+  -> CANCEL_REQUEST
+
+Server Application
+  -> COMPLETE_SUCCEEDED / COMPLETE_ABORTED
+```
+
+本書では、競合時にCancelとResultのどちらが有効になるか、および敗者側のイベントをどのように処理するかを定義します。
+
+## 2. 基本原則
+
+```text
+最初にRuntimeへcommitされた判断が勝つ。
+```
+
+競合結果は次の二つだけです。
+
+```text
+Cancel wins:
+  Cancel acceptが先にcommitされる
+  -> CANCEL_RESPONSE(ACCEPTED)
+  -> RESULT(CANCELED または ABORTED)
+
+Result wins:
+  terminal Resultが先にcommitされる
+  -> RESULT(SUCCEEDED または ABORTED)
+  -> Cancel処理は破棄
+  -> CANCEL_RESPONSEは送信しない
+```
+
+一度commitされた結果を、後着イベントが変更してはなりません。
+
+## 3. Cancelが勝つ場合
+
+### 3.1 条件
+
+Server Runtimeが、Goalを`EXECUTING`から`CANCELING`へ遷移させるCancel acceptを先にcommitした場合です。
+
+```text
+EXECUTING
+  -> CANCEL_REQUEST_RECEIVED
+  -> cancel_decision_pending = true
+  -> ACCEPT_CANCEL
+  -> CANCELING
+```
+
+### 3.2 Protocol出力
+
+Client起因Cancelでは、RuntimeはCancel受理を通知します。
+
+```text
+CANCEL_RESPONSE(ACCEPTED)
+```
+
+その後、Applicationが停止処理を完了するとterminal Resultを送ります。
+
+```text
+COMPLETE_CANCELED
+  -> RESULT(CANCELED)
+```
+
+停止処理中にGoalを継続できない別の意味論的失敗が発生した場合は、既存状態モデルに従って`RESULT(ABORTED)`を許容します。
+
+### 3.3 後着する通常成功
+
+`CANCELING`へ遷移した後の`COMPLETE_SUCCEEDED`はApplication API Errorです。
+
+```text
+CANCELING + COMPLETE_SUCCEEDED
+  -> APPLICATION_API_ERROR
+  -> 状態変更なし
+  -> 追加Resultなし
+```
+
+Cancel acceptによって確定した`CANCELING`を、後着する成功完了が覆してはなりません。
+
+## 4. Resultが勝つ場合
+
+### 4.1 条件
+
+Server Applicationの終端完了をRuntimeが先にcommitし、Goalが`FINISHING`へ遷移した場合です。
+
+```text
+EXECUTING
+  -> COMPLETE_SUCCEEDED / COMPLETE_ABORTED
+  -> terminal statusとResult bodyをcommit
+  -> FINISHING
+```
+
+この時点でGoalの意味論的な終端結果は確定しています。
+
+### 4.2 pending Cancelの終了
+
+Resultをcommitする際、Runtimeは同一Goalに存在する未回答のClient起因Cancel判断Contextを終了します。
+
+```text
+cancel_decision_pending = false
+pending cancel event token = invalid
+```
+
+Result確定前にApplicationへCancel通知済みであっても、Applicationがまだ`ACCEPT_CANCEL`または`REJECT_CANCEL`を返していなければ、その判断権は失効します。
+
+後着するApplication操作は成功してはなりません。
+
+```text
+FINISHING + ACCEPT_CANCEL
+  -> APPLICATION_API_ERROR
+
+FINISHING + REJECT_CANCEL
+  -> APPLICATION_API_ERROR
+```
+
+### 4.3 遅延Cancel Request
+
+Goalが`FINISHING`へ入った後に到着したCancel Requestは破棄します。
+
+```text
+FINISHING + CANCEL_REQUEST_RECEIVED
+  -> IGNORE
+  -> CANCEL_RESPONSEを送信しない
+  -> terminal Resultを変更しない
+  -> FINISHINGを維持
+```
+
+同様に、Result送信完了後に終了済み`goal_id`として観測された遅延Cancelも、Resultを変更せず破棄します。
+
+### 4.4 Cancel Responseを送らない理由
+
+Resultが勝った競合では、Clientへ送るProtocol出力はterminal Resultだけです。
+
+```text
+RESULT(SUCCEEDED / ABORTED)
+```
+
+次は送信しません。
+
+```text
+CANCEL_RESPONSE(ACCEPTED)
+CANCEL_RESPONSE(REJECTED)
+```
+
+理由は次のとおりです。
+
+- terminal ResultがGoal lifecycleの最終回答である。
+- Result確定後にCancel判断を新たに成立させない。
+- v1はCancel Request単位の独立した`request_id`を持たず、`goal_id`とpending Contextで相関する。
+- 終端後の第二応答を発生させず、既存RPC ServiceのCancel／Response競合契約と対称にする。
+
+## 5. Server状態マトリクスへの適用
+
+`04-state-model.md`のClient／Protocolイベントについて、競合箇所は次を正とします。
+
+| Event | EXECUTING | CANCELING | FINISHING |
+| --- | --- | --- | --- |
+| `CANCEL_REQUEST_RECEIVED` | `DEFER`: Applicationへ通知。判断までは`SAME` | 重複Cancel policyを適用。既存のCancel commitを変更しない。`SAME` | `IGNORE`: Result確定済み。Cancel Responseを送らず破棄。`SAME` |
+| `DUPLICATE_CANCEL_REQUEST_RECEIVED` | 判断待ち中は重複policyを適用。`SAME` | 既存のCancel commitを変更しない。`SAME` | `IGNORE`: Cancel Responseを送らず破棄。`SAME` |
+
+Server Applicationイベントについては、次を正とします。
+
+| Event | EXECUTING | CANCELING | FINISHING |
+| --- | --- | --- | --- |
+| `ACCEPT_CANCEL` | pending Contextが有効なら`ALLOW`して`CANCELING`へ | `APPLICATION_API_ERROR` | `APPLICATION_API_ERROR`: Result確定済み |
+| `REJECT_CANCEL` | pending Contextが有効なら`ALLOW`して`EXECUTING`を維持 | `APPLICATION_API_ERROR` | `APPLICATION_API_ERROR`: Result確定済み |
+
+Result commitとCancel acceptは、同一Goal Contextに対する排他的な状態更新として実装します。
+
+## 6. Protocolシーケンス
+
+### 6.1 Cancel wins
+
+```text
+Client Runtime                    Server Runtime
+      |                                 |
+      |--- CANCEL_REQUEST ------------->|
+      |                                 |--- ApplicationへCancel通知
+      |                                 |<-- ACCEPT_CANCEL
+      |<-- CANCEL_RESPONSE(ACCEPTED) -----|
+      |                                 |<-- COMPLETE_CANCELED
+      |<-- RESULT(CANCELED) --------------|
+```
+
+### 6.2 Result wins: Cancel Request受信前
+
+```text
+Client Runtime                    Server Runtime
+      |                                 |
+      |                                 |<-- COMPLETE_SUCCEEDED
+      |<-- RESULT(SUCCEEDED) -------------|
+      |--- CANCEL_REQUEST ------------->|
+      |                                 |--- drop
+      |                                 |    no CANCEL_RESPONSE
+```
+
+### 6.3 Result wins: Cancel判断待ち中
+
+```text
+Client Runtime                    Server Runtime          Server Application
+      |                                 |                         |
+      |--- CANCEL_REQUEST ------------->|                         |
+      |                                 |--- Cancel通知 ---------->|
+      |                                 |<-- COMPLETE_SUCCEEDED ----|
+      |                                 |--- close pending cancel   |
+      |<-- RESULT(SUCCEEDED) -------------|                         |
+      |                                 |<-- ACCEPT/REJECT_CANCEL --| late
+      |                                 |--- API error              |
+      |                                 |    no CANCEL_RESPONSE     |
+```
+
+## 7. Client Runtime契約
+
+Client Runtimeはterminal Resultを受信した時点でGoalを終端として扱います。
+
+```text
+RESULT received
+  -> Goal terminal
+  -> pending local cancel operationを終了
+  -> 同一goal_idの後続非終端イベントを成功イベントとして公開しない
+```
+
+Server RuntimeはResult勝利時にCancel Responseを生成しないため、Client RuntimeはResult後のCancel Responseを正常シーケンスとして期待しません。
+
+Transportや旧実装から不正な遅延Cancel Responseを受信した場合も、terminal Resultを覆してはなりません。
+
+## 8. 最小Contract Test
+
+### 8.1 Cancel wins
+
+```text
+Given:
+  Goal is EXECUTING
+  Cancel Request is delivered
+
+When:
+  Server Application accepts cancel before terminal completion
+
+Then:
+  Client receives CANCEL_RESPONSE(ACCEPTED)
+  Goal becomes CANCELING
+  Server can complete CANCELED
+  Client receives RESULT(CANCELED)
+  COMPLETE_SUCCEEDED is rejected after cancel accept
+```
+
+### 8.2 Result wins before Cancel dispatch
+
+```text
+Given:
+  Goal is EXECUTING
+
+When:
+  Server commits RESULT(SUCCEEDED)
+  A Cancel Request arrives afterward
+
+Then:
+  Client receives RESULT(SUCCEEDED)
+  Server emits no CANCEL_RESPONSE
+  Cancel is not dispatched to the Application
+  Goal terminal status remains SUCCEEDED
+```
+
+### 8.3 Result wins during Cancel decision
+
+```text
+Given:
+  Goal is EXECUTING
+  Cancel Request has been dispatched to the Application
+  cancel_decision_pending is true
+
+When:
+  Server commits RESULT(SUCCEEDED) before ACCEPT_CANCEL / REJECT_CANCEL
+
+Then:
+  pending Cancel Context is closed
+  Client receives RESULT(SUCCEEDED)
+  Server emits no CANCEL_RESPONSE
+  late ACCEPT_CANCEL and REJECT_CANCEL return an Application API Error
+  no second terminal or cancel response is emitted
+```
+
+### 8.4 Atomic race
+
+```text
+Given:
+  COMPLETE_SUCCEEDED and ACCEPT_CANCEL execute concurrently
+
+Then:
+  exactly one operation commits
+
+If COMPLETE_SUCCEEDED commits:
+  state = FINISHING
+  output = RESULT(SUCCEEDED)
+  no CANCEL_RESPONSE
+
+If ACCEPT_CANCEL commits:
+  state = CANCELING
+  output includes CANCEL_RESPONSE(ACCEPTED)
+  later terminal result cannot be SUCCEEDED
+```
+
+## 9. Action v1必須Contract Test集合
+
+Action Runtimeの初版実装は、少なくとも以下のContract Testを通過しなければなりません。
+
+各テストでは、次を明示的に検査します。
+
+```text
+Initial state
+Input sequence
+Expected Client events
+Expected Server state
+Expected token validity
+Expected Context release
+Forbidden output
+```
+
+### 9.1 Goal accepted、Feedback、正常完了
+
+```text
+GOAL_REQUEST
+  -> GOAL_RESPONSE(ACCEPTED)
+  -> FEEDBACK [0..n]
+  -> RESULT(SUCCEEDED)
+```
+
+検査項目:
+
+- `goal_id`が全イベントで一致する。
+- Goal accept時に`goal_token`が有効になる。
+- Feedbackの`sequence_no`がGoal単位で単調増加する。
+- Result commit後はGoalが`FINISHING`へ進む。
+- Result配送完了後にGoal Contextと`goal_token`が解放される。
+
+禁止出力:
+
+```text
+CANCEL_RESPONSE
+二重RESULT
+terminal後のFEEDBACK
+```
+
+### 9.2 Goal rejected
+
+```text
+GOAL_REQUEST
+  -> GOAL_RESPONSE(REJECTED)
+```
+
+検査項目:
+
+- accept済みGoal Contextを生成しない。
+- `goal_token`を払い出さない。
+- Goal Request用`event_token`はrejectで消費される。
+
+禁止出力:
+
+```text
+FEEDBACK
+RESULT
+CANCEL_RESPONSE
+```
+
+### 9.3 Cancel accepted
+
+```text
+accepted Goal
+  -> CANCEL_REQUEST
+  -> CANCEL_RESPONSE(ACCEPTED)
+  -> RESULT(CANCELED)
+```
+
+検査項目:
+
+- Cancel accept時に`EXECUTING`から`CANCELING`へ遷移する。
+- Cancel判断用`event_token`は一度だけ消費できる。
+- `goal_token`はterminal Resultまで有効である。
+- `COMPLETE_CANCELED`後にResultを一度だけ送る。
+
+禁止出力:
+
+```text
+RESULT(SUCCEEDED)
+二重CANCEL_RESPONSE
+二重RESULT
+```
+
+### 9.4 Cancel rejected
+
+```text
+accepted Goal
+  -> CANCEL_REQUEST
+  -> CANCEL_RESPONSE(REJECTED)
+  -> Goal continues
+  -> RESULT(SUCCEEDED)
+```
+
+検査項目:
+
+- Cancel reject後も状態は`EXECUTING`である。
+- Goal Contextと`goal_token`は有効なままである。
+- 通常Feedbackと通常完了を継続できる。
+
+禁止出力:
+
+```text
+RESULT(CANCELED)
+Goal Contextの早期解放
+```
+
+### 9.5 Result wins Cancel race
+
+以下を個別に検査します。
+
+```text
+Result wins before Cancel dispatch
+Result wins while Cancel decision is pending
+COMPLETE_SUCCEEDED and ACCEPT_CANCEL atomic race
+```
+
+共通契約:
+
+```text
+terminal Resultのみを送る
+pending Cancel Contextを閉じる
+late Cancelをdropする
+CANCEL_RESPONSEは送信しない
+terminal statusを後着イベントで変更しない
+```
+
+### 9.6 Cancel wins Result race
+
+```text
+ACCEPT_CANCEL commits first
+  -> CANCEL_RESPONSE(ACCEPTED)
+  -> state = CANCELING
+  -> COMPLETE_SUCCEEDED fails
+  -> RESULT(CANCELED or ABORTED)
+```
+
+検査項目:
+
+- Cancel acceptと通常完了の両方が成功しない。
+- Cancel勝利後は`SUCCEEDED`を送らない。
+- Resultは一度だけ送る。
+
+### 9.7 Multiple concurrent Goals
+
+```text
+Goal A accepted
+Goal B accepted
+Feedback B
+Feedback A
+Result A
+Result B
+```
+
+検査項目:
+
+- 一つのClient handleで複数Goalを保持できる。
+- `goal_id`と`goal_token`が混線しない。
+- イベント配送順がGoal間で入れ替わっても正しくdispatchされる。
+- 一方のGoal終端が他方のContextを解放しない。
+- GoalごとのFeedback sequenceが独立する。
+
+### 9.8 Invalid、reused、terminal後の操作
+
+少なくとも次を成功させてはなりません。
+
+```text
+unknown event_tokenでaccept / reject
+消費済みevent_tokenの再利用
+unknown goal_tokenでfeedback / complete
+terminal後のfeedback
+terminal後のcomplete再実行
+Goal reject後のcancel / feedback / complete
+Cancel判断の二重accept / reject
+```
+
+具体的なエラーコードはC API仕様に従いますが、少なくとも次を保証します。
+
+```text
+状態を変更しない
+Protocol packetを生成しない
+Contextを復活させない
+二重terminalを発生させない
+```
+
+## 10. unknown goal_idのCancel
+
+Action Protocol v1では、Runtimeが保持していない`goal_id`に対する`CANCEL_REQUEST`は無応答で破棄します。
+
+```text
+unknown goal_id + CANCEL_REQUEST
+  -> drop
+  -> no Application dispatch
+  -> no CANCEL_RESPONSE
+  -> no Goal Context creation
+```
+
+この規則は、次の両方へ同一に適用します。
+
+```text
+完全に未知のgoal_id
+Result送信完了後に解放済みのgoal_idへ到着したlate Cancel
+```
+
+v1は終了済みGoal履歴とCancel Request単位の独立した`request_id`を必須保持しないため、両者をProtocol上で区別しません。
+
+`CANCEL_RESPONSE(REJECTED)`を返さない理由は次のとおりです。
+
+- Result勝利時のlate Cancel無応答契約と統一する。
+- 解放済みGoalをCancel応答目的で復活させない。
+- v1の`goal_id`＋pending Context相関を単純に保つ。
+- 終端後の第二応答を発生させない。
+
+Client Runtimeは、unknown GoalへのCancelについてCancel Responseの到着を保証として期待してはなりません。必要な待ち時間、ローカルtimeout、Future完了規則は高位Client APIで定義します。
+
+## 11. テスト階層
+
+初版のテストは、次の順に分けます。
+
+```text
+1. Runtime Contract Test
+   固定の小さなPDUを使い、状態、token、event、raceを検証
+
+2. C API / CFFI Contract Test
+   buffer ownership、enum写像、opaque handle、closeの冪等性を検証
+
+3. Registry generated Action E2E
+   FibonacciAction等の生成型を使い、Goal / Result / Feedback変換を検証
+
+4. hakoniwa-pdu-ros E2E
+   ROS 2 ActionとHakoniwa Action Runtimeの相互変換を検証
+```
+
+FibonacciAction E2EだけをRuntime Contract Testの代替にしてはなりません。まずAction型に依存しないRuntime契約を固定し、その後にRegistry生成型とROS Adapterを検証します。
+
+## 12. 初版で保留するContract Test
+
+以下は重要ですが、初版の実装開始を止めないDeferred項目です。
+
+```text
+CANCELING中の重複Cancel Requestへの再応答方式
+Result保持時間と再取得
+Result送信失敗時のretry / retain / release
+Transport切断中のactive Goal
+Server shutdown時のGoal処理
+Mux connection消滅後のGoal Context所有
+再接続後のResult再配送
+Application response timeout policy
+```
+
+実装エージェントは、これらを暗黙に決定または追加実装してはなりません。初版では既存文書で確定済みの範囲だけを実装し、必要な場合は別Issueまたは設計PRへ切り出します。
+
+## 13. 設計判断
+
+- Cancel acceptとterminal Result commitは、同一Goal Context上で排他的に確定する。
+- Cancel acceptが先ならCancelが勝ち、Client起因CancelではCancel Responseを返す。
+- terminal Result commitが先ならResultが勝つ。
+- Result勝利時はpending Cancel Contextを閉じる。
+- `FINISHING`中および終了後の遅延Cancel Requestは副作用なく破棄する。
+- Result勝利時はCancel Responseを生成・送信しない。
+- unknownまたは解放済み`goal_id`へのCancel Requestは無応答で破棄する。
+- 後着するCancel判断はApplication API Errorとする。
+- 後着イベントは、先にcommitされた状態とterminal statusを変更しない。
+- 初版必須Contract Testは正常Goal、Goal reject、Cancel accept／reject、Cancel／Result race、複数Goal、token誤用を含む。
+- Runtime Contract TestをRegistry生成型およびROS E2Eから分離する。
+- Deferred項目を実装エージェントが独自判断で補完しない。
+- この規則をC++ Runtime、C API、Python/CFFI、およびContract Testで共通適用する。
