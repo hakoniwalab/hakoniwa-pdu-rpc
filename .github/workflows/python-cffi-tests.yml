@@ -136,28 +136,14 @@ jobs:
           $rpc = Get-ChildItem -Path "$env:GITHUB_WORKSPACE/build" -Recurse -Filter "hakoniwa_pdu_rpc.dll" | Select-Object -First 1
           if (-not $rpc) { throw "hakoniwa_pdu_rpc.dll was not found" }
 
-          $dllDirs = @(
-            $rpc.DirectoryName,
-            "$env:GITHUB_WORKSPACE/endpoint-install/bin",
-            "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin"
-          ) | Where-Object { Test-Path $_ } | Select-Object -Unique
+          $endpoint = Get-ChildItem -Path "$env:GITHUB_WORKSPACE/endpoint-install" -Recurse -Filter "hakoniwa_pdu_endpoint.dll" | Select-Object -First 1
+          if (-not $endpoint) { throw "hakoniwa_pdu_endpoint.dll was not found" }
+
+          $tests = Get-ChildItem -Path "$env:GITHUB_WORKSPACE/python" -Filter "test_cffi_*.py" | Sort-Object FullName | ForEach-Object { $_.FullName }
+          if (-not $tests) { throw "Python CFFI contract tests were not found" }
 
           $env:HAKO_PDU_RPC_LIBRARY = $rpc.FullName
+          $env:HAKO_PDU_ENDPOINT_LIBRARY = $endpoint.FullName
           $env:PYTHONPATH = "$env:GITHUB_WORKSPACE/python"
-          $env:HAKO_PDU_RPC_DLL_DIRS = ($dllDirs -join [IO.Path]::PathSeparator)
-          $env:PATH = "$($dllDirs -join ';');$env:PATH"
 
-          @'
-          import os
-          from pathlib import Path
-
-          import pytest
-
-          handles = []
-          for directory in os.environ["HAKO_PDU_RPC_DLL_DIRS"].split(os.pathsep):
-              if directory:
-                  handles.append(os.add_dll_directory(directory))
-
-          tests = [str(path) for path in sorted(Path("python").glob("test_cffi_*.py"))]
-          raise SystemExit(pytest.main(["-q", *tests]))
-          '@ | python -
+          python -m pytest -q @tests
