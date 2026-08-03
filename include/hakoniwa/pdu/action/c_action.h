@@ -38,7 +38,8 @@ typedef enum {
     HAKO_PDU_ACTION_ERROR_BUFFER_TOO_SMALL = 6,
     HAKO_PDU_ACTION_ERROR_NOT_FOUND = 7,
     HAKO_PDU_ACTION_ERROR_INVALID_STATE = 8,
-    HAKO_PDU_ACTION_ERROR_INTERNAL = 9
+    HAKO_PDU_ACTION_ERROR_DUPLICATE_GOAL = 9,
+    HAKO_PDU_ACTION_ERROR_INTERNAL = 10
 } hako_pdu_action_error_t;
 
 typedef enum {
@@ -126,6 +127,9 @@ hako_pdu_action_error_t hako_pdu_action_client_create_goal_buffer_alloc(
 /*
  * requested_goal_id may be NULL. In that case the Runtime generates a UUID.
  * out_goal receives the actual Goal identity and is used for cancel requests.
+ * timeout_usec applies only while waiting for GOAL_RESPONSE. Zero means no
+ * Goal Response timeout. It does not impose a Result or Cancel Response
+ * deadline on an accepted Goal.
  */
 hako_pdu_action_error_t hako_pdu_action_client_send_goal(
     hako_pdu_action_client_handle_t* handle,
@@ -135,7 +139,7 @@ hako_pdu_action_error_t hako_pdu_action_client_send_goal(
     const hako_pdu_action_goal_id_t* requested_goal_id,
     hako_pdu_action_client_goal_handle_t* out_goal,
     uint64_t timeout_usec);
-hako_pdu_action_error_t hako_pdu_action_client_cancel(
+hako_pdu_action_error_t hako_pdu_action_client_cancel_goal(
     hako_pdu_action_client_handle_t* handle,
     const char* action_name,
     const hako_pdu_action_client_goal_handle_t* goal);

@@ -19,6 +19,8 @@ public:
     // Normal clients omit requested_goal_id and let the Runtime generate the
     // UUID. Protocol adapters may provide an external GoalId that must be
     // preserved. The returned handle is used for cancel and correlation.
+    // timeout_usec applies only while waiting for GOAL_RESPONSE; zero disables
+    // that timeout. It does not time out Result or Cancel Response delivery.
     virtual bool send_goal(const PduData& goal_pdu,
                            ClientGoalHandle& goal_handle_out,
                            std::optional<GoalId> requested_goal_id = std::nullopt,
@@ -46,7 +48,7 @@ protected:
     std::uint64_t delta_time_usec_;
 };
 
-// TODO(codex): specify timeout semantics per goal and terminal-event retention
-// after the first native implementation proves the required bookkeeping.
+// Result and Cancel Response timeout/retention policies are intentionally not
+// part of the initial public contract.
 
 } // namespace hakoniwa::pdu::action
