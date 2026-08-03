@@ -25,6 +25,25 @@ endif()
 # separately by the Python CFFI integration suite.
 set(HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY hakoniwa_pdu_rpc::rpc)
 
+function(hako_pdu_rpc_stage_windows_test_dlls target)
+  if(NOT WIN32)
+    return()
+  endif()
+
+  # CTest does not inherit the DLL discovery performed by the Python package.
+  # Stage the runtime DLLs beside each test executable so Windows follows its
+  # normal application-directory lookup without modifying PATH globally.
+  add_custom_command(TARGET ${target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:hakoniwa_pdu_rpc_shared>
+      $<TARGET_FILE_DIR:${target}>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:hakoniwa_pdu_endpoint::hakoniwa_pdu_endpoint>
+      $<TARGET_FILE_DIR:${target}>
+    VERBATIM
+  )
+endfunction()
+
 add_executable(hakoniwa_pdu_action_configuration_test
   action_configuration_contract_test.cpp
 )
@@ -126,3 +145,23 @@ add_executable(hakoniwa_pdu_rpc_c_api_cancel_race_test
 target_link_libraries(hakoniwa_pdu_rpc_c_api_cancel_race_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
 add_test(NAME hakoniwa_pdu_rpc_c_api_cancel_race_test COMMAND hakoniwa_pdu_rpc_c_api_cancel_race_test)
 set_tests_properties(hakoniwa_pdu_rpc_c_api_cancel_race_test PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+
+set(HAKO_PDU_RPC_NATIVE_CONTRACT_TARGETS
+  hakoniwa_pdu_action_configuration_test
+  hakoniwa_pdu_action_server_initialization_test
+  hakoniwa_pdu_action_packet_codec_test
+  hakoniwa_pdu_rpc_basic_test
+  hakoniwa_pdu_rpc_mux_server_test
+  hakoniwa_pdu_rpc_c_api_mux_server_test
+  hakoniwa_pdu_rpc_c_api_basic_test
+  hakoniwa_pdu_rpc_infinite_wait_test
+  hakoniwa_pdu_rpc_c_api_infinite_wait_test
+  hakoniwa_pdu_rpc_timeout_cancel_test
+  hakoniwa_pdu_rpc_c_api_timeout_cancel_test
+  hakoniwa_pdu_rpc_cancel_race_test
+  hakoniwa_pdu_rpc_c_api_cancel_race_test
+)
+
+foreach(target IN LISTS HAKO_PDU_RPC_NATIVE_CONTRACT_TARGETS)
+  hako_pdu_rpc_stage_windows_test_dlls(${target})
+endforeach()
