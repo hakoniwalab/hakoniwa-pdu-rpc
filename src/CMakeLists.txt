@@ -57,13 +57,15 @@ add_library(hakoniwa_pdu_rpc::hakoniwa_pdu_rpc ALIAS hakoniwa_pdu_rpc)
 # Build the CFFI-loadable artifact beside the static library from the same
 # sources. The runtime file keeps the established hakoniwa_pdu_rpc name, while
 # its Windows import library uses a distinct name to avoid colliding with the
-# real static hakoniwa_pdu_rpc.lib.
+# real static hakoniwa_pdu_rpc.lib. Keep the linker PDB distinct as well:
+# multi-config Visual Studio builds may link both targets concurrently.
 add_library(hakoniwa_pdu_rpc_shared SHARED ${HAKO_PDU_RPC_SOURCES})
 hako_pdu_rpc_configure_target(hakoniwa_pdu_rpc_shared)
 set_target_properties(hakoniwa_pdu_rpc_shared PROPERTIES
   EXPORT_NAME rpc_shared
   OUTPUT_NAME hakoniwa_pdu_rpc
   ARCHIVE_OUTPUT_NAME hakoniwa_pdu_rpc_shared
+  PDB_NAME hakoniwa_pdu_rpc_shared
   WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
