@@ -67,7 +67,14 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          git clone https://github.com/hakoniwalab/hakoniwa-pdu-endpoint.git endpoint
+          for attempt in 1 2 3; do
+            git clone https://github.com/hakoniwalab/hakoniwa-pdu-endpoint.git endpoint && break
+            rm -rf endpoint
+            if [[ "$attempt" == "3" ]]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
           cmake -S endpoint -B endpoint/build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
@@ -86,7 +93,21 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          git clone https://github.com/hakoniwalab/hakoniwa-pdu-endpoint.git endpoint
+          $cloned = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            git clone https://github.com/hakoniwalab/hakoniwa-pdu-endpoint.git endpoint
+            if ($LASTEXITCODE -eq 0) {
+              $cloned = $true
+              break
+            }
+            Remove-Item -Recurse -Force endpoint -ErrorAction SilentlyContinue
+            if ($attempt -lt 3) {
+              Start-Sleep -Seconds ($attempt * 10)
+            }
+          }
+          if (-not $cloned) {
+            throw "Failed to clone hakoniwa-pdu-endpoint after 3 attempts"
+          }
           cmake -S endpoint -B endpoint/build -A x64 `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
