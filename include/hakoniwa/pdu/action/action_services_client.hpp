@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace hakoniwa::pdu::action {
@@ -27,15 +28,17 @@ public:
     void stop_all_services();
     void clear_all_instances();
 
+    // Ordinary callers receive an opaque-style GoalHandle and do not need to
+    // construct or retain GoalId directly. Adapters may request a specific ID.
     bool send_goal(const std::string& action_name,
-                   const GoalId& goal_id,
                    const PduData& goal_pdu,
+                   ClientGoalHandle& goal_handle_out,
+                   std::optional<GoalId> requested_goal_id = std::nullopt,
                    std::uint64_t timeout_usec = 0);
-    bool send_cancel(const std::string& action_name, const GoalId& goal_id);
+    bool send_cancel(const std::string& action_name,
+                     const ClientGoalHandle& goal);
     ClientEventType poll(std::string& action_name, ClientEvent& event_out);
-    bool create_goal_buffer(const std::string& action_name,
-                            const GoalId& goal_id,
-                            PduData& pdu_out);
+    bool create_goal_buffer(const std::string& action_name, PduData& pdu_out);
 
 private:
     std::string node_id_;
