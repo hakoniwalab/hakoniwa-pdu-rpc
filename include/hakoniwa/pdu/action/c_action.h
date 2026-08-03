@@ -19,6 +19,15 @@ typedef struct hako_pdu_action_server_handle hako_pdu_action_server_handle_t;
 typedef uint64_t hako_pdu_action_event_token_t;
 typedef uint64_t hako_pdu_action_goal_token_t;
 
+typedef struct {
+    uint8_t bytes[HAKO_PDU_ACTION_GOAL_ID_SIZE];
+} hako_pdu_action_goal_id_t;
+
+/* High-level bindings should wrap this value as an ActionGoalHandle object. */
+typedef struct {
+    hako_pdu_action_goal_id_t goal_id;
+} hako_pdu_action_client_goal_handle_t;
+
 typedef enum {
     HAKO_PDU_ACTION_OK = 0,
     HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT = 1,
@@ -46,7 +55,8 @@ typedef enum {
     HAKO_PDU_ACTION_SERVER_EVENT_NONE = 0,
     HAKO_PDU_ACTION_SERVER_EVENT_GOAL_REQUEST = 1,
     HAKO_PDU_ACTION_SERVER_EVENT_CANCEL_REQUEST = 2,
-    HAKO_PDU_ACTION_SERVER_EVENT_ERROR = 3
+    HAKO_PDU_ACTION_SERVER_EVENT_RUNTIME_CANCEL_REQUEST = 3,
+    HAKO_PDU_ACTION_SERVER_EVENT_ERROR = 4
 } hako_pdu_action_server_event_t;
 
 typedef enum {
@@ -62,9 +72,16 @@ typedef enum {
     HAKO_PDU_ACTION_TERMINAL_ABORTED = 3
 } hako_pdu_action_terminal_status_t;
 
+typedef enum {
+    HAKO_PDU_ACTION_RUNTIME_CANCEL_UNSPECIFIED = 0,
+    HAKO_PDU_ACTION_RUNTIME_CANCEL_TRANSPORT_DISCONNECTED = 1,
+    HAKO_PDU_ACTION_RUNTIME_CANCEL_SERVER_SHUTDOWN = 2,
+    HAKO_PDU_ACTION_RUNTIME_CANCEL_INTERNAL_POLICY = 3
+} hako_pdu_action_runtime_cancel_cause_t;
+
 typedef struct {
     char action_name[HAKO_PDU_ACTION_NAME_MAX];
-    uint8_t goal_id[HAKO_PDU_ACTION_GOAL_ID_SIZE];
+    hako_pdu_action_client_goal_handle_t goal;
     hako_pdu_action_decision_t decision;
     hako_pdu_action_terminal_status_t terminal_status;
     uint32_t feedback_sequence;
@@ -73,9 +90,11 @@ typedef struct {
 
 typedef struct {
     hako_pdu_action_event_token_t event_token;
+    hako_pdu_action_goal_token_t goal_token;
     char action_name[HAKO_PDU_ACTION_NAME_MAX];
     char client_name[HAKO_PDU_ACTION_NAME_MAX];
-    uint8_t goal_id[HAKO_PDU_ACTION_GOAL_ID_SIZE];
+    hako_pdu_action_goal_id_t goal_id;
+    hako_pdu_action_runtime_cancel_cause_t runtime_cancel_cause;
     size_t pdu_size;
 } hako_pdu_action_server_event_info_t;
 
@@ -95,27 +114,31 @@ hako_pdu_action_error_t hako_pdu_action_client_stop(hako_pdu_action_client_handl
 hako_pdu_action_error_t hako_pdu_action_client_create_goal_buffer(
     hako_pdu_action_client_handle_t* handle,
     const char* action_name,
-    const uint8_t goal_id[HAKO_PDU_ACTION_GOAL_ID_SIZE],
     uint8_t* buffer,
     size_t capacity,
     size_t* out_size);
 hako_pdu_action_error_t hako_pdu_action_client_create_goal_buffer_alloc(
     hako_pdu_action_client_handle_t* handle,
     const char* action_name,
-    const uint8_t goal_id[HAKO_PDU_ACTION_GOAL_ID_SIZE],
     uint8_t** out_buffer,
     size_t* out_size);
+
+/*
+ * requested_goal_id may be NULL. In that case the Runtime generates a UUID.
+ * out_goal receives the actual Goal identity and is used for cancel requests.
+ */
 hako_pdu_action_error_t hako_pdu_action_client_send_goal(
     hako_pdu_action_client_handle_t* handle,
     const char* action_name,
-    const uint8_t goal_id[HAKO_PDU_ACTION_GOAL_ID_SIZE],
     const uint8_t* pdu,
     size_t pdu_size,
+    const hako_pdu_action_goal_id_t* requested_goal_id,
+    hako_pdu_action_client_goal_handle_t* out_goal,
     uint64_t timeout_usec);
 hako_pdu_action_error_t hako_pdu_action_client_cancel(
     hako_pdu_action_client_handle_t* handle,
     const char* action_name,
-    const uint8_t goal_id[HAKO_PDU_ACTION_GOAL_ID_SIZE]);
+    const hako_pdu_action_client_goal_handle_t* goal);
 hako_pdu_action_client_event_t hako_pdu_action_client_poll(
     hako_pdu_action_client_handle_t* handle,
     hako_pdu_action_client_event_info_t* out_info,
@@ -182,9 +205,10 @@ hako_pdu_action_error_t hako_pdu_action_server_complete(
  * TODO(codex): add mux declarations only after Goal ownership across transport
  * sessions is implemented. The static API intentionally lands first.
  *
- * Contract: event_token is one-shot. goal_token is valid from goal acceptance
- * until one terminal completion commits. Result wins over a pending Cancel by
- * invalidating its event_token and emitting no Cancel Response.
+ * Contract: event_token is one-shot. goal_token is a server-side capability
+ * valid from goal acceptance until terminal completion commits. Client users
+ * retain a goal handle; they do not manipulate goal_token. Result wins over a
+ * pending Cancel by invalidating its event_token and emitting no response.
  */
 
 #ifdef __cplusplus
