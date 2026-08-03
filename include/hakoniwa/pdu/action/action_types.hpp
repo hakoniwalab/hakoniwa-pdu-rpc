@@ -12,9 +12,39 @@ using GoalId = std::array<std::uint8_t, 16>;
 using EventToken = std::uint64_t;
 using GoalToken = std::uint64_t;
 
+inline constexpr EventToken INVALID_EVENT_TOKEN = 0;
+inline constexpr GoalToken INVALID_GOAL_TOKEN = 0;
+
+// High-level client code should retain this handle rather than manipulate a
+// GoalId directly. GoalId remains available for adapters that must preserve an
+// external protocol identity, such as a ROS 2 Action bridge.
+struct ClientGoalHandle {
+    GoalId goal_id{};
+
+    bool valid() const noexcept {
+        for (auto byte : goal_id) {
+            if (byte != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
+// Server-side long-lived handle. event_token is intentionally not included:
+// it is a one-shot decision token, while goal_token survives until terminal
+// completion commits.
+struct ServerGoalHandle {
+    GoalId goal_id{};
+    GoalToken goal_token{INVALID_GOAL_TOKEN};
+
+    bool valid() const noexcept { return goal_token != INVALID_GOAL_TOKEN; }
+};
+
 // These values describe logical runtime events. Wire-level values are defined
 // by the generated Action headers from hakoniwa-pdu-registry.
-enum class ClientEventType {
+enum class ClientEventType : std::uint8_t {
+    UNSPECIFIED = 0,
     NONE,
     GOAL_RESPONSE,
     FEEDBACK,
@@ -24,54 +54,74 @@ enum class ClientEventType {
     ERROR
 };
 
-enum class ServerEventType {
+enum class ServerEventType : std::uint8_t {
+    UNSPECIFIED = 0,
     NONE,
     GOAL_REQUEST,
     CANCEL_REQUEST,
+    RUNTIME_CANCEL_REQUEST,
     ERROR
 };
 
-enum class GoalDecision {
+enum class GoalDecision : std::uint8_t {
+    UNSPECIFIED = 0,
     ACCEPTED,
     REJECTED
 };
 
-enum class CancelDecision {
+enum class CancelDecision : std::uint8_t {
+    UNSPECIFIED = 0,
     ACCEPTED,
     REJECTED
 };
 
-enum class TerminalStatus {
+enum class TerminalStatus : std::uint8_t {
+    UNSPECIFIED = 0,
     SUCCEEDED,
     CANCELED,
     ABORTED
 };
 
-enum class GoalState {
+enum class GoalState : std::uint8_t {
+    UNSPECIFIED = 0,
     EXECUTING,
     CANCELING,
     FINISHING
 };
 
+enum class RuntimeCancelCause : std::uint8_t {
+    UNSPECIFIED = 0,
+    TRANSPORT_DISCONNECTED,
+    SERVER_SHUTDOWN,
+    INTERNAL_POLICY
+};
+
 struct ClientEvent {
     ClientEventType type{ClientEventType::NONE};
     std::string action_name;
-    GoalId goal_id{};
-    GoalDecision goal_decision{GoalDecision::REJECTED};
-    CancelDecision cancel_decision{CancelDecision::REJECTED};
-    TerminalStatus terminal_status{TerminalStatus::ABORTED};
+    ClientGoalHandle goal;
+    GoalDecision goal_decision{GoalDecision::UNSPECIFIED};
+    CancelDecision cancel_decision{CancelDecision::UNSPECIFIED};
+    TerminalStatus terminal_status{TerminalStatus::UNSPECIFIED};
     std::uint32_t feedback_sequence{0};
     PduData pdu;
 };
 
 struct ServerEvent {
     ServerEventType type{ServerEventType::NONE};
-    EventToken event_token{0};
+    EventToken event_token{INVALID_EVENT_TOKEN};
+    ServerGoalHandle goal;
+    RuntimeCancelCause runtime_cancel_cause{RuntimeCancelCause::UNSPECIFIED};
     std::string action_name;
     std::string client_name;
-    GoalId goal_id{};
     PduData pdu;
 };
+
+// Event field contract:
+//   GOAL_REQUEST:           goal.goal_token == INVALID_GOAL_TOKEN
+//   CANCEL_REQUEST:         goal identifies the accepted target Goal
+//   RUNTIME_CANCEL_REQUEST: goal identifies the target Goal and cause is set
+// event_token is consumed by exactly one accept/reject operation.
 
 // TODO(codex): define the precise runtime error model without exposing
 // implementation-specific exceptions through the public API.
