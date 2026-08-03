@@ -2,7 +2,76 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+
 namespace hakoniwa::pdu::action {
+
+bool ActionServerEndpointImpl::decode_request_header(
+    const PduData& packet,
+    HakoCpp_ActionRequestHeader& header_out)
+{
+    if (packet.empty()) {
+        return false;
+    }
+    return request_header_convertor_.pdu2cpp(
+        reinterpret_cast<char*>(const_cast<std::uint8_t*>(packet.data())),
+        header_out);
+}
+
+bool ActionServerEndpointImpl::validate_request_header(
+    const HakoCpp_ActionRequestHeader& header) const
+{
+    if (header.version != ACTION_PROTOCOL_VERSION) {
+        return false;
+    }
+    if (header.request_kind != REQUEST_KIND_GOAL
+        && header.request_kind != REQUEST_KIND_CANCEL) {
+        return false;
+    }
+    return std::any_of(
+        header.goal_id.begin(), header.goal_id.end(),
+        [](std::uint8_t value) { return value != 0; });
+}
+
+bool ActionServerEndpointImpl::write_response_header(
+    PduData& initialized_packet,
+    HakoCpp_ActionResponseHeader& header)
+{
+    if (initialized_packet.empty()) {
+        return false;
+    }
+    auto* base_ptr = static_cast<char*>(
+        hako_get_base_ptr_pdu(initialized_packet.data()));
+    if (base_ptr == nullptr) {
+        return false;
+    }
+
+    PduDynamicMemory dynamic_memory;
+    return cpp_cpp2pdu_ActionResponseHeader(
+        header,
+        *reinterpret_cast<Hako_ActionResponseHeader*>(base_ptr),
+        dynamic_memory);
+}
+
+bool ActionServerEndpointImpl::write_feedback_header(
+    PduData& initialized_packet,
+    HakoCpp_ActionFeedbackHeader& header)
+{
+    if (initialized_packet.empty()) {
+        return false;
+    }
+    auto* base_ptr = static_cast<char*>(
+        hako_get_base_ptr_pdu(initialized_packet.data()));
+    if (base_ptr == nullptr) {
+        return false;
+    }
+
+    PduDynamicMemory dynamic_memory;
+    return cpp_cpp2pdu_ActionFeedbackHeader(
+        header,
+        *reinterpret_cast<Hako_ActionFeedbackHeader*>(base_ptr),
+        dynamic_memory);
+}
 
 ActionServerEndpointImpl::ActionServerEndpointImpl(
     const std::string& action_name,

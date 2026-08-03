@@ -3,6 +3,13 @@
 #include "hakoniwa/pdu/action/action_server_endpoint.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
 #include "hakoniwa/time_source/time_source.hpp"
+#include "hako_action_msgs/pdu_cpptype_ActionFeedbackHeader.hpp"
+#include "hako_action_msgs/pdu_cpptype_ActionRequestHeader.hpp"
+#include "hako_action_msgs/pdu_cpptype_ActionResponseHeader.hpp"
+#include "hako_action_msgs/pdu_cpptype_conv_ActionFeedbackHeader.hpp"
+#include "hako_action_msgs/pdu_cpptype_conv_ActionRequestHeader.hpp"
+#include "hako_action_msgs/pdu_cpptype_conv_ActionResponseHeader.hpp"
+#include "pdu_convertor.hpp"
 
 #include <deque>
 #include <memory>
@@ -49,14 +56,45 @@ public:
     void clear_pending_events() override;
 
 private:
+    static constexpr std::uint8_t ACTION_PROTOCOL_VERSION = 1;
+    static constexpr std::uint8_t REQUEST_KIND_GOAL = 1;
+    static constexpr std::uint8_t REQUEST_KIND_CANCEL = 2;
+
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_;
     std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
+
+    // The common Header convertors deliberately operate on the prefix of an
+    // Action-specific packet. Goal/Result/Feedback bodies remain opaque
+    // PduData at this layer.
+    hako::pdu::PduConvertor<
+        HakoCpp_ActionRequestHeader,
+        hako::pdu::msgs::hako_action_msgs::ActionRequestHeader>
+        request_header_convertor_;
+    hako::pdu::PduConvertor<
+        HakoCpp_ActionResponseHeader,
+        hako::pdu::msgs::hako_action_msgs::ActionResponseHeader>
+        response_header_convertor_;
+    hako::pdu::PduConvertor<
+        HakoCpp_ActionFeedbackHeader,
+        hako::pdu::msgs::hako_action_msgs::ActionFeedbackHeader>
+        feedback_header_convertor_;
 
     std::mutex mutex_;
     std::deque<ServerEvent> pending_events_;
     bool initialized_{false};
 
-    // TODO: register generated Goal and Cancel request PDUs with endpoint_.
+    bool decode_request_header(const PduData& packet,
+                               HakoCpp_ActionRequestHeader& header_out);
+    bool validate_request_header(const HakoCpp_ActionRequestHeader& header) const;
+    bool write_response_header(PduData& initialized_packet,
+                               HakoCpp_ActionResponseHeader& header);
+    bool write_feedback_header(PduData& initialized_packet,
+                               HakoCpp_ActionFeedbackHeader& header);
+
+    // TODO(endpoint contract): resolve Action packet keys, sizes, and routing,
+    // then register Goal/Cancel receive callbacks with endpoint_.
+    // TODO(endpoint contract): create complete ActionResponse/ActionFeedback
+    // packets before write_*_header() overlays their common Header prefix.
     // TODO: add Goal Context map keyed by GoalId and GoalToken.
     // TODO: add one-shot EventToken allocation and validation.
     // TODO: centralize all Goal state changes in one locked transition function.
