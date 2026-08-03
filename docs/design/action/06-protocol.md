@@ -199,15 +199,30 @@ FEEDBACK
 | 論理イベント | Registry packet | Header識別 | body |
 | --- | --- | --- | --- |
 | `GOAL_REQUEST` | `<Action>ActionRequest` | `request_kind=GOAL` | `<Action>Goal` |
-| `GOAL_RESPONSE` | `<Action>ActionResponse` | `response_kind=GOAL` | 原則未使用または既定値 |
+| `GOAL_RESPONSE` | `<Action>ActionResponse` | `response_kind=GOAL` | 既定値・未使用 |
 | `FEEDBACK` | `<Action>ActionFeedback` | Feedback専用Header | `<Action>Feedback` |
-| `CANCEL_REQUEST` | `<Action>ActionRequest` | `request_kind=CANCEL` | 原則未使用または既定値 |
-| `CANCEL_RESPONSE` | `<Action>ActionResponse` | `response_kind=CANCEL` | 原則未使用または既定値 |
+| `CANCEL_REQUEST` | `<Action>ActionRequest` | `request_kind=CANCEL` | 既定値・未使用 |
+| `CANCEL_RESPONSE` | `<Action>ActionResponse` | `response_kind=CANCEL` | 既定値・未使用 |
 | `RESULT` | `<Action>ActionResponse` | `response_kind=RESULT` | `<Action>Result` |
 
 現行Generatorでは、Request packetのbody型は常に`<Action>Goal`、Response packetのbody型は常に`<Action>Result`です。
 
 そのため、Cancel RequestおよびGoal／Cancel ResponseではbodyをProtocol意味論上使用しません。body領域には生成型の既定値を格納します。
+
+既定値は、生成されたAction body型を通常どおり初期化した値とします。未使用bodyを特別なbyte列として扱いません。
+
+```text
+数値型      = 0
+bool        = false
+string      = empty
+可変長配列  = length 0
+固定長配列  = 各要素を既定値
+ネスト型    = 各フィールドを再帰的に既定値
+time        = sec 0 / nanosec 0
+duration    = sec 0 / nanosec 0
+```
+
+受信側は、`request_kind`または`response_kind`によりbodyが未使用と判断した場合、その内容を検証せず参照しません。
 
 この方式はpacket型を増やさず、既存Generatorの3 packet構成を維持します。
 
@@ -312,7 +327,24 @@ uint32 sequence_no
 Feedback送信ごとに1増加
 ```
 
-### 8.7 reserved
+### 8.7 未使用bodyの既定値
+
+Cancel Request、Goal Response、Cancel Responseで使用しないbodyは、PDU Registryが生成した型の通常の既定値で初期化します。
+
+```text
+CANCEL_REQUEST:
+  <Action>Goal body = default initialized
+
+GOAL_RESPONSE:
+  <Action>Result body = default initialized
+
+CANCEL_RESPONSE:
+  <Action>Result body = default initialized
+```
+
+未使用bodyへProtocol上の情報を埋め込むことは禁止します。受信側は未使用bodyを検証・解釈しません。
+
+### 8.8 reserved
 
 reserved領域は送信時に`0`で初期化し、受信時は値に依存しません。
 
@@ -343,7 +375,8 @@ byte order、padding、可変長body、固定サイズはPDU Registryの生成�
 - Action TypeはSchema／endpointで識別し、Headerへ`action_type_id`を追加しない。
 - v1では`request_id`を追加せず、`goal_id`とpending Contextで相関する。
 - body長はPDU Registryへ委ね、Headerへ`body_length`を追加しない。
-- Cancel RequestおよびGoal／Cancel Responseでは生成済みbody型を既定値で保持し、意味論上は使用しない。
+- Cancel RequestおよびGoal／Cancel Responseでは生成済みbody型を通常の型既定値で初期化し、意味論上は使用しない。
+- 受信側は未使用bodyを検証・解釈しない。
 - `sequence_no`は`uint32`で0開始とする。
 - reservedは0送信、受信時無視とする。
 
@@ -352,7 +385,7 @@ byte order、padding、可変長body、固定サイズはPDU Registryの生成�
 1. `request_kind`の数値割り当てを`GOAL=1`、`CANCEL=2`とするか。
 2. `response_kind`の数値割り当てを`GOAL=1`、`CANCEL=2`、`RESULT=3`とするか。
 3. `status`をresponse kind依存の共用フィールドとするか。
-4. Cancel RequestおよびGoal／Cancel Responseのbodyを既定値・未使用とするか。
+4. 未使用bodyを生成型の通常の既定値で初期化し、受信側が解釈しない方針でよいか。
 5. `sequence_no`を0開始とするか。
 
 ## 12. 対象外
