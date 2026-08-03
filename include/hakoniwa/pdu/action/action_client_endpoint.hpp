@@ -3,6 +3,7 @@
 #include "action_types.hpp"
 
 #include <nlohmann/json_fwd.hpp>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -15,14 +16,19 @@ public:
     virtual bool initialize(const nlohmann::json& action_config,
                             int pdu_meta_data_size) = 0;
 
-    // One endpoint may own multiple active goals. goal_id is the correlation
-    // key; a single in-flight request restriction must not be introduced.
-    virtual bool send_goal(const GoalId& goal_id, const PduData& goal_pdu,
-                           std::uint64_t timeout_usec) = 0;
-    virtual bool send_cancel(const GoalId& goal_id) = 0;
+    // Normal clients omit requested_goal_id and let the Runtime generate the
+    // UUID. Protocol adapters may provide an external GoalId that must be
+    // preserved. The returned handle is used for cancel and correlation.
+    virtual bool send_goal(const PduData& goal_pdu,
+                           ClientGoalHandle& goal_handle_out,
+                           std::optional<GoalId> requested_goal_id = std::nullopt,
+                           std::uint64_t timeout_usec = 0) = 0;
+    virtual bool send_cancel(const ClientGoalHandle& goal) = 0;
     virtual ClientEventType poll(ClientEvent& event_out) = 0;
-    virtual bool create_goal_buffer(const GoalId& goal_id,
-                                    PduData& pdu_out) = 0;
+
+    // Creates the generated Action Goal packet body. The Runtime writes the
+    // selected GoalId into the Action header when send_goal() is called.
+    virtual bool create_goal_buffer(PduData& pdu_out) = 0;
     virtual void clear_pending_events() = 0;
 
     const std::string& get_action_name() const { return action_name_; }
