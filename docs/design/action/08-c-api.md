@@ -185,9 +185,19 @@ Action Client poll RESULT
 ```c
 typedef struct hako_pdu_action_client_handle
     hako_pdu_action_client_handle_t;
+
+typedef struct {
+    uint8_t bytes[HAKO_PDU_ACTION_GOAL_ID_SIZE];
+} hako_pdu_action_goal_id_t;
+
+typedef struct {
+    hako_pdu_action_goal_id_t goal_id;
+} hako_pdu_action_client_goal_handle_t;
 ```
 
 一つのClient handleは、設定に含まれる複数Action Typeと、各Action Typeの複数Goal Contextを管理できます。
+
+通常のClient利用者は`hako_pdu_action_client_goal_handle_t`を保持し、UUIDを直接管理しません。ROS Adapterなど、外部ProtocolのUUIDを維持する必要がある利用者だけが`hako_pdu_action_goal_id_t`を明示指定します。
 
 ### 5.3 Client event
 
@@ -197,24 +207,30 @@ typedef enum {
     HAKO_PDU_ACTION_CLIENT_EVENT_GOAL_RESPONSE,
     HAKO_PDU_ACTION_CLIENT_EVENT_FEEDBACK,
     HAKO_PDU_ACTION_CLIENT_EVENT_CANCEL_RESPONSE,
-    HAKO_PDU_ACTION_CLIENT_EVENT_RESULT
+    HAKO_PDU_ACTION_CLIENT_EVENT_RESULT,
+    HAKO_PDU_ACTION_CLIENT_EVENT_TIMEOUT,
+    HAKO_PDU_ACTION_CLIENT_EVENT_ERROR
 } hako_pdu_action_client_event_t;
 ```
 
-Transport errorやProtocol errorをeventへ含めるか、`out_error`だけで返すかは後続レビューで確定します。
+`TIMEOUT`は、Goal確立前のGoal Response timeoutをApplicationへ通知するローカルRuntimeイベントです。通信異常をGoalのterminal statusへ変換しません。
+
+`ERROR`は、正常なAction Protocolイベントとして表現できないProtocol／Runtimeエラーを通知するローカルRuntimeイベントです。具体的な原因は`poll()`の`out_error`へ設定します。`ERROR`はwire上のAction packetでも、Goalのterminal statusでもありません。
 
 ### 5.4 Client event info
 
 ```c
 typedef struct {
     char action_name[HAKO_PDU_ACTION_NAME_MAX];
-    hako_pdu_action_goal_id_t goal_id;
-    uint8_t status;
+    hako_pdu_action_client_goal_handle_t goal;
+    hako_pdu_action_decision_t decision;
+    hako_pdu_action_terminal_status_t terminal_status;
+    uint32_t feedback_sequence;
     size_t pdu_size;
 } hako_pdu_action_client_event_info_t;
 ```
 
-`status`は、イベント種別に応じてGoal Response、Cancel Response、Resultのstatusを保持します。Feedbackでは`UNSPECIFIED`とします。
+`decision`はGoal ResponseまたはCancel Responseで使用します。`terminal_status`はResultで使用し、`feedback_sequence`はFeedbackで使用します。イベント種別に不要なフィールドは`UNSPECIFIED`または`0`とします。
 
 ### 5.5 Client操作の概念形
 
@@ -235,13 +251,14 @@ hako_pdu_action_client_send_goal(
     const uint8_t* goal_pdu,
     size_t goal_pdu_size,
     const hako_pdu_action_goal_id_t* requested_goal_id,
-    hako_pdu_action_goal_id_t* out_goal_id);
+    hako_pdu_action_client_goal_handle_t* out_goal,
+    uint64_t timeout_usec);
 
 hako_pdu_action_error_t
 hako_pdu_action_client_cancel_goal(
     hako_pdu_action_client_handle_t* handle,
     const char* action_name,
-    const hako_pdu_action_goal_id_t* goal_id);
+    const hako_pdu_action_client_goal_handle_t* goal);
 
 hako_pdu_action_client_event_t
 hako_pdu_action_client_poll(...);
@@ -253,7 +270,9 @@ void
 hako_pdu_action_client_destroy(...);
 ```
 
-`requested_goal_id == NULL`の場合はRuntimeがUUIDを生成し、`out_goal_id`へ返します。外部AdapterがUUIDを保持している場合は、`requested_goal_id`を指定できます。
+`requested_goal_id == NULL`の場合はRuntimeがUUIDを生成し、実際のGoal identityを`out_goal`へ返します。外部AdapterがUUIDを保持している場合は、`requested_goal_id`を指定できます。
+
+`timeout_usec`はGoal Request送信後、Goal Responseを受信するまでにだけ適用します。`0`はGoal Response timeoutなしを表します。Goalがacceptされた後のResult待ち、およびCancel Response待ちには適用しません。
 
 ### 5.6 Client pollの意味
 
@@ -265,9 +284,11 @@ GOAL_RESPONSE
 FEEDBACK
 CANCEL_RESPONSE
 RESULT
+TIMEOUT
+ERROR
 ```
 
-イベントには必ず`action_name`と`goal_id`を含めます。これによりAdapterは、複数同時Goalを各ROS GoalHandleへ配送できます。
+Goalに相関できるイベントには`action_name`とClient Goal Handleを含めます。これによりAdapterは、複数同時Goalを各ROS GoalHandleへ配送できます。
 
 `poll()`はcallbackを実行せず、Runtime内部queueからイベントを取り出します。
 
@@ -313,9 +334,19 @@ typedef enum {
     HAKO_PDU_ACTION_SERVER_EVENT_NONE = 0,
     HAKO_PDU_ACTION_SERVER_EVENT_GOAL_REQUEST,
     HAKO_PDU_ACTION_SERVER_EVENT_CANCEL_REQUEST,
-    HAKO_PDU_ACTION_SERVER_EVENT_RUNTIME_CANCEL_REQUEST
+    HAKO_PDU_ACTION_SERVER_EVENT_RUNTIME_CANCEL_REQUEST,
+    HAKO_PDU_ACTION_SERVER_EVENT_ERROR
 } hako_pdu_action_server_event_t;
+
+typedef enum {
+    HAKO_PDU_ACTION_RUNTIME_CANCEL_UNSPECIFIED = 0,
+    HAKO_PDU_ACTION_RUNTIME_CANCEL_TRANSPORT_DISCONNECTED,
+    HAKO_PDU_ACTION_RUNTIME_CANCEL_SERVER_SHUTDOWN,
+    HAKO_PDU_ACTION_RUNTIME_CANCEL_INTERNAL_POLICY
+} hako_pdu_action_runtime_cancel_cause_t;
 ```
+
+`ERROR`はClient側と同様にローカルRuntimeイベントであり、wire上のAction eventではありません。具体的な原因は`poll()`の`out_error`へ設定します。
 
 ### 6.4 Server event info
 
@@ -324,10 +355,16 @@ typedef struct {
     hako_pdu_action_event_token_t event_token;
     hako_pdu_action_goal_token_t goal_token;
     char action_name[HAKO_PDU_ACTION_NAME_MAX];
+    char client_name[HAKO_PDU_ACTION_NAME_MAX];
     hako_pdu_action_goal_id_t goal_id;
+    hako_pdu_action_runtime_cancel_cause_t runtime_cancel_cause;
     size_t pdu_size;
 } hako_pdu_action_server_event_info_t;
 ```
+
+`client_name`は受信元を診断・配送するためのRuntime metadataです。GoalのProtocol identityには使用しません。Protocol上の相関キーは引き続き`goal_id`です。
+
+`runtime_cancel_cause`は`RUNTIME_CANCEL_REQUEST`で使用し、それ以外のイベントでは`UNSPECIFIED`とします。
 
 `goal_token`の値:
 
@@ -513,6 +550,7 @@ typedef enum {
     HAKO_PDU_ACTION_ERROR_INITIALIZE,
     HAKO_PDU_ACTION_ERROR_START,
     HAKO_PDU_ACTION_ERROR_NOT_RUNNING,
+    HAKO_PDU_ACTION_ERROR_SEND,
     HAKO_PDU_ACTION_ERROR_BUFFER_TOO_SMALL,
     HAKO_PDU_ACTION_ERROR_NOT_FOUND,
     HAKO_PDU_ACTION_ERROR_INVALID_STATE,
@@ -522,6 +560,8 @@ typedef enum {
 ```
 
 Protocol上のGoal rejectやCancel rejectはC API呼び出し失敗ではありません。Applicationの正常な判断として相手側へResponseを送ります。
+
+Clientが明示指定した`requested_goal_id`が、そのClient Runtimeで管理中または保持中のGoalと重複する場合、`send_goal()`は`HAKO_PDU_ACTION_ERROR_DUPLICATE_GOAL`を返します。Serverが受信時に検出したduplicate Goal RequestはProtocol上のGoal rejectとして処理し、Server Applicationへ新規Goalイベントを公開しません。
 
 ## 10. Mux Serverとの対称性
 
@@ -551,11 +591,11 @@ create
 start
 create_goal_buffer
 Goal body設定
-send_goal -> goal_id
+send_goal -> Client Goal Handle
 
 poll GOAL_RESPONSE
 poll FEEDBACK 0..n
-必要ならcancel_goal(goal_id)
+必要ならcancel_goal(Client Goal Handle)
 poll CANCEL_RESPONSE
 poll RESULT
 
@@ -590,6 +630,9 @@ destroy
 - Server APIはAction Server Application利用を主対象とする。
 - 一つのClient handleで複数Goalを管理する。
 - Protocol相関には`goal_id`を使用する。
+- 通常ClientはClient Goal Handleを保持し、外部Adapterだけが必要に応じてUUIDを明示指定する。
+- `send_goal()`のtimeoutはGoal Response待ちにだけ適用し、accept後のResultおよびCancel Responseには適用しない。
+- `TIMEOUT`と`ERROR`はローカルRuntimeイベントであり、Goalのterminal statusではない。
 - Server Application向けには`event_token`と`goal_token`を分離する。
 - `event_token`は受信イベントへの一回限りの判断に使用する。
 - `goal_token`はaccept済みGoalの継続操作に使用する。

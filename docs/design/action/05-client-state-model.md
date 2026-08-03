@@ -108,6 +108,8 @@ RESPONSE_TIMEOUT(GOAL_RESPONSE)
   -> RELEASE
 ```
 
+初版Client APIの`send_goal(..., timeout_usec)`は、このGoal Response待ちにだけ適用します。`timeout_usec=0`はGoal Response timeoutなしを表します。Goalがacceptされた後のResult待ち、およびCancel Response待ちには同じ値を流用しません。それらのtimeout／保持Policyは初版の公開契約へ含めません。
+
 Goal Response timeout時、Goal RequestがServerへ到達し、Server側でaccept済みとなっている可能性があります。しかし、Client Runtimeはこの可能性を理由に追加主状態、状態照会、自動再送、特別な救済処理を導入しません。Client側では通信失敗としてContextを解放し、Server側で残存Goalが発生し得ることは異常ケースとして扱います。
 
 `GOAL_REQUESTING`や`ACCEPTED`などの追加主状態は設けません。これはROS 2 Action ClientがGoal Response待ちをFutureで表現する考え方と整合します。
