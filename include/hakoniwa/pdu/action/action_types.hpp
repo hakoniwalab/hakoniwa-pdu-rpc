@@ -45,55 +45,55 @@ struct ServerGoalHandle {
 // by the generated Action headers from hakoniwa-pdu-registry.
 enum class ClientEventType : std::uint8_t {
     UNSPECIFIED = 0,
-    NONE,
-    GOAL_RESPONSE,
-    FEEDBACK,
-    CANCEL_RESPONSE,
-    RESULT,
-    TIMEOUT,
-    ERROR
+    NONE = 0,
+    GOAL_RESPONSE = 1,
+    FEEDBACK = 2,
+    CANCEL_RESPONSE = 3,
+    RESULT = 4,
+    TIMEOUT = 5,
+    ERROR = 6
 };
 
 enum class ServerEventType : std::uint8_t {
     UNSPECIFIED = 0,
-    NONE,
-    GOAL_REQUEST,
-    CANCEL_REQUEST,
-    RUNTIME_CANCEL_REQUEST,
-    ERROR
+    NONE = 0,
+    GOAL_REQUEST = 1,
+    CANCEL_REQUEST = 2,
+    RUNTIME_CANCEL_REQUEST = 3,
+    ERROR = 4
 };
 
 enum class GoalDecision : std::uint8_t {
     UNSPECIFIED = 0,
-    ACCEPTED,
-    REJECTED
+    ACCEPTED = 1,
+    REJECTED = 2
 };
 
 enum class CancelDecision : std::uint8_t {
     UNSPECIFIED = 0,
-    ACCEPTED,
-    REJECTED
+    ACCEPTED = 1,
+    REJECTED = 2
 };
 
 enum class TerminalStatus : std::uint8_t {
     UNSPECIFIED = 0,
-    SUCCEEDED,
-    CANCELED,
-    ABORTED
+    SUCCEEDED = 1,
+    CANCELED = 2,
+    ABORTED = 3
 };
 
 enum class GoalState : std::uint8_t {
     UNSPECIFIED = 0,
-    EXECUTING,
-    CANCELING,
-    FINISHING
+    EXECUTING = 1,
+    CANCELING = 2,
+    FINISHING = 3
 };
 
 enum class RuntimeCancelCause : std::uint8_t {
     UNSPECIFIED = 0,
-    TRANSPORT_DISCONNECTED,
-    SERVER_SHUTDOWN,
-    INTERNAL_POLICY
+    TRANSPORT_DISCONNECTED = 1,
+    SERVER_SHUTDOWN = 2,
+    INTERNAL_POLICY = 3
 };
 
 struct ClientEvent {
