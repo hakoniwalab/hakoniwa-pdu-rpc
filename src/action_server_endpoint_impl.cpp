@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <iostream>
 
 namespace hakoniwa::pdu::action {
 
@@ -89,9 +90,33 @@ bool ActionServerEndpointImpl::initialize(
     int pdu_meta_data_size,
     std::optional<std::string> client_node_id)
 {
-    (void)action_config;
-    (void)pdu_meta_data_size;
-    (void)client_node_id;
+    ActionDefinition parsed_definition;
+    std::string parse_error;
+    if (!ActionConfigurationLoader::parse_action(
+            action_config, parsed_definition, parse_error)) {
+        std::cerr << "ERROR: Failed to parse Action configuration for '"
+                  << action_name_ << "': " << parse_error << std::endl;
+        return false;
+    }
+    if (parsed_definition.name != action_name_) {
+        std::cerr << "ERROR: Action configuration name mismatch: expected '"
+                  << action_name_ << "', got '" << parsed_definition.name
+                  << "'." << std::endl;
+        return false;
+    }
+    if (pdu_meta_data_size <= 0) {
+        std::cerr << "ERROR: PDU metadata size must be a positive integer."
+                  << std::endl;
+        return false;
+    }
+    if (client_node_id.has_value()
+        && parsed_definition.client_endpoint.node_id != *client_node_id) {
+        std::cerr << "ERROR: Action client endpoint mismatch for '"
+                  << action_name_ << "': expected nodeId '" << *client_node_id
+                  << "', got '" << parsed_definition.client_endpoint.node_id
+                  << "'." << std::endl;
+        return false;
+    }
 
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -100,8 +125,14 @@ bool ActionServerEndpointImpl::initialize(
         return false;
     }
 
-    // TODO: validate the Action configuration and generated PDU metadata.
-    // TODO: register Goal/Cancel receive callbacks and response channels.
+    action_definition_ = std::move(parsed_definition);
+    pdu_meta_data_size_ = pdu_meta_data_size;
+
+    // TODO(endpoint contract): resolve generated packet base sizes and
+    // transport-specific heap capacities, then register the expanded logical
+    // channels with endpoint_. The logical Action configuration is fully
+    // validated and retained here so this step does not need to reinterpret
+    // the user-facing JSON.
     initialized_ = true;
     return true;
 }

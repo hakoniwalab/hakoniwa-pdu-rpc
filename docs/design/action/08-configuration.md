@@ -50,8 +50,9 @@ TCPやlength-prefixed transportでは、受信フレーム長からPacketサイ�
 
 ```text
 shared memory packet size
-  = generated packet size
-  + transport metadata size
+  = transport metadata size
+  + generated base size
+  + configured heap capacity
 ```
 
 必要な場合に限りTransport設定側で明示的な上書きを許可できますが、Action論理定義へ重複して記述することを標準にはしません。
@@ -198,10 +199,11 @@ goal_id
       -> feedback channel
 ```
 
-Goalがrejectされた場合、または受理後にterminal Resultまで完了した場合、Runtimeは対応するスロットを解放します。
+Goalがrejectされた場合、または受理後にterminal Resultまで完了した場合、Runtimeは対応する応答の配送責務が完了した後にスロットを解放します。
 
 ```text
 pending Goal rejected
+  -> Goal Response(REJECTED) delivery completed
   -> slot release
 
 accepted Goal terminal completion
@@ -215,27 +217,17 @@ accepted Goal terminal completion
 
 Action定義は、事前に予約する通信スロット数を指定します。
 
-既存Service設定との対称性から、初期実装では`maxClients`という名前を利用できます。
+通信スロット数は`slotCount`で指定します。
 
 ```json
 {
   "name": "fibonacci",
   "type": "sample_action_msgs/Fibonacci",
-  "maxClients": 4
+  "slotCount": 4
 }
 ```
 
-ただしActionでは、1 Clientが複数Goalを並行実行する可能性があります。そのため、この値の実質的な意味は「同時に使用可能な通信スロット数」です。
-
-将来的に設定名を整理する場合は、次の候補があります。
-
-```text
-slotCount
-maxConcurrentGoals
-maxChannels
-```
-
-初期実装で`maxClients`を採用する場合でも、Runtime内部ではClient数ではなくスロット数として扱うことを明記します。
+`slotCount`はRuntime／Transportが同時に保持できる通信lane数です。Client接続数でも、Applicationが業務上受理できるGoal数でもありません。共有メモリ実装では1 active Goalが1 slotを占有するため、結果的に通信上のin-flight上限になりますが、Applicationの並列実行Policyとは分離します。
 
 スロットが枯渇した場合のClient API挙動は、後続のエラー契約で定義します。少なくとも、既存Goalのチャネルを再利用して混線させてはなりません。
 
@@ -249,7 +241,7 @@ Action定義は、Action Client RuntimeおよびAction Server RuntimeをEndpoint
 {
   "name": "fibonacci",
   "type": "sample_action_msgs/Fibonacci",
-  "maxClients": 4,
+  "slotCount": 4,
   "clientEndpoint": {
     "nodeId": "fibonacci-client"
   },
@@ -273,7 +265,7 @@ Action定義は、Action Client RuntimeおよびAction Server RuntimeをEndpoint
     {
       "name": "fibonacci",
       "type": "sample_action_msgs/Fibonacci",
-      "maxClients": 4,
+      "slotCount": 4,
       "clientEndpoint": {
         "nodeId": "fibonacci-client"
       },
@@ -308,7 +300,8 @@ channel names
   Slot3Feedback
 
 shared memory only
-  generated packet sizesをRegistryから解決
+  generated base sizesをRegistryから解決
+  Transport設定のheap capacityを加算
   metadata sizeを加算
   PDU definitionsを事前登録
 ```
@@ -321,7 +314,8 @@ shared memory only
 
 - チャネルIDはAction Typeごとに0から連番
 - チャネル名は決定的な命名規則から生成
-- PDUサイズはRegistry生成情報から解決
+- base sizeはRegistry生成情報から解決
+- 可変長bodyのheap capacityはTransport設定から解決
 - Goal開始時に空きスロットを割り当て
 - terminal完了後にスロットを解放
 
@@ -369,19 +363,18 @@ ActiveSlot
 
 1. Action定義ファイルをService定義ファイルに対応する論理構成として追加する。
 2. PDUサイズはAction設定の共通必須項目にしない。
-3. 固定PDUサイズは共有メモリTransportがRegistry生成情報から解決する。
+3. 固定PDUサイズは共有メモリTransportがRegistryのbase size、Transport設定のheap capacity、metadata sizeから解決する。
 4. 同一Action Typeの並行Goalに備え、複数の通信スロットを事前予約する。
 5. 1スロットはRequest、Response、Feedbackの3論理チャネルを持つ。
 6. 論理チャネルIDはAction Typeごとに0から自動採番する。
 7. 各論理チャネルは外部から意味を識別できる決定的なチャネル名を持つ。
 8. Goal開始時に`goal_id`と空きスロットを動的に対応付ける。
-9. Goal終了後にスロットを解放する。
+9. Goal rejectまたはterminal Resultの配送責務が完了した後にスロットを解放する。
 10. スロットとチャネルはTransport routing資源であり、Protocol identityは`goal_id`のままとする。
 11. 初期実装はstatic Endpoint対応を対象とし、dynamic Endpointおよびmux routingは後続で設計する。
 
 ## 12. 未確定事項
 
-- 設定項目名を`maxClients`のままにするか、`slotCount`へ変更するか
 - チャネル名の最終的な大文字小文字および接尾辞規則
 - Action定義ファイルの正式ファイル名と配置
 - 複数Client Endpointを一つのAction定義へ記載する方式

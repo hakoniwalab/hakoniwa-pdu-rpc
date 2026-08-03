@@ -1,5 +1,6 @@
 #pragma once
 
+#include "action_configuration.hpp"
 #include "hakoniwa/pdu/action/action_server_endpoint.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
 #include "hakoniwa/time_source/time_source.hpp"
@@ -81,6 +82,8 @@ private:
 
     std::mutex mutex_;
     std::deque<ServerEvent> pending_events_;
+    std::optional<ActionDefinition> action_definition_;
+    int pdu_meta_data_size_{0};
     bool initialized_{false};
 
     bool decode_request_header(const PduData& packet,
