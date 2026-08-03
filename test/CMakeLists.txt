@@ -25,6 +25,36 @@ endif()
 # separately by the Python CFFI integration suite.
 set(HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY hakoniwa_pdu_rpc::rpc)
 
+add_executable(hakoniwa_pdu_action_configuration_test
+  action_configuration_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_configuration_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_include_directories(hakoniwa_pdu_action_configuration_test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_compile_definitions(hakoniwa_pdu_action_configuration_test PRIVATE
+  ACTION_CONFIG_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../config/sample/action.json"
+)
+add_test(NAME hakoniwa_pdu_action_configuration_test COMMAND hakoniwa_pdu_action_configuration_test)
+set_tests_properties(hakoniwa_pdu_action_configuration_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_server_initialization_test
+  action_server_initialization_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_server_initialization_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_include_directories(hakoniwa_pdu_action_server_initialization_test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+add_test(NAME hakoniwa_pdu_action_server_initialization_test COMMAND hakoniwa_pdu_action_server_initialization_test)
+set_tests_properties(hakoniwa_pdu_action_server_initialization_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_packet_codec_test
+  action_packet_codec_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_packet_codec_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+add_test(NAME hakoniwa_pdu_action_packet_codec_test COMMAND hakoniwa_pdu_action_packet_codec_test)
+set_tests_properties(hakoniwa_pdu_action_packet_codec_test PROPERTIES TIMEOUT 30)
+
 add_executable(hakoniwa_pdu_rpc_basic_test
   rpc_basic_contract_test.cpp
 )

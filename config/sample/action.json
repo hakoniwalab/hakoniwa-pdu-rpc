@@ -1,0 +1,15 @@
+{
+  "actions": [
+    {
+      "name": "fibonacci",
+      "type": "sample_action_msgs/Fibonacci",
+      "slotCount": 4,
+      "clientEndpoint": {
+        "nodeId": "fibonacci-client"
+      },
+      "serverEndpoint": {
+        "nodeId": "fibonacci-server"
+      }
+    }
+  ]
+}
