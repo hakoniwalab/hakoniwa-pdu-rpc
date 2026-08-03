@@ -15,30 +15,40 @@ using GoalToken = std::uint64_t;
 inline constexpr EventToken INVALID_EVENT_TOKEN = 0;
 inline constexpr GoalToken INVALID_GOAL_TOKEN = 0;
 
+inline bool is_valid_goal_id(const GoalId& goal_id) noexcept {
+    for (auto byte : goal_id) {
+        if (byte != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // High-level client code should retain this handle rather than manipulate a
 // GoalId directly. GoalId remains available for adapters that must preserve an
 // external protocol identity, such as a ROS 2 Action bridge.
+//
+// The all-zero GoalId is reserved as invalid. Runtime-generated IDs must be
+// non-zero, and an explicitly requested all-zero ID must be rejected.
 struct ClientGoalHandle {
     GoalId goal_id{};
 
-    bool valid() const noexcept {
-        for (auto byte : goal_id) {
-            if (byte != 0) {
-                return true;
-            }
-        }
-        return false;
-    }
+    bool valid() const noexcept { return is_valid_goal_id(goal_id); }
 };
 
-// Server-side long-lived handle. event_token is intentionally not included:
-// it is a one-shot decision token, while goal_token survives until terminal
-// completion commits.
+// Server event metadata for an accepted Goal. This groups the wire identity
+// and the Runtime-local capability so an Application can identify the target
+// of CANCEL_REQUEST and RUNTIME_CANCEL_REQUEST events.
+//
+// Server operations continue to use goal_token directly. This type is not a
+// replacement for event_token, which remains a one-shot decision token.
 struct ServerGoalHandle {
     GoalId goal_id{};
     GoalToken goal_token{INVALID_GOAL_TOKEN};
 
-    bool valid() const noexcept { return goal_token != INVALID_GOAL_TOKEN; }
+    bool valid() const noexcept {
+        return is_valid_goal_id(goal_id) && goal_token != INVALID_GOAL_TOKEN;
+    }
 };
 
 // These values describe logical runtime events. Wire-level values are defined
@@ -63,13 +73,9 @@ enum class ServerEventType : std::uint8_t {
     ERROR = 4
 };
 
-enum class GoalDecision : std::uint8_t {
-    UNSPECIFIED = 0,
-    ACCEPTED = 1,
-    REJECTED = 2
-};
-
-enum class CancelDecision : std::uint8_t {
+// GOAL_RESPONSE and CANCEL_RESPONSE share the same accepted/rejected value
+// domain. The event type determines which decision this field represents.
+enum class Decision : std::uint8_t {
     UNSPECIFIED = 0,
     ACCEPTED = 1,
     REJECTED = 2
@@ -100,8 +106,7 @@ struct ClientEvent {
     ClientEventType type{ClientEventType::NONE};
     std::string action_name;
     ClientGoalHandle goal;
-    GoalDecision goal_decision{GoalDecision::UNSPECIFIED};
-    CancelDecision cancel_decision{CancelDecision::UNSPECIFIED};
+    Decision decision{Decision::UNSPECIFIED};
     TerminalStatus terminal_status{TerminalStatus::UNSPECIFIED};
     std::uint32_t feedback_sequence{0};
     PduData pdu;
@@ -119,6 +124,7 @@ struct ServerEvent {
 
 // Event field contract:
 //   GOAL_REQUEST:           goal.goal_token == INVALID_GOAL_TOKEN
+//                           and goal.goal_id is non-zero
 //   CANCEL_REQUEST:         goal identifies the accepted target Goal
 //   RUNTIME_CANCEL_REQUEST: goal identifies the target Goal and cause is set
 // event_token is consumed by exactly one accept/reject operation.
