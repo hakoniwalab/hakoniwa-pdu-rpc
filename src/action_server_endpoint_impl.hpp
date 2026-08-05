@@ -12,9 +12,11 @@
 #include "hako_action_msgs/pdu_cpptype_conv_ActionResponseHeader.hpp"
 #include "pdu_convertor.hpp"
 
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace hakoniwa::pdu::action {
@@ -22,9 +24,9 @@ namespace hakoniwa::pdu::action {
 /**
  * Initial native implementation outline for IActionServerEndpoint.
  *
- * This class deliberately contains only lifecycle and queue scaffolding. The
- * generated Action PDU conversion, Goal Context state machine, token allocation,
- * and transport callbacks are implemented in subsequent steps.
+ * This class deliberately contains only lifecycle and queue scaffolding.
+ * The generated Action PDU conversion, Goal Context state machine, and
+ * transport callbacks are implemented in subsequent steps.
  */
 class ActionServerEndpointImpl final : public IActionServerEndpoint {
 public:
@@ -36,23 +38,24 @@ public:
 
     ~ActionServerEndpointImpl() override = default;
 
-    bool initialize(const nlohmann::json& action_config,
-                    int pdu_meta_data_size,
-                    std::optional<std::string> client_node_id = std::nullopt) override;
+    bool initialize(const nlohmann::json& action_config) override;
 
     ServerEventType poll(ServerEvent& event_out) override;
 
-    bool accept_goal(EventToken event_token,
-                     GoalToken& goal_token_out) override;
-    bool reject_goal(EventToken event_token) override;
-    bool accept_cancel(EventToken event_token) override;
-    bool reject_cancel(EventToken event_token) override;
+    bool accept_goal(const ServerGoalHandle& goal) override;
+    bool reject_goal(const ServerGoalHandle& goal) override;
 
-    bool send_feedback(GoalToken goal_token,
-                       const PduData& feedback_pdu) override;
-    bool complete(GoalToken goal_token,
-                  TerminalStatus status,
-                  const PduData& result_pdu) override;
+    bool accept_cancel(const ServerGoalHandle& goal) override;
+    bool reject_cancel(const ServerGoalHandle& goal) override;
+
+    bool send_feedback(
+        const ServerGoalHandle& goal,
+        const PduData& feedback_pdu) override;
+
+    bool complete(
+        const ServerGoalHandle& goal,
+        TerminalStatus status,
+        const PduData& result_pdu) override;
 
     void clear_pending_events() override;
 
@@ -71,10 +74,12 @@ private:
         HakoCpp_ActionRequestHeader,
         hako::pdu::msgs::hako_action_msgs::ActionRequestHeader>
         request_header_convertor_;
+
     hako::pdu::PduConvertor<
         HakoCpp_ActionResponseHeader,
         hako::pdu::msgs::hako_action_msgs::ActionResponseHeader>
         response_header_convertor_;
+
     hako::pdu::PduConvertor<
         HakoCpp_ActionFeedbackHeader,
         hako::pdu::msgs::hako_action_msgs::ActionFeedbackHeader>
@@ -86,22 +91,40 @@ private:
     int pdu_meta_data_size_{0};
     bool initialized_{false};
 
-    bool decode_request_header(const PduData& packet,
-                               HakoCpp_ActionRequestHeader& header_out);
-    bool validate_request_header(const HakoCpp_ActionRequestHeader& header) const;
-    bool write_response_header(PduData& initialized_packet,
-                               HakoCpp_ActionResponseHeader& header);
-    bool write_feedback_header(PduData& initialized_packet,
-                               HakoCpp_ActionFeedbackHeader& header);
+    bool decode_request_header(
+        const PduData& packet,
+        HakoCpp_ActionRequestHeader& header_out);
+
+    bool validate_request_header(
+        const HakoCpp_ActionRequestHeader& header) const;
+
+    bool write_response_header(
+        PduData& initialized_packet,
+        HakoCpp_ActionResponseHeader& header);
+
+    bool write_feedback_header(
+        PduData& initialized_packet,
+        HakoCpp_ActionFeedbackHeader& header);
 
     // TODO(endpoint contract): resolve Action packet keys, sizes, and routing,
     // then register Goal/Cancel receive callbacks with endpoint_.
+    //
     // TODO(endpoint contract): create complete ActionResponse/ActionFeedback
     // packets before write_*_header() overlays their common Header prefix.
-    // TODO: add Goal Context map keyed by GoalId and GoalToken.
-    // TODO: add one-shot EventToken allocation and validation.
-    // TODO: centralize all Goal state changes in one locked transition function.
+    //
+    // TODO: add a Goal Context map keyed by GoalId.
+    //
+    // TODO: reject duplicate non-terminal GoalIds before enqueueing a
+    // GOAL_REQUEST.
+    //
+    // TODO: track pending Goal and Cancel decisions by GoalId.
+    // At most one undecided request of each kind may exist for a Goal.
+    //
+    // TODO: centralize all Goal state changes in one locked transition
+    // function.
+    //
     // TODO: implement atomic terminal-result versus cancel-accept arbitration.
+    //
     // TODO: add Runtime-origin Cancel events for disconnect and shutdown.
 };
 

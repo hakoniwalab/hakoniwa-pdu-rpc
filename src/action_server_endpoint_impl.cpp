@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <utility>
 
 namespace hakoniwa::pdu::action {
 
@@ -14,8 +15,10 @@ bool ActionServerEndpointImpl::decode_request_header(
     if (packet.empty()) {
         return false;
     }
+
     return request_header_convertor_.pdu2cpp(
-        reinterpret_cast<char*>(const_cast<std::uint8_t*>(packet.data())),
+        reinterpret_cast<char*>(
+            const_cast<std::uint8_t*>(packet.data())),
         header_out);
 }
 
@@ -25,13 +28,18 @@ bool ActionServerEndpointImpl::validate_request_header(
     if (header.version != ACTION_PROTOCOL_VERSION) {
         return false;
     }
+
     if (header.request_kind != REQUEST_KIND_GOAL
         && header.request_kind != REQUEST_KIND_CANCEL) {
         return false;
     }
+
     return std::any_of(
-        header.goal_id.begin(), header.goal_id.end(),
-        [](std::uint8_t value) { return value != 0; });
+        header.goal_id.begin(),
+        header.goal_id.end(),
+        [](std::uint8_t value) {
+            return value != 0;
+        });
 }
 
 bool ActionServerEndpointImpl::write_response_header(
@@ -41,8 +49,10 @@ bool ActionServerEndpointImpl::write_response_header(
     if (initialized_packet.empty()) {
         return false;
     }
+
     auto* base_ptr = static_cast<char*>(
         hako_get_base_ptr_pdu(initialized_packet.data()));
+
     if (base_ptr == nullptr) {
         return false;
     }
@@ -61,8 +71,10 @@ bool ActionServerEndpointImpl::write_feedback_header(
     if (initialized_packet.empty()) {
         return false;
     }
+
     auto* base_ptr = static_cast<char*>(
         hako_get_base_ptr_pdu(initialized_packet.data()));
+
     if (base_ptr == nullptr) {
         return false;
     }
@@ -86,35 +98,32 @@ ActionServerEndpointImpl::ActionServerEndpointImpl(
 }
 
 bool ActionServerEndpointImpl::initialize(
-    const nlohmann::json& action_config,
-    int pdu_meta_data_size,
-    std::optional<std::string> client_node_id)
+    const nlohmann::json& action_config)
 {
     ActionDefinition parsed_definition;
     std::string parse_error;
+
     if (!ActionConfigurationLoader::parse_action(
-            action_config, parsed_definition, parse_error)) {
-        std::cerr << "ERROR: Failed to parse Action configuration for '"
-                  << action_name_ << "': " << parse_error << std::endl;
+            action_config,
+            parsed_definition,
+            parse_error)) {
+        std::cerr
+            << "ERROR: Failed to parse Action configuration for '"
+            << action_name_
+            << "': "
+            << parse_error
+            << std::endl;
         return false;
     }
+
     if (parsed_definition.name != action_name_) {
-        std::cerr << "ERROR: Action configuration name mismatch: expected '"
-                  << action_name_ << "', got '" << parsed_definition.name
-                  << "'." << std::endl;
-        return false;
-    }
-    if (pdu_meta_data_size <= 0) {
-        std::cerr << "ERROR: PDU metadata size must be a positive integer."
-                  << std::endl;
-        return false;
-    }
-    if (client_node_id.has_value()
-        && parsed_definition.client_endpoint.node_id != *client_node_id) {
-        std::cerr << "ERROR: Action client endpoint mismatch for '"
-                  << action_name_ << "': expected nodeId '" << *client_node_id
-                  << "', got '" << parsed_definition.client_endpoint.node_id
-                  << "'." << std::endl;
+        std::cerr
+            << "ERROR: Action configuration name mismatch: expected '"
+            << action_name_
+            << "', got '"
+            << parsed_definition.name
+            << "'."
+            << std::endl;
         return false;
     }
 
@@ -126,95 +135,123 @@ bool ActionServerEndpointImpl::initialize(
     }
 
     action_definition_ = std::move(parsed_definition);
-    pdu_meta_data_size_ = pdu_meta_data_size;
 
-    // TODO(endpoint contract): resolve generated packet base sizes and
-    // transport-specific heap capacities, then register the expanded logical
-    // channels with endpoint_. The logical Action configuration is fully
-    // validated and retained here so this step does not need to reinterpret
-    // the user-facing JSON.
+    // TODO(endpoint contract):
+    // Resolve the Action request, response, and feedback packet definitions
+    // from endpoint_, then register the receive callbacks and routing for each
+    // configured slot.
+    //
+    // Packet sizes and transport-specific metadata are owned by Endpoint and
+    // its PDU/transport configuration. They are not part of the Action API.
     initialized_ = true;
     return true;
 }
 
-ServerEventType ActionServerEndpointImpl::poll(ServerEvent& event_out)
+ServerEventType ActionServerEndpointImpl::poll(
+    ServerEvent& event_out)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
     event_out = ServerEvent{};
+
     if (!initialized_ || pending_events_.empty()) {
         return ServerEventType::NONE;
     }
 
     event_out = std::move(pending_events_.front());
     pending_events_.pop_front();
+
     return event_out.type;
 }
 
-bool ActionServerEndpointImpl::accept_goal(
-    EventToken event_token,
-    GoalToken& goal_token_out)
+bool ActionServerEndpointImpl::accept_goal(const ServerGoalHandle& goal)
 {
-    (void)event_token;
-    goal_token_out = INVALID_GOAL_TOKEN;
+    (void)goal;
 
-    // TODO: consume a GOAL_REQUEST event token, create a Goal Context, allocate
-    // a non-zero GoalToken, and emit GOAL_RESPONSE(ACCEPTED).
+    // TODO:
     return false;
 }
 
-bool ActionServerEndpointImpl::reject_goal(EventToken event_token)
+bool ActionServerEndpointImpl::reject_goal(
+    const ServerGoalHandle& goal)
 {
-    (void)event_token;
+    (void)goal;
 
-    // TODO: consume a GOAL_REQUEST event token and emit
-    // GOAL_RESPONSE(REJECTED) without creating a Goal Context.
+    // TODO:
+    // - validate goal_id
+    // - find the pending GOAL_REQUEST Context keyed by goal_id
+    // - ensure that the Goal decision is still pending
+    // - send GOAL_RESPONSE(REJECTED)
+    // - release the pending Goal Context after delivery responsibility ends
     return false;
 }
 
-bool ActionServerEndpointImpl::accept_cancel(EventToken event_token)
+bool ActionServerEndpointImpl::accept_cancel(
+    const ServerGoalHandle& goal)
 {
-    (void)event_token;
+    (void)goal;
 
-    // TODO: atomically arbitrate cancel acceptance against terminal completion.
-    // Client-origin cancellation emits CANCEL_RESPONSE(ACCEPTED); Runtime-origin
-    // cancellation does not emit a Client response.
+    // TODO:
+    // - find the accepted Goal Context keyed by goal_id
+    // - ensure that a Cancel decision is pending
+    // - atomically arbitrate Cancel acceptance against terminal completion
+    // - transition EXECUTING -> CANCELING
+    // - send CANCEL_RESPONSE(ACCEPTED) for a Client-origin Cancel
+    //
+    // Runtime-origin cancellation does not emit a Client Cancel Response.
     return false;
 }
 
-bool ActionServerEndpointImpl::reject_cancel(EventToken event_token)
+bool ActionServerEndpointImpl::reject_cancel(
+    const ServerGoalHandle& goal)
 {
-    (void)event_token;
+    (void)goal;
 
-    // TODO: consume the pending Cancel event. Client-origin cancellation emits
-    // CANCEL_RESPONSE(REJECTED); Runtime-origin rejection remains local.
+    // TODO:
+    // - find the accepted Goal Context keyed by goal_id
+    // - ensure that a Cancel decision is pending
+    // - clear the pending Cancel decision
+    // - keep the Goal in EXECUTING
+    // - send CANCEL_RESPONSE(REJECTED) for a Client-origin Cancel
+    //
+    // Runtime-origin rejection remains local to the Runtime.
     return false;
 }
 
 bool ActionServerEndpointImpl::send_feedback(
-    GoalToken goal_token,
+    const ServerGoalHandle& goal,
     const PduData& feedback_pdu)
 {
-    (void)goal_token;
+    (void)goal;
     (void)feedback_pdu;
 
-    // TODO: validate EXECUTING state, assign the per-Goal feedback sequence,
-    // encode the generated Feedback PDU, and send it through endpoint_.
+    // TODO:
+    // - find the Goal Context keyed by goal_id
+    // - require the Goal to be EXECUTING
+    // - assign and increment the per-Goal feedback sequence
+    // - write the Action Feedback Header
+    // - send the complete generated Feedback PDU through endpoint_
     return false;
 }
 
 bool ActionServerEndpointImpl::complete(
-    GoalToken goal_token,
+    const ServerGoalHandle& goal,
     TerminalStatus status,
     const PduData& result_pdu)
 {
-    (void)goal_token;
+    (void)goal;
     (void)status;
     (void)result_pdu;
 
-    // TODO: validate the terminal status and commit exactly one immutable
-    // terminal Result. If Result wins over a pending Cancel, invalidate the
-    // Cancel EventToken and emit no Cancel Response.
+    // TODO:
+    // - find the Goal Context keyed by goal_id
+    // - validate status against the current Goal state
+    // - commit exactly one immutable terminal Result
+    // - atomically arbitrate terminal completion against Cancel acceptance
+    // - if Result wins, close any pending Cancel decision without emitting a
+    //   Cancel Response
+    // - transition the Goal Context to FINISHING
+    // - release the Context after Result delivery responsibility ends
     return false;
 }
 

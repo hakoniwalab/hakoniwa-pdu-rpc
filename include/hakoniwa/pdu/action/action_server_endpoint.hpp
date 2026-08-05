@@ -13,23 +13,21 @@ class IActionServerEndpoint {
 public:
     virtual ~IActionServerEndpoint() = default;
 
-    virtual bool initialize(const nlohmann::json& action_config,
-                            int pdu_meta_data_size,
-                            std::optional<std::string> client_node_id = std::nullopt) = 0;
+    virtual bool initialize(const nlohmann::json& action_config) = 0;
 
     virtual ServerEventType poll(ServerEvent& event_out) = 0;
 
     // event_token is one-shot and is consumed by exactly one accept/reject call.
     // Accepting a goal creates a long-lived goal_token used for feedback and
     // terminal completion.
-    virtual bool accept_goal(EventToken event_token, GoalToken& goal_token_out) = 0;
-    virtual bool reject_goal(EventToken event_token) = 0;
-    virtual bool accept_cancel(EventToken event_token) = 0;
-    virtual bool reject_cancel(EventToken event_token) = 0;
+    virtual bool accept_goal(const ServerGoalHandle& goal) = 0;
+    virtual bool reject_goal(const ServerGoalHandle& goal) = 0;
+    virtual bool accept_cancel(const ServerGoalHandle& goal) = 0;
+    virtual bool reject_cancel(const ServerGoalHandle& goal) = 0;
 
-    virtual bool send_feedback(GoalToken goal_token,
-                               const PduData& feedback_pdu) = 0;
-    virtual bool complete(GoalToken goal_token,
+    virtual bool send_feedback(const ServerGoalHandle& goal,
+        const PduData& feedback_pdu) = 0;
+    virtual bool complete(const ServerGoalHandle& goal,
                           TerminalStatus status,
                           const PduData& result_pdu) = 0;
 

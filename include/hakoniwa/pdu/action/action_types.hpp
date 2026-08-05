@@ -9,11 +9,6 @@ namespace hakoniwa::pdu::action {
 
 using PduData = std::vector<std::uint8_t>;
 using GoalId = std::array<std::uint8_t, 16>;
-using EventToken = std::uint64_t;
-using GoalToken = std::uint64_t;
-
-inline constexpr EventToken INVALID_EVENT_TOKEN = 0;
-inline constexpr GoalToken INVALID_GOAL_TOKEN = 0;
 
 inline bool is_valid_goal_id(const GoalId& goal_id) noexcept {
     for (auto byte : goal_id) {
@@ -36,18 +31,19 @@ struct ClientGoalHandle {
     bool valid() const noexcept { return is_valid_goal_id(goal_id); }
 };
 
-// Server event metadata for an accepted Goal. This groups the wire identity
-// and the Runtime-local capability so an Application can identify the target
-// of CANCEL_REQUEST and RUNTIME_CANCEL_REQUEST events.
+// Server-side typed handle for a Goal identity.
 //
-// Server operations continue to use goal_token directly. This type is not a
-// replacement for event_token, which remains a one-shot decision token.
+// GOAL_REQUEST carries a valid GoalId before the Goal is accepted.
+// CANCEL_REQUEST and RUNTIME_CANCEL_REQUEST carry the same GoalId for an
+// already accepted Goal.
+//
+// ClientGoalHandle and ServerGoalHandle intentionally remain distinct types
+// so that client-side and server-side API values cannot be mixed accidentally.
 struct ServerGoalHandle {
     GoalId goal_id{};
-    GoalToken goal_token{INVALID_GOAL_TOKEN};
 
     bool valid() const noexcept {
-        return is_valid_goal_id(goal_id) && goal_token != INVALID_GOAL_TOKEN;
+        return is_valid_goal_id(goal_id);
     }
 };
 
@@ -114,11 +110,9 @@ struct ClientEvent {
 
 struct ServerEvent {
     ServerEventType type{ServerEventType::NONE};
-    EventToken event_token{INVALID_EVENT_TOKEN};
     ServerGoalHandle goal;
     RuntimeCancelCause runtime_cancel_cause{RuntimeCancelCause::UNSPECIFIED};
     std::string action_name;
-    std::string client_name;
     PduData pdu;
 };
 
