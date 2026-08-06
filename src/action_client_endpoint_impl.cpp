@@ -168,6 +168,20 @@ bool ActionClientEndpointImpl::decode_response_header(
         header_out);
 }
 
+bool ActionClientEndpointImpl::decode_feedback_header(
+    const PduData& packet,
+    HakoCpp_ActionFeedbackHeader& header_out) const
+{
+    if (!valid_packet_prefix(packet, sizeof(Hako_ActionFeedbackHeader))) {
+        return false;
+    }
+    hako::pdu::msgs::hako_action_msgs::ActionFeedbackHeader convertor;
+    return convertor.pdu2cpp(
+        reinterpret_cast<char*>(
+            const_cast<std::uint8_t*>(packet.data())),
+        header_out);
+}
+
 bool ActionClientEndpointImpl::initialize(
     const nlohmann::json& action_config)
 {
@@ -273,7 +287,26 @@ bool ActionClientEndpointImpl::initialize(
                     }
                     std::lock_guard<std::mutex> lock(queue->mutex);
                     queue->packets.push_back(PendingPacket{
-                        slot_index, std::move(packet)});
+                        slot_index,
+                        PendingPacketKind::RESPONSE,
+                        std::move(packet)});
+                }
+            });
+        endpoint_->subscribe_on_recv_callback(
+            slot.feedback,
+            [weak_queue, slot_index](
+                const hakoniwa::pdu::PduResolvedKey&,
+                std::span<const std::byte> data) {
+                if (auto queue = weak_queue.lock()) {
+                    PduData packet(data.size());
+                    if (!data.empty()) {
+                        std::memcpy(packet.data(), data.data(), data.size());
+                    }
+                    std::lock_guard<std::mutex> lock(queue->mutex);
+                    queue->packets.push_back(PendingPacket{
+                        slot_index,
+                        PendingPacketKind::FEEDBACK,
+                        std::move(packet)});
                 }
             });
     }
@@ -394,7 +427,9 @@ ClientEventType ActionClientEndpointImpl::poll(ClientEvent& event_out)
         }
     }
 
-    if (has_packet && pending.slot_index < slot_routing_.size()) {
+    if (has_packet
+        && pending.kind == PendingPacketKind::RESPONSE
+        && pending.slot_index < slot_routing_.size()) {
         const auto& routing = slot_routing_[pending.slot_index];
         std::size_t received_size = 0;
         HakoCpp_ActionResponseHeader header{};
@@ -430,6 +465,47 @@ ClientEventType ActionClientEndpointImpl::poll(ClientEvent& event_out)
                     release_binding_locked(binding);
                 }
                 return event_out.type;
+            }
+        }
+    }
+
+    if (has_packet
+        && pending.kind == PendingPacketKind::FEEDBACK
+        && pending.slot_index < slot_routing_.size()) {
+        const auto& routing = slot_routing_[pending.slot_index];
+        std::size_t received_size = 0;
+        HakoCpp_ActionFeedbackHeader header{};
+        if (validate_packet_capacity(
+                pending.pdu,
+                routing.feedback_packet_type,
+                routing.feedback_packet_base_size,
+                routing.feedback_heap_capacity,
+                true,
+                received_size)
+            && decode_feedback_header(pending.pdu, header)
+            && header.version == ACTION_PROTOCOL_VERSION
+            && is_valid_goal_id(header.goal_id)) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            const auto binding = packet_bindings_.find(header.goal_id);
+            if (binding != packet_bindings_.end()
+                && binding->second.slot_index == pending.slot_index
+                && binding->second.state == BindingState::ACCEPTED) {
+                if (header.sequence_no
+                    != binding->second.next_feedback_sequence) {
+                    std::cerr
+                        << "ERROR: Out-of-order Action Feedback ignored for action '"
+                        << action_name_
+                        << "'."
+                        << std::endl;
+                } else {
+                    event_out.type = ClientEventType::FEEDBACK;
+                    event_out.action_name = action_name_;
+                    event_out.goal.goal_id = header.goal_id;
+                    event_out.feedback_sequence = header.sequence_no;
+                    event_out.pdu = std::move(pending.pdu);
+                    ++binding->second.next_feedback_sequence;
+                    return event_out.type;
+                }
             }
         }
     }

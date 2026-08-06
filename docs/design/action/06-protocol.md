@@ -324,8 +324,12 @@ response_kind = RESULT:
 ```text
 uint32 sequence_no
 初期値 = 0
-Feedback送信ごとに1増加
+Feedback送信成功ごとに1増加
 ```
+
+採番はGoalごとにServer Runtimeが所有します。送信失敗時は番号を進めず、明示的な再試行では同じ番号を使用します。Client RuntimeはGoalごとの期待値と一致するFeedbackだけを上位Applicationへ配送し、重複、逆転、欠番を診断対象として無視します。`uint32`の最大値後はmoduloで0へ戻ります。
+
+ROS 2 ActionのFeedback契約にはsequence番号がないため、ROS Bridgeは`sequence_no`をROS Feedbackへ露出しません。これは箱庭Runtime内部の配送検査用フィールドです。
 
 ### 8.7 未使用bodyの既定値
 
@@ -386,7 +390,7 @@ byte order、padding、可変長body、固定サイズはPDU Registryの生成�
 2. `response_kind`の数値割り当てを`GOAL=1`、`CANCEL=2`、`RESULT=3`とするか。
 3. `status`をresponse kind依存の共用フィールドとするか。
 4. 未使用bodyを生成型の通常の既定値で初期化し、受信側が解釈しない方針でよいか。
-5. `sequence_no`を0開始とするか。
+5. `sequence_no`はGoalごとに0開始、送信成功時のみ加算する。
 
 ## 12. 対象外
 

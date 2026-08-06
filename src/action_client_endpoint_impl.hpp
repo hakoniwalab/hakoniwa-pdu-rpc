@@ -4,8 +4,10 @@
 #include "hakoniwa/pdu/action/action_client_endpoint.hpp"
 #include "hakoniwa/pdu/endpoint.hpp"
 #include "hakoniwa/time_source/time_source.hpp"
+#include "hako_action_msgs/pdu_cpptype_ActionFeedbackHeader.hpp"
 #include "hako_action_msgs/pdu_cpptype_ActionRequestHeader.hpp"
 #include "hako_action_msgs/pdu_cpptype_ActionResponseHeader.hpp"
+#include "hako_action_msgs/pdu_cpptype_conv_ActionFeedbackHeader.hpp"
 #include "hako_action_msgs/pdu_cpptype_conv_ActionRequestHeader.hpp"
 #include "hako_action_msgs/pdu_cpptype_conv_ActionResponseHeader.hpp"
 #include "hako_action_msgs/pdu_ctype_ActionFeedbackHeader.h"
@@ -76,10 +78,17 @@ private:
         BindingState state{BindingState::AWAITING_GOAL_RESPONSE};
         std::uint64_t sent_at_usec{0};
         std::uint64_t timeout_usec{0};
+        std::uint32_t next_feedback_sequence{0};
+    };
+
+    enum class PendingPacketKind : std::uint8_t {
+        RESPONSE,
+        FEEDBACK,
     };
 
     struct PendingPacket {
         std::size_t slot_index{0};
+        PendingPacketKind kind{PendingPacketKind::RESPONSE};
         PduData pdu;
     };
 
@@ -116,6 +125,9 @@ private:
     bool decode_response_header(
         const PduData& packet,
         HakoCpp_ActionResponseHeader& header_out) const;
+    bool decode_feedback_header(
+        const PduData& packet,
+        HakoCpp_ActionFeedbackHeader& header_out) const;
     void release_binding_locked(
         std::map<GoalId, ClientPacketBinding>::iterator binding);
 };

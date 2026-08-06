@@ -194,7 +194,7 @@ Feedbackは0回でも複数回でも構いません。
 
 汎用的な進捗率は共通ヘッダに持たせません。進捗率、途中経路、現在の処理対象などの意味はActionごとに異なるため、Action固有のFeedback bodyに定義します。
 
-Feedbackの順序確認には`sequence_no`を使用する案を採用していますが、欠落、重複、逆転をどのように扱うかはProtocol設計で定義します。
+Feedbackの順序確認にはGoalごとに0から始まる`sequence_no`を使用します。Runtimeは送信成功時だけ番号を1増加させます。Client Runtimeは期待値と一致しない重複、逆転、欠番FeedbackをApplicationへ配送せず、診断対象として無視します。この番号は箱庭Runtime内部の配送検査に使用し、ROS 2 Feedbackへ露出しません。
 
 ## 8. Result
 

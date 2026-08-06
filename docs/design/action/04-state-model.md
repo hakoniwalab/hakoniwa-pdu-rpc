@@ -295,8 +295,9 @@ Protocolは次のみを規定します。
 - Feedbackは0回以上発行できる。
 - Feedbackは非終端通知である。
 - Feedbackは`goal_id`で相関する。
-- `sequence_no`はGoalごとに単調増加する。
-- Runtimeが`sequence_no`を採番することを推奨する。
+- `sequence_no`はGoalごとに0から開始する。
+- Server RuntimeはFeedback送信成功時だけ`sequence_no`を1増加させる。
+- Client Runtimeは期待値と一致しないFeedbackをApplicationへ配送せず、診断対象として無視する。
 - `FINISHING`へ遷移した後、新規Feedbackを受理しない。
 
 `CANCELING`中のFeedbackも`ALLOW`とします。停止処理の進捗を通知するかどうか、またその内容と周期はServer Applicationが決定します。これはROS 2の一般的なServer APIより広い箱庭独自の許容仕様です。

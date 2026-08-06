@@ -228,6 +228,8 @@ unknown `goal_id`へのAPI呼び出しも`APPLICATION_API_ERROR`とします。
 
 pending Contextが存在しないCancel Responseは、Client Application APIの誤用ではありません。相関不能、遅延、重複したProtocol応答としてApplicationへ通知せず、診断を記録して`IGNORE`します。
 
+Feedbackの期待sequenceはGoal accept時に0で初期化します。受信した`sequence_no`が期待値と一致した場合だけApplicationへ通知して期待値を1増加させます。重複、逆転、欠番は通常Feedbackとして通知せず診断対象として無視します。`uint32`の最大値後はmoduloで0へ戻ります。
+
 `RESULT_RECEIVED`に含まれるterminal statusは、少なくとも`SUCCEEDED`、`CANCELED`、`ABORTED`を扱います。
 
 Server側がRuntime起因Cancelを開始した場合、Client endpointが切断済みならCancel Responseを受信しない可能性があります。再接続後の状態照会、Result再取得、遅延Cancel Responseの扱いは後続Protocolで定義します。

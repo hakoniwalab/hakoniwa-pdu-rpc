@@ -440,7 +440,7 @@ FeedbackをRuntimeがキューイングするか、Endpointイベントをその
 
 1. Goalのaccept/reject判断をRuntimeとApplicationでどこまで分けるか。
 2. Applicationへ渡すGoalHandleまたはContextの最小責務は何か。
-3. Feedbackの`sequence_no`採番はRuntimeが所有すべきか。
+3. Feedbackの`sequence_no`はServer RuntimeがGoalごとに0から採番し、Client Runtimeが順序検査に使用する。ROS BridgeはROS Feedbackへ露出しない。
 4. Result bodyの有効性をProtocolで規定するか、Action Typeの契約へ委ねるか。
 5. Action execution deadlineとqueue wait timeoutをどの層が所有するか。
 6. ROS Bridgeに残さざるを得ない状態管理はどこまでか。

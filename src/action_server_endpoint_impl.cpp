@@ -774,16 +774,53 @@ bool ActionServerEndpointImpl::send_feedback(
     const ServerGoalHandle& goal,
     const PduData& feedback_pdu)
 {
-    (void)goal;
-    (void)feedback_pdu;
+    if (!goal.valid()) {
+        return false;
+    }
 
-    // TODO:
-    // - find the Goal Context keyed by goal_id
-    // - require the Goal to be EXECUTING
-    // - assign and increment the per-Goal feedback sequence
-    // - write the Action Feedback Header
-    // - send the complete generated Feedback PDU through endpoint_
-    return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!initialized_) {
+        return false;
+    }
+    const auto binding = packet_bindings_.find(goal.goal_id);
+    if (binding == packet_bindings_.end()
+        || binding->second.state != PacketBindingState::GOAL_ACCEPTED
+        || binding->second.slot_index >= slot_routing_.size()) {
+        return false;
+    }
+
+    const auto& routing = slot_routing_[binding->second.slot_index];
+    PduData packet = feedback_pdu;
+    std::size_t wire_size = 0;
+    if (!validate_packet_capacity(
+            packet,
+            routing.feedback_packet_type,
+            routing.feedback_packet_base_size,
+            routing.feedback_heap_capacity,
+            false,
+            wire_size)) {
+        return false;
+    }
+
+    HakoCpp_ActionFeedbackHeader header{};
+    header.version = ACTION_PROTOCOL_VERSION;
+    header.reserved = {0, 0, 0};
+    header.goal_id = goal.goal_id;
+    header.sequence_no = binding->second.next_feedback_sequence;
+    if (!write_feedback_header(packet, header)) {
+        return false;
+    }
+    if (endpoint_->send(
+            routing.feedback,
+            std::as_bytes(std::span(packet.data(), wire_size)))
+        != HAKO_PDU_ERR_OK) {
+        return false;
+    }
+
+    // Sequence numbers describe successfully committed wire sends. A failed
+    // send keeps the same number available for an explicit retry.
+    ++binding->second.next_feedback_sequence;
+    return true;
 }
 
 bool ActionServerEndpointImpl::complete(

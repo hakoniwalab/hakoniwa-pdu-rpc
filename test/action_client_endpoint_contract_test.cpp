@@ -3,8 +3,10 @@
 #include "hakoniwa/pdu/endpoint.hpp"
 #include "hakoniwa/time_source/virtual_time_source.hpp"
 #include "sample_action_msgs/pdu_cpptype_FibonacciActionRequest.hpp"
+#include "sample_action_msgs/pdu_cpptype_FibonacciActionFeedback.hpp"
 #include "sample_action_msgs/pdu_cpptype_FibonacciActionResponse.hpp"
 #include "sample_action_msgs/pdu_cpptype_conv_FibonacciActionRequest.hpp"
+#include "sample_action_msgs/pdu_cpptype_conv_FibonacciActionFeedback.hpp"
 #include "sample_action_msgs/pdu_cpptype_conv_FibonacciActionResponse.hpp"
 
 #include <gtest/gtest.h>
@@ -88,6 +90,30 @@ action::PduData goal_response(
     action::PduData packet(1024, 0);
     const int encoded_size = convertor.cpp2pdu(
         response,
+        reinterpret_cast<char*>(packet.data()),
+        static_cast<int>(packet.size()));
+    EXPECT_GT(encoded_size, 0);
+    if (encoded_size > 0) {
+        packet.resize(static_cast<std::size_t>(encoded_size));
+    }
+    return packet;
+}
+
+action::PduData feedback_packet(
+    const action::GoalId& id,
+    std::uint32_t sequence,
+    std::vector<std::int32_t> partial_sequence)
+{
+    HakoCpp_FibonacciActionFeedback feedback{};
+    feedback.header.version = 1;
+    feedback.header.goal_id = id;
+    feedback.header.sequence_no = sequence;
+    feedback.body.partial_sequence = std::move(partial_sequence);
+
+    hako::pdu::msgs::sample_action_msgs::FibonacciActionFeedback convertor;
+    action::PduData packet(1024, 0);
+    const int encoded_size = convertor.cpp2pdu(
+        feedback,
         reinterpret_cast<char*>(packet.data()),
         static_cast<int>(packet.size()));
     EXPECT_GT(encoded_size, 0);
@@ -271,6 +297,65 @@ TEST_F(ActionClientFixture, IgnoresResponseForUnknownGoal)
         HAKO_PDU_ERR_OK);
 
     action::ClientEvent event;
+    EXPECT_EQ(action_client->poll(event), action::ClientEventType::NONE);
+}
+
+TEST_F(ActionClientFixture, DeliversAcceptedGoalFeedbackInSequence)
+{
+    ASSERT_TRUE(action_client->initialize(fibonacci_action()));
+    const auto id = goal_id(0xb0);
+    const auto goal = encoded_goal(action_client);
+    action::ClientGoalHandle handle;
+    ASSERT_TRUE(action_client->send_goal(goal, id, handle));
+
+    const hakoniwa::pdu::PduResolvedKey response_key{"fibonacci", 1};
+    const auto accepted = goal_response(id, action::Decision::ACCEPTED);
+    ASSERT_EQ(
+        action_endpoint->send(
+            response_key, std::as_bytes(std::span(accepted))),
+        HAKO_PDU_ERR_OK);
+    action::ClientEvent event;
+    ASSERT_EQ(
+        action_client->poll(event),
+        action::ClientEventType::GOAL_RESPONSE);
+
+    const hakoniwa::pdu::PduResolvedKey feedback_key{"fibonacci", 2};
+    const auto first = feedback_packet(id, 0, {0, 1, 1});
+    ASSERT_EQ(
+        action_endpoint->send(
+            feedback_key, std::as_bytes(std::span(first))),
+        HAKO_PDU_ERR_OK);
+    ASSERT_EQ(
+        action_client->poll(event), action::ClientEventType::FEEDBACK);
+    EXPECT_EQ(event.goal.goal_id, id);
+    EXPECT_EQ(event.feedback_sequence, 0U);
+
+    HakoCpp_FibonacciActionFeedback decoded{};
+    hako::pdu::msgs::sample_action_msgs::FibonacciActionFeedback convertor;
+    ASSERT_TRUE(convertor.pdu2cpp(
+        reinterpret_cast<char*>(event.pdu.data()), decoded));
+    EXPECT_EQ(decoded.body.partial_sequence, (std::vector<std::int32_t>{0, 1, 1}));
+
+    const auto out_of_order = feedback_packet(id, 2, {0, 1, 1, 2, 3});
+    ASSERT_EQ(
+        action_endpoint->send(
+            feedback_key, std::as_bytes(std::span(out_of_order))),
+        HAKO_PDU_ERR_OK);
+    EXPECT_EQ(action_client->poll(event), action::ClientEventType::NONE);
+
+    const auto second = feedback_packet(id, 1, {0, 1, 1, 2});
+    ASSERT_EQ(
+        action_endpoint->send(
+            feedback_key, std::as_bytes(std::span(second))),
+        HAKO_PDU_ERR_OK);
+    ASSERT_EQ(
+        action_client->poll(event), action::ClientEventType::FEEDBACK);
+    EXPECT_EQ(event.feedback_sequence, 1U);
+
+    ASSERT_EQ(
+        action_endpoint->send(
+            feedback_key, std::as_bytes(std::span(second))),
+        HAKO_PDU_ERR_OK);
     EXPECT_EQ(action_client->poll(event), action::ClientEventType::NONE);
 }
 

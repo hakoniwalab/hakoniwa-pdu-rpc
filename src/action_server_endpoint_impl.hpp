@@ -114,6 +114,7 @@ private:
         GoalId goal_id{};
         std::size_t slot_index{0};
         PacketBindingState state{PacketBindingState::AWAITING_GOAL_DECISION};
+        std::uint32_t next_feedback_sequence{0};
     };
 
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_;
@@ -176,8 +177,6 @@ private:
     // TODO(outbound): connect Cancel decisions and terminal Results to the
     // common send_response_packet() path and track delivery separately from
     // the one-shot decision record.
-    // TODO(packet factory): define creation of ActionFeedback packets before
-    // write_feedback_header() overlays their common Header prefix.
     // TODO(binding): retain the ingress Endpoint/connection association when
     // mux or other multi-session transports are connected.
     // TODO(binding): resolve Cancel packets through the accepted binding and
