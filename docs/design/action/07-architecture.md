@@ -118,6 +118,24 @@ hakoniwa-pdu-endpoint::Endpoint
 configured PDU transport
 ```
 
+### 3.1 Endpointという用語の区別
+
+本アーキテクチャには、名前が似ている二種類のEndpointがあります。
+
+```text
+ActionServerEndpointImpl / ActionClientEndpointImpl
+  = Action Packet Endpoint
+  = 上位Goal TransactionとAction packetのmapping境界
+
+hakoniwa-pdu-endpoint::Endpoint
+  = PDU Endpoint
+  = byte列とchannelを配送する通信境界
+```
+
+Action Packet EndpointはHeader、packet queue、slot、channel、connection associationを扱います。PDU EndpointはActionのGoalや状態遷移を解釈しません。
+
+Goal lifecycleの状態機械は、`hakoniwa-pdu-rpc`内の上位Goal Transaction責務として一か所に保持します。初期実装でFacadeが同一クラスに見える場合も、Goal Protocol stateとPacket Binding stateを別のモデルとして実装します。
+
 ServiceとActionの対応は次のとおりです。
 
 | Service RPC | Action Runtime |
@@ -288,44 +306,51 @@ Goal受理、Cancel受理、Feedback生成、完了判断はServer Application�
 
 ## 9. ActionServerEndpointImpl
 
-`ActionServerEndpointImpl`は、1 Action Type分のServer Protocol Runtimeです。
+`ActionServerEndpointImpl`は、1 Action Type分のServer Action Packet Endpointです。上位のGoal Transactionと、PDU Endpointが扱うpacket経路を対応付けます。
 
 内部に次を持ちます。
 
 ```text
 ActionServerEndpointImpl
-  - Goal Context Registry
+  - Action Packet Binding Registry
   - Request receiver queue
   - Application event queue
-  - Response / Feedback / Result sender
-  - Protocol dispatcher
-  - Server state transition logic
+  - Response / Feedback / Result packet builder / sender
+  - Header codec / packet dispatcher
+  - slot / channel / connection mapping
   - Endpoint reference
 ```
 
-Goal Context Registryは`goal_id`をキーとして、少なくとも次を管理します。
+Action Packet Binding Registryは上位Transactionの`goal_id`またはGoalHandleをキーとして、少なくとも次を管理します。
 
 ```text
 goal_id
-main state
-Goal identity information
-Cancel decision state
-terminal status
-Result delivery / retention state
+slot_index
+Request / Response / Feedback channel
 Endpoint or connection association
+Goal判断packetのdelivery state
+Result delivery / retention state
 ```
 
 主な責務:
 
 - Goal Request Header検証
-- UUID形式および重複`goal_id`検査
-- Applicationへの新規Goal通知
-- Application判断に基づくGoal Response送信
-- Cancel RequestのGoal相関
-- ApplicationへのCancel通知
-- Feedback送信
-- Result送信と保持
-- Server状態モデルの適用
+- 受信slotと上位Goal Transactionのbinding生成
+- UUID形式および既存bindingとの重複検査
+- Application／上位Transactionへの新規Goal packet通知
+- 上位判断に基づくGoal Response packet生成と配送
+- Cancel Request packetのbinding解決
+- FeedbackおよびResult packetのrouting
+- outbound packetの配送状態とbinding解放
+
+次はAction Packet Endpointの責務ではありません。
+
+- Goalを業務上accept／rejectする判断
+- `EXECUTING`／`CANCELING`／`FINISHING`のProtocol状態機械
+- Cancel／Result競合の意味論的判断
+- Application worker、queue、priority、preemption
+
+これらのうちProtocol共通部分は`hakoniwa-pdu-rpc`内の上位Goal Transaction層が所有し、業務PolicyはServer Applicationが所有します。
 
 ## 10. PDU構成
 

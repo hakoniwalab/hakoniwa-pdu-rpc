@@ -36,6 +36,60 @@ bool read_endpoint(const nlohmann::json& action,
     return read_required_text(*it, "nodeId", endpoint_out.node_id, error_out);
 }
 
+bool read_buffer_heap_size(const nlohmann::json& object,
+                           const char* key,
+                           std::size_t& value_out,
+                           std::string& error_out)
+{
+    const auto it = object.find(key);
+    if (it == object.end()) {
+        value_out = ActionBufferHeap::DEFAULT_SIZE;
+        return true;
+    }
+    if (!it->is_number_integer()) {
+        error_out = std::string("'bufferHeap.") + key
+            + "' must be a non-negative integer";
+        return false;
+    }
+    std::uint64_t value = 0;
+    if (it->is_number_unsigned()) {
+        value = it->get<std::uint64_t>();
+    } else {
+        const auto signed_value = it->get<std::int64_t>();
+        if (signed_value < 0) {
+            error_out = std::string("'bufferHeap.") + key
+                + "' must be a non-negative integer";
+            return false;
+        }
+        value = static_cast<std::uint64_t>(signed_value);
+    }
+    if (value > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+        error_out = std::string("'bufferHeap.") + key
+            + "' exceeds the supported allocation range";
+        return false;
+    }
+    value_out = static_cast<std::size_t>(value);
+    return true;
+}
+
+bool read_buffer_heap(const nlohmann::json& action,
+                      ActionBufferHeap& buffer_heap_out,
+                      std::string& error_out)
+{
+    const auto it = action.find("bufferHeap");
+    if (it == action.end()) {
+        buffer_heap_out = ActionBufferHeap{};
+        return true;
+    }
+    if (!it->is_object()) {
+        error_out = "'bufferHeap' must be an object";
+        return false;
+    }
+    return read_buffer_heap_size(*it, "requestSize", buffer_heap_out.request_size, error_out)
+        && read_buffer_heap_size(*it, "responseSize", buffer_heap_out.response_size, error_out)
+        && read_buffer_heap_size(*it, "feedbackSize", buffer_heap_out.feedback_size, error_out);
+}
+
 std::string packet_type(const std::string& action_type, const char* suffix)
 {
     return action_type + "Action" + suffix;
@@ -169,7 +223,8 @@ bool ActionConfigurationLoader::parse_action(
     }
 
     if (!read_endpoint(action, "clientEndpoint", parsed.client_endpoint, error_out)
-        || !read_endpoint(action, "serverEndpoint", parsed.server_endpoint, error_out)) {
+        || !read_endpoint(action, "serverEndpoint", parsed.server_endpoint, error_out)
+        || !read_buffer_heap(action, parsed.buffer_heap, error_out)) {
         return false;
     }
 

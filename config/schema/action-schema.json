@@ -1,0 +1,120 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Hakoniwa Action Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "actions", "transport"],
+  "properties": {
+    "version": {"const": 1},
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "type", "slotCount", "clientEndpoint", "serverEndpoint"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "type": {
+            "type": "string",
+            "pattern": "^[^/]+/[^/]+$"
+          },
+          "slotCount": {"type": "integer", "minimum": 1},
+          "bufferHeap": {"$ref": "#/definitions/bufferHeap"},
+          "clientEndpoint": {"$ref": "#/definitions/actionEndpoint"},
+          "serverEndpoint": {"$ref": "#/definitions/actionEndpoint"}
+        }
+      }
+    },
+    "transport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "endpoints"],
+      "properties": {
+        "protocol": {"const": "tcp"},
+        "packetVersion": {
+          "type": "string",
+          "enum": ["v1", "v2"],
+          "default": "v2"
+        },
+        "queueDepth": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 64
+        },
+        "endpoints": {
+          "type": "object",
+          "minProperties": 2,
+          "additionalProperties": {"$ref": "#/definitions/tcpEndpoint"}
+        }
+      }
+    }
+  },
+  "definitions": {
+    "bufferHeap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requestSize": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647,
+          "default": 1048576
+        },
+        "responseSize": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647,
+          "default": 1048576
+        },
+        "feedbackSize": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647,
+          "default": 1048576
+        }
+      }
+    },
+    "actionEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodeId"],
+      "properties": {
+        "nodeId": {"type": "string", "minLength": 1}
+      }
+    },
+    "address": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "port"],
+      "properties": {
+        "address": {"type": "string", "minLength": 1},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      }
+    },
+    "tcpEndpoint": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "local"],
+          "properties": {
+            "role": {"const": "server"},
+            "local": {"$ref": "#/definitions/address"},
+            "options": {"type": "object"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "remote"],
+          "properties": {
+            "role": {"const": "client"},
+            "remote": {"$ref": "#/definitions/address"},
+            "options": {"type": "object"}
+          }
+        }
+      ]
+    }
+  }
+}

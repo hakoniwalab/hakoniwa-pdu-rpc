@@ -24,6 +24,13 @@ public:
     virtual bool accept_cancel(const ServerGoalHandle& goal) = 0;
     virtual bool reject_cancel(const ServerGoalHandle& goal) = 0;
 
+    // Allocate and initialize a complete generated Action packet using the
+    // configured heap capacity. The upper typed layer encodes the body into
+    // this buffer. The Runtime sends the convertor-produced metadata.total_size;
+    // the caller does not need to resize the capacity buffer.
+    virtual bool create_result_buffer(PduData& pdu_out) = 0;
+    virtual bool create_feedback_buffer(PduData& pdu_out) = 0;
+
     virtual bool send_feedback(const ServerGoalHandle& goal,
                                const PduData& feedback_pdu) = 0;
     virtual bool complete(const ServerGoalHandle& goal,

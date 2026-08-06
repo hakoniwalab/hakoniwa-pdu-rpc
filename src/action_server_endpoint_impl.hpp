@@ -14,19 +14,23 @@
 
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
+#include <vector>
 
 namespace hakoniwa::pdu::action {
 
 /**
- * Initial native implementation outline for IActionServerEndpoint.
+ * Server-side Action packet endpoint.
  *
- * This class deliberately contains only lifecycle and queue scaffolding.
- * The generated Action PDU conversion, Goal Context state machine, and
- * transport callbacks are implemented in subsequent steps.
+ * Maps upper-layer Goal transactions to Endpoint slots and packet channels,
+ * owns packet queues and Header conversion, and delegates byte delivery to
+ * hakoniwa-pdu-endpoint. The EXECUTING/CANCELING/FINISHING Protocol state
+ * machine belongs to the upper Goal transaction layer.
  */
 class ActionServerEndpointImpl final : public IActionServerEndpoint {
 public:
@@ -48,6 +52,9 @@ public:
     bool accept_cancel(const ServerGoalHandle& goal) override;
     bool reject_cancel(const ServerGoalHandle& goal) override;
 
+    bool create_result_buffer(PduData& pdu_out) override;
+    bool create_feedback_buffer(PduData& pdu_out) override;
+
     bool send_feedback(
         const ServerGoalHandle& goal,
         const PduData& feedback_pdu) override;
@@ -63,6 +70,50 @@ private:
     static constexpr std::uint8_t ACTION_PROTOCOL_VERSION = 1;
     static constexpr std::uint8_t REQUEST_KIND_GOAL = 1;
     static constexpr std::uint8_t REQUEST_KIND_CANCEL = 2;
+    static constexpr std::uint8_t RESPONSE_KIND_GOAL = 1;
+    static constexpr std::uint8_t RESPONSE_KIND_CANCEL = 2;
+    static constexpr std::uint8_t RESPONSE_KIND_RESULT = 3;
+
+    struct SlotRouting {
+        std::size_t slot_index{0};
+        hakoniwa::pdu::PduResolvedKey request;
+        hakoniwa::pdu::PduResolvedKey response;
+        hakoniwa::pdu::PduResolvedKey feedback;
+        std::string request_packet_type;
+        std::string response_packet_type;
+        std::string feedback_packet_type;
+        std::uint32_t request_packet_base_size{0};
+        std::uint32_t response_packet_base_size{0};
+        std::uint32_t feedback_packet_base_size{0};
+        std::size_t request_heap_capacity{0};
+        std::size_t response_heap_capacity{0};
+        std::size_t feedback_heap_capacity{0};
+    };
+
+    struct PendingPacket {
+        std::size_t slot_index{0};
+        PduData pdu;
+    };
+
+    struct PendingPacketQueue {
+        std::mutex mutex;
+        std::deque<PendingPacket> packets;
+    };
+
+    enum class PacketBindingState : std::uint8_t {
+        AWAITING_GOAL_DECISION,
+        GOAL_ACCEPTED,
+        GOAL_REJECTED,
+    };
+
+    // Transport-facing association between an upper-layer Goal transaction
+    // and the slot/channels on which its packets are exchanged. This is not
+    // the Action Protocol EXECUTING/CANCELING/FINISHING state machine.
+    struct ActionPacketBinding {
+        GoalId goal_id{};
+        std::size_t slot_index{0};
+        PacketBindingState state{PacketBindingState::AWAITING_GOAL_DECISION};
+    };
 
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_;
     std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
@@ -75,20 +126,12 @@ private:
         hako::pdu::msgs::hako_action_msgs::ActionRequestHeader>
         request_header_convertor_;
 
-    hako::pdu::PduConvertor<
-        HakoCpp_ActionResponseHeader,
-        hako::pdu::msgs::hako_action_msgs::ActionResponseHeader>
-        response_header_convertor_;
-
-    hako::pdu::PduConvertor<
-        HakoCpp_ActionFeedbackHeader,
-        hako::pdu::msgs::hako_action_msgs::ActionFeedbackHeader>
-        feedback_header_convertor_;
-
     std::mutex mutex_;
     std::deque<ServerEvent> pending_events_;
+    std::shared_ptr<PendingPacketQueue> pending_packets_;
+    std::vector<SlotRouting> slot_routing_;
+    std::map<GoalId, ActionPacketBinding> packet_bindings_;
     std::optional<ActionDefinition> action_definition_;
-    int pdu_meta_data_size_{0};
     bool initialized_{false};
 
     bool decode_request_header(
@@ -106,26 +149,39 @@ private:
         PduData& initialized_packet,
         HakoCpp_ActionFeedbackHeader& header);
 
-    // TODO(endpoint contract): resolve Action packet keys, sizes, and routing,
-    // then register Goal/Cancel receive callbacks with endpoint_.
-    //
-    // TODO(endpoint contract): create complete ActionResponse/ActionFeedback
-    // packets before write_*_header() overlays their common Header prefix.
-    //
-    // TODO: add a Goal Context map keyed by GoalId.
-    //
-    // TODO: reject duplicate non-terminal GoalIds before enqueueing a
-    // GOAL_REQUEST.
-    //
-    // TODO: track pending Goal and Cancel decisions by GoalId.
-    // At most one undecided request of each kind may exist for a Goal.
-    //
-    // TODO: centralize all Goal state changes in one locked transition
-    // function.
-    //
-    // TODO: implement atomic terminal-result versus cancel-accept arbitration.
-    //
-    // TODO: add Runtime-origin Cancel events for disconnect and shutdown.
+    bool create_packet_buffer(
+        const std::string& packet_type,
+        std::uint32_t base_size,
+        std::size_t heap_capacity,
+        PduData& packet_out);
+
+    bool create_control_response_packet(PduData& packet_out);
+
+    bool validate_packet_capacity(
+        const PduData& packet,
+        const std::string& packet_type,
+        std::uint32_t base_size,
+        std::size_t heap_capacity,
+        bool require_exact_buffer_size,
+        std::size_t& wire_size_out) const;
+
+    bool send_response_packet(
+        const ActionPacketBinding& binding,
+        std::uint8_t response_kind,
+        std::uint8_t status,
+        PduData packet = {});
+
+    // TODO(outbound): connect Cancel decisions and terminal Results to the
+    // common send_response_packet() path and track delivery separately from
+    // the one-shot decision record.
+    // TODO(packet factory): define creation of ActionFeedback packets before
+    // write_feedback_header() overlays their common Header prefix.
+    // TODO(binding): retain the ingress Endpoint/connection association when
+    // mux or other multi-session transports are connected.
+    // TODO(binding): resolve Cancel packets through the accepted binding and
+    // forward them to the upper Goal transaction layer.
+    // TODO(runtime error): expose synchronous Endpoint send failures through
+    // the specified Runtime Error event without converting them to ABORTED.
 };
 
 } // namespace hakoniwa::pdu::action

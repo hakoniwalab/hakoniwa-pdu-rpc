@@ -122,6 +122,58 @@ RPC Runtimeは通信とGoal lifecycleを管理しますが、Goalを実際に達
 
 Runtime自身のメモリ、接続、バッファなどの技術的な問題はApplicationの業務上の`ABORTED`と区別します。初版では、ApplicationのハングやRuntimeの致命的内部障害をterminal statusへ変換する救済処理を定義しません。
 
+### 4.3 RPC内部のTransactionとPacket Binding
+
+`hakoniwa-pdu-rpc`が所有する責務も、論理的には次の二層へ分離します。
+
+```text
+Goal Transaction
+  goal_idごとのProtocol lifecycle
+  Goal／Cancel判断
+  EXECUTING／CANCELING／FINISHING
+  Cancel／Result競合
+          |
+          | goal_id / GoalHandle
+          v
+Action Packet Endpoint
+  Action Transactionとpacket経路の対応
+  slotおよびchannel binding
+  Header encode／decode
+  inbound／outbound packet queue
+  配送結果とbinding解放
+```
+
+Goal TransactionはAction全体の長寿命なProtocol instanceです。その内部にはGoal Request／Response、Feedback、Cancel Request／Response、Resultという複数のpacket交換が存在します。
+
+Action Packet Endpointは、上位のGoal TransactionをProtocol状態として再実装しません。Endpointが保持するのは、上位Transactionを実際のpacket経路へ対応付ける`ActionPacketBinding`です。
+
+```text
+ActionPacketBinding
+  goal_id
+  ingress endpoint / connection
+  slot_index
+  request channel
+  response channel
+  feedback channel
+  outbound delivery state
+```
+
+このbindingの予約、判断待ち、配送待ち、解放はrouting／delivery上の状態であり、`EXECUTING`、`CANCELING`、`FINISHING`というGoal Protocol状態とは区別します。
+
+Applicationからの`accept_goal()`、`reject_goal()`、`complete()`は上位Transactionの判断を表します。Action Packet Endpointは、その判断を対応するbindingとpacketへ変換します。API呼び出しと物理的なTransport送信は同一処理である必要はなく、outbound queueを介して分離できます。
+
+論理イベントとの対応は次のとおりです。
+
+| 上位操作 | Transaction上の意味 | Packet Endpointが生成するイベント |
+| --- | --- | --- |
+| `accept_goal()` | Goal判断をACCEPTEDとして一度だけ確定 | `GOAL_RESPONSE(ACCEPTED)` |
+| `reject_goal()` | Goal判断をREJECTEDとして一度だけ確定 | `GOAL_RESPONSE(REJECTED)` |
+| `complete()` | accept済みGoalのterminal結果を確定 | `RESULT` |
+
+`complete()`はGoal Request／Response交換の完了ではなく、Action実行全体のterminal完了を表します。
+
+初期Native Runtimeでは、非同期送信を必須とする要件がないため、Goal／Cancel ResponseおよびResultはAction Packet EndpointからPDU Endpointへ同期的に送信します。将来outbound queueへ切り替える場合も、論理判断、packet生成、配送結果という契約は維持し、呼び出し側へTransport固有差分を露出させません。
+
 ## 5. hakoniwa-pdu-ros
 
 ### 5.1 所有する責務
@@ -242,6 +294,8 @@ EndpointおよびTransportは、PDUを通信相手へ配送する責務を持ち
 - `maxClients`による接続数上限の管理
 
 Endpoint/TransportはActionのGoal、Feedback、Resultの意味や状態遷移を理解しません。
+
+ここでいうEndpoint/Transportは`hakoniwa-pdu-endpoint::Endpoint`です。`hakoniwa-pdu-rpc`内の`ActionServerEndpointImpl`／`ActionClientEndpointImpl`は同じEndpointという名前を持ちますが、上位TransactionとPDU packetを対応付けるAction Packet Endpointです。両者を同一の責務として扱いません。
 
 `maxClients`はTransportが同時に収容できるClient接続数であり、同一Action Typeの同時Goal数やApplicationの実行能力を表しません。
 
@@ -379,6 +433,8 @@ FeedbackをRuntimeがキューイングするか、Endpointイベントをその
 10. Applicationのaccept後、Protocol状態は直ちに`EXECUTING`とし、Application内部のqueue状態はProtocolへ露出しない。
 11. 通信切断などRuntimeが観測可能な条件から停止を要求する場合、RuntimeはApplicationの正規Cancel経路を利用する。
 12. Applicationハングやcomplete忘れの監視・強制終了は初版のRuntime責務に含めない。
+13. RPC内部ではGoal TransactionとAction Packet Bindingを分離し、Action Packet Endpointは上位Transactionをslot、channel、connectionおよびpacketへ対応付ける。
+14. APIによる論理判断のcommitと物理Transport送信は分離可能とし、`complete()`をGoal Responseの代用にはしない。
 
 ## 12. レビューで問答したい事項
 

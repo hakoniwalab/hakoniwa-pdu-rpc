@@ -64,6 +64,9 @@ target_link_libraries(hakoniwa_pdu_action_server_initialization_test PRIVATE ${H
 target_include_directories(hakoniwa_pdu_action_server_initialization_test PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../src"
 )
+target_compile_definitions(hakoniwa_pdu_action_server_initialization_test PRIVATE
+  ACTION_SERVER_ENDPOINT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_server_endpoint.json"
+)
 add_test(NAME hakoniwa_pdu_action_server_initialization_test COMMAND hakoniwa_pdu_action_server_initialization_test)
 set_tests_properties(hakoniwa_pdu_action_server_initialization_test PROPERTIES TIMEOUT 30)
 

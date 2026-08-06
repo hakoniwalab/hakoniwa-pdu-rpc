@@ -458,6 +458,8 @@ Runtimeは`goal_token`から`goal_id`、Action Type、sequence number、現在�
 
 ApplicationはFeedback Headerを直接管理しません。
 
+`create_feedback_buffer()`は、Registryのgenerated base sizeとAction設定の`bufferHeap.feedbackSize`から最大容量の完全なAction Feedback PDUを確保・初期化します。ApplicationまたはTyped wrapperはそのbufferへbodyをencodeします。Runtimeはencode後の`metadata.total_size`をWireサイズとして使用するため、buffer自体の縮小は不要です。`send_feedback()`がbufferを暗黙生成することはありません。
+
 ### 6.8 terminal完了
 
 terminal完了は、一つの共通関数とstatus指定を基本案とします。
@@ -482,6 +484,8 @@ hako_pdu_action_server_complete(
 ```
 
 個別の`complete_succeeded()`、`complete_canceled()`、`complete_aborted()`へ分ける案は後続レビュー対象です。
+
+`create_result_buffer()`は、Registryのgenerated base sizeとAction設定の`bufferHeap.responseSize`から最大容量の完全なAction Response PDUを確保・初期化します。ApplicationまたはTyped wrapperはResult bodyをencodeします。Runtimeはencode後の`metadata.total_size`をWireサイズとして使用するため、buffer自体の縮小は不要です。`complete()`および内部Response送信処理がbufferを暗黙生成することはありません。
 
 `complete()`成功後、Applicationは同じ`goal_token`へ新規Feedbackや別の完了を送れません。
 

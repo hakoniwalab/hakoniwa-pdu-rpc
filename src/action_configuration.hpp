@@ -27,10 +27,19 @@ struct ActionChannelDefinition {
     std::string packet_type;
 };
 
+struct ActionBufferHeap {
+    static constexpr std::size_t DEFAULT_SIZE = 1024U * 1024U;
+
+    std::size_t request_size{DEFAULT_SIZE};
+    std::size_t response_size{DEFAULT_SIZE};
+    std::size_t feedback_size{DEFAULT_SIZE};
+};
+
 struct ActionDefinition {
     std::string name;
     std::string type;
     std::size_t slot_count{0};
+    ActionBufferHeap buffer_heap;
     ActionEndpointReference client_endpoint;
     ActionEndpointReference server_endpoint;
     std::vector<ActionChannelDefinition> channels;

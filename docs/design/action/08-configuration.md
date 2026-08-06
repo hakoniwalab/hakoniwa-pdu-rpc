@@ -40,11 +40,11 @@ Transport設定
 
 Action Protocol上の相関キーは`goal_id`です。Endpoint、接続、共有メモリチャネル、socketなどはProtocol identityではありません。
 
-### 2.2 PDUサイズは共通必須設定にしない
+### 2.2 固定PDUサイズとheap上限を分離する
 
 固定PDUサイズは、主に共有メモリTransportが領域およびPDU定義を事前確保するために必要とします。
 
-TCPやlength-prefixed transportでは、受信フレーム長からPacketサイズを動的に扱えるため、Action設定の共通必須項目としてPDUサイズを要求しません。
+TCPやlength-prefixed transportでは、受信フレーム長からPacketサイズを動的に扱えるため、Action設定の共通必須項目として固定PDUサイズを要求しません。一方、可変長bodyを無制限に許可すると、ユーザーコードの不具合によって過大なメモリ確保や送信が発生します。このためAction定義は、Request、Response、Feedbackごとのheap容量上限`bufferHeap`を持ちます。
 
 共有メモリTransportは、Registryが生成したAction Packetのsize情報とPDU metadata sizeから、必要な固定サイズを解決します。
 
@@ -55,7 +55,7 @@ shared memory packet size
   + configured heap capacity
 ```
 
-必要な場合に限りTransport設定側で明示的な上書きを許可できますが、Action論理定義へ重複して記述することを標準にはしません。
+`bufferHeap`は固定送信サイズではありません。送信時には実際の`metadata.total_size`だけを送信し、送受信の両側で実heapサイズが設定上限以下であることを検証します。
 
 ## 3. Action定義の基本単位
 
@@ -231,6 +231,45 @@ Action定義は、事前に予約する通信スロット数を指定します�
 
 スロットが枯渇した場合のClient API挙動は、後続のエラー契約で定義します。少なくとも、既存Goalのチャネルを再利用して混線させてはなりません。
 
+### 6.1 可変長bodyのheap上限
+
+Action定義は、生成される3種類のPacketと1対1に対応するheap容量上限を指定できます。
+
+```json
+{
+  "bufferHeap": {
+    "requestSize": 1048576,
+    "responseSize": 1048576,
+    "feedbackSize": 1048576
+  }
+}
+```
+
+| 項目 | 対象Packet | 主なbody |
+| --- | --- | --- |
+| `requestSize` | `<Action>ActionRequest` | Goal Request、Cancel Request |
+| `responseSize` | `<Action>ActionResponse` | Goal Response、Cancel Response、Result |
+| `feedbackSize` | `<Action>ActionFeedback` | Feedback |
+
+各値の単位はbyte、範囲は`0..2147483647`です。`bufferHeap`全体または個別項目を省略した場合は、各項目に1 MiB（`1048576` byte）を適用します。generatorは省略を警告し、resolved設定には解決後の3項目を必ず出力します。本番構成では明示指定を推奨します。
+
+送信側Action Endpointは、`create_result_buffer()`または`create_feedback_buffer()`を公開し、Registryのbase sizeと対応する`bufferHeap`を使って完全なPDU bufferを確保・初期化します。上位Typed Action層はそのbufferへ生成コンバーターでbodyをencodeします。buffer自体の`resize()`は要求せず、コンバーターがmetadataへ記録した`total_size`を実際のWireサイズとして使用します。
+
+`complete()`、`send_feedback()`および内部の`send_response_packet()`は、エンコード済みPDUだけを受け取ります。send処理の途中でpacketを暗黙生成してはなりません。Action Endpointは共通Headerを設定する前に、次を検証します。
+
+```text
+metadata.total_size <= PduData.size()       # outbound capacity buffer
+metadata.total_size == received span.size() # inbound wire packet
+actual_heap_storage_size = metadata.total_size - metadata.heap_off
+actual_heap_storage_size <= align(bufferHeap.<packet kind>)
+```
+
+PDU heapは8-byte境界へalignされるため、上限比較にも同じalign規則を適用します。`metadata.heap_off`はRegistryのgenerated base sizeから求めた位置と完全一致しなければならず、baseとheapの間へ任意の領域を挿入して上限検査を迂回することはできません。
+
+上限超過、metadata不整合、または変換時のbuffer不足は送信失敗とし、Action設計で定義するRuntime Errorとして上位レイヤへ通知します。受信側もdecode前に同じ検証を行い、上限を超えるPacketを拒否します。
+
+Goal ResponseおよびCancel Responseはbodyを使用しません。Runtimeは内部のcontrol response factoryで最初からheap size 0の完全なAction Response packetを生成します。Result用の`responseSize`領域を確保してから縮小する処理は行いません。
+
 ## 7. Endpoint対応
 
 Action定義は、Action Client RuntimeおよびAction Server RuntimeをEndpoint定義へ対応付けます。
@@ -266,6 +305,11 @@ Action定義は、Action Client RuntimeおよびAction Server RuntimeをEndpoint
       "name": "fibonacci",
       "type": "sample_action_msgs/Fibonacci",
       "slotCount": 4,
+      "bufferHeap": {
+        "requestSize": 1048576,
+        "responseSize": 1048576,
+        "feedbackSize": 1048576
+      },
       "clientEndpoint": {
         "nodeId": "fibonacci-client"
       },
@@ -301,7 +345,7 @@ channel names
 
 shared memory only
   generated base sizesをRegistryから解決
-  Transport設定のheap capacityを加算
+  Action定義の`bufferHeap`を加算
   metadata sizeを加算
   PDU definitionsを事前登録
 ```
@@ -315,7 +359,7 @@ shared memory only
 - チャネルIDはAction Typeごとに0から連番
 - チャネル名は決定的な命名規則から生成
 - base sizeはRegistry生成情報から解決
-- 可変長bodyのheap capacityはTransport設定から解決
+- 可変長bodyのheap capacityはAction定義の`bufferHeap`から解決
 - Goal開始時に空きスロットを割り当て
 - terminal完了後にスロットを解放
 
@@ -338,6 +382,7 @@ ActionDefinition
   name
   type
   slot_count
+  buffer_heap(request, response, feedback)
   client_endpoint
   server_endpoint
 
@@ -362,8 +407,8 @@ ActiveSlot
 ## 11. 設計判断
 
 1. Action定義ファイルをService定義ファイルに対応する論理構成として追加する。
-2. PDUサイズはAction設定の共通必須項目にしない。
-3. 固定PDUサイズは共有メモリTransportがRegistryのbase size、Transport設定のheap capacity、metadata sizeから解決する。
+2. 固定PDUサイズはAction設定の共通必須項目にしないが、可変長bodyの安全上限`bufferHeap`を省略可能な共通契約とする。
+3. 固定PDUサイズは共有メモリTransportがRegistryのbase size、Action定義のheap capacity、metadata sizeから解決する。
 4. 同一Action Typeの並行Goalに備え、複数の通信スロットを事前予約する。
 5. 1スロットはRequest、Response、Feedbackの3論理チャネルを持つ。
 6. 論理チャネルIDはAction Typeごとに0から自動採番する。
@@ -375,11 +420,108 @@ ActiveSlot
 
 ## 12. 未確定事項
 
-- チャネル名の最終的な大文字小文字および接尾辞規則
-- Action定義ファイルの正式ファイル名と配置
 - 複数Client Endpointを一つのAction定義へ記載する方式
 - slot枯渇時の同期エラー、待機、timeoutの契約
 - reject時およびResult送信失敗時の正確なslot解放条件
-- dynamic transportで論理チャネルをwire上へ表現する必要があるか
 - mux transport sessionとslot lifetimeの対応
 - Registry size情報の具体的な参照API
+
+## 13. 初期TCP実装のuser-facing manifest
+
+初期TCP実装では、ユーザーが編集する入力を一つのmanifestとして提供します。ただし、論理Action定義とTransport deploymentは別の階層へ置き、責務を混在させません。
+
+```json
+{
+  "version": 1,
+  "actions": [
+    {
+      "name": "fibonacci",
+      "type": "sample_action_msgs/Fibonacci",
+      "slotCount": 4,
+      "bufferHeap": {
+        "requestSize": 1048576,
+        "responseSize": 1048576,
+        "feedbackSize": 1048576
+      },
+      "clientEndpoint": {"nodeId": "fibonacci-client"},
+      "serverEndpoint": {"nodeId": "fibonacci-server"}
+    }
+  ],
+  "transport": {
+    "protocol": "tcp",
+    "packetVersion": "v2",
+    "queueDepth": 64,
+    "endpoints": {
+      "fibonacci-client": {
+        "role": "client",
+        "remote": {"address": "127.0.0.1", "port": 54011}
+      },
+      "fibonacci-server": {
+        "role": "server",
+        "local": {"address": "0.0.0.0", "port": 54011}
+      }
+    }
+  }
+}
+```
+
+正式なSchemaは`config/schema/action-schema.json`、実例は`config/sample/action.json`を参照します。
+
+### 13.1 Action roleとTCP role
+
+Action Client／ServerはGoal lifecycle上の役割です。TCP client／serverは接続確立上の役割です。両者を固定対応させません。
+
+したがって、次のどちらも許可します。
+
+```text
+Action Client = TCP client, Action Server = TCP server
+Action Client = TCP server, Action Server = TCP client
+```
+
+初期point-to-point構成では、一つのActionが参照する二つのEndpointのTCP roleが相補的であることをgeneratorが検証します。
+
+### 13.2 TCP packet size
+
+TCP raw transportでは、送信する`PduData`の現在サイズをframeへ記録し、受信時にはdecodeされた実payloadサイズがcallbackへ渡されます。
+
+```text
+send size    = PduData.size()
+receive size = received span.size()
+```
+
+固定PDUサイズはuser-facing TCP設定へ追加しません。TCPは実際の`metadata.total_size`を送信しますが、送受信時に`bufferHeap`の上限を検証します。固定領域を事前確保するSHM対応時には、Registryのgenerated base sizeと同じ`bufferHeap`からresolved packet sizeを生成します。
+
+## 14. 自動生成される設定
+
+次のコマンドでuser-facing manifestからRuntime設定を生成します。
+
+```bash
+python tools/generate_action_config.py \
+  --config config/sample/action.json \
+  --output .hako/action
+```
+
+生成物は次のとおりです。
+
+```text
+.hako/action/
+├── resolved-action.json
+├── endpoints.json
+├── queue.json
+├── endpoints/
+│   ├── fibonacci-client.json
+│   └── fibonacci-server.json
+└── transport/
+    ├── fibonacci-client.json
+    └── fibonacci-server.json
+```
+
+- `resolved-action.json`: channel、packet type、Endpoint IDを展開した設定
+- `endpoints.json`: `EndpointContainer`が読むnode／Endpoint対応
+- `endpoints/*.json`: Endpointが読むcache／comm参照
+- `transport/*.json`: 既存TCP Endpointが読むrole、address、port、packet version
+- `queue.json`: Action Endpoint用queue設定
+
+Endpoint IDは`<nodeId>-action-tcp`として決定的に生成します。channel ID、channel名、packet type、Endpoint IDをユーザーへ重複指定させません。
+
+TCP初期実装は`PduResolvedKey`を使用するため、生成Endpoint設定に固定サイズの`pdu_def_path`を含めません。
