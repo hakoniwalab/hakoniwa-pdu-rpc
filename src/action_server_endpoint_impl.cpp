@@ -747,20 +747,31 @@ bool ActionServerEndpointImpl::accept_cancel(
             || !binding->second.cancel_decision_pending) {
             return false;
         }
-        binding->second.state = PacketBindingState::CANCEL_ACCEPTED;
-        binding->second.cancel_decision_pending = false;
+        binding->second.state =
+            PacketBindingState::CANCEL_ACCEPT_RESPONSE_SENDING;
         committed_binding = binding->second;
     }
 
     PduData response;
-    if (!create_control_response_packet(response)) {
-        return false;
+    const bool sent = create_control_response_packet(response)
+        && send_response_packet(
+            committed_binding,
+            RESPONSE_KIND_CANCEL,
+            static_cast<std::uint8_t>(Decision::ACCEPTED),
+            std::move(response));
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto binding = packet_bindings_.find(goal.goal_id);
+        if (binding != packet_bindings_.end()
+            && binding->second.state
+                == PacketBindingState::CANCEL_ACCEPT_RESPONSE_SENDING) {
+            binding->second.state = sent
+                ? PacketBindingState::CANCEL_ACCEPTED
+                : PacketBindingState::GOAL_ACCEPTED;
+            binding->second.cancel_decision_pending = !sent;
+        }
     }
-    return send_response_packet(
-        committed_binding,
-        RESPONSE_KIND_CANCEL,
-        static_cast<std::uint8_t>(Decision::ACCEPTED),
-        std::move(response));
+    return sent;
 }
 
 bool ActionServerEndpointImpl::create_result_buffer(PduData& pdu_out)
@@ -810,19 +821,29 @@ bool ActionServerEndpointImpl::reject_cancel(
             || !binding->second.cancel_decision_pending) {
             return false;
         }
-        binding->second.cancel_decision_pending = false;
+        binding->second.state =
+            PacketBindingState::CANCEL_REJECT_RESPONSE_SENDING;
         committed_binding = binding->second;
     }
 
     PduData response;
-    if (!create_control_response_packet(response)) {
-        return false;
+    const bool sent = create_control_response_packet(response)
+        && send_response_packet(
+            committed_binding,
+            RESPONSE_KIND_CANCEL,
+            static_cast<std::uint8_t>(Decision::REJECTED),
+            std::move(response));
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto binding = packet_bindings_.find(goal.goal_id);
+        if (binding != packet_bindings_.end()
+            && binding->second.state
+                == PacketBindingState::CANCEL_REJECT_RESPONSE_SENDING) {
+            binding->second.state = PacketBindingState::GOAL_ACCEPTED;
+            binding->second.cancel_decision_pending = !sent;
+        }
     }
-    return send_response_packet(
-        committed_binding,
-        RESPONSE_KIND_CANCEL,
-        static_cast<std::uint8_t>(Decision::REJECTED),
-        std::move(response));
+    return sent;
 }
 
 bool ActionServerEndpointImpl::send_feedback(
@@ -840,6 +861,10 @@ bool ActionServerEndpointImpl::send_feedback(
     const auto binding = packet_bindings_.find(goal.goal_id);
     if (binding == packet_bindings_.end()
         || (binding->second.state != PacketBindingState::GOAL_ACCEPTED
+            && binding->second.state
+                != PacketBindingState::CANCEL_ACCEPT_RESPONSE_SENDING
+            && binding->second.state
+                != PacketBindingState::CANCEL_REJECT_RESPONSE_SENDING
             && binding->second.state != PacketBindingState::CANCEL_ACCEPTED)
         || binding->second.slot_index >= slot_routing_.size()) {
         return false;

@@ -73,7 +73,29 @@ COMPLETE_CANCELED
 
 停止処理中にGoalを継続できない別の意味論的失敗が発生した場合は、既存状態モデルに従って`RESULT(ABORTED)`を許容します。
 
-### 3.3 後着する通常成功
+### 3.3 Cancel Response配送と状態公開
+
+Client起因Cancelのaccept／rejectでは、判断とResponse配送の間にpacket bindingの配送中状態を置きます。
+
+```text
+accept:
+  GOAL_ACCEPTED + cancel_decision_pending
+    -> CANCEL_ACCEPT_RESPONSE_SENDING
+    -> CANCEL_RESPONSE(ACCEPTED)送信成功
+    -> CANCEL_ACCEPTED
+
+reject:
+  GOAL_ACCEPTED + cancel_decision_pending
+    -> CANCEL_REJECT_RESPONSE_SENDING
+    -> CANCEL_RESPONSE(REJECTED)送信成功
+    -> GOAL_ACCEPTED + cancel_decision_pending=false
+```
+
+配送中状態は上位Protocolの公開Goal状態ではなく、Cancel判断とpacket配送順序を結ぶEndpoint内部状態です。この間、同じGoalのterminal `complete()`はcommitできません。これにより、Cancel accept時は必ず`CANCEL_RESPONSE(ACCEPTED)`が`RESULT(CANCELED / ABORTED)`より先にWireへ送信されます。
+
+Cancel Response送信に失敗した場合は`GOAL_ACCEPTED + cancel_decision_pending=true`へ戻し、同じaccept／reject判断を再実行できます。通信異常をGoalのterminal statusへ変換しません。初期対象のTCPでは、非OKの同期送信は完全なProtocol packetを配送できていないものとして扱います。接続断後の再接続手順は後続Policyで定義します。
+
+### 3.4 後着する通常成功
 
 `CANCELING`へ遷移した後の`COMPLETE_SUCCEEDED`はApplication API Errorです。
 

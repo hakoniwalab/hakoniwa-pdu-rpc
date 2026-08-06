@@ -440,6 +440,8 @@ hako_pdu_action_server_reject_cancel(
 
 Cancel Response PDUのbodyはProtocol既定値をRuntimeが生成します。
 
+`accept_cancel()`／`reject_cancel()`はCancel Responseの同期送信成功後に判断を確定します。送信中はEndpoint内部の`CANCEL_ACCEPT_RESPONSE_SENDING`または`CANCEL_REJECT_RESPONSE_SENDING`で同一Goalの`complete()`を排他し、Cancel Responseより先にterminal Resultが送信されることを防ぎます。送信失敗時はpending判断を維持するため、Applicationは同じ判断を再実行できます。
+
 ### 6.7 Feedback送信
 
 ```c
