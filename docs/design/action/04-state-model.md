@@ -388,6 +388,57 @@ Applicationハング、complete忘れ、Runtimeの致命的内部障害をtermin
 - 公開APIの具体的な関数シグネチャ
 - Transport固有のretry実装
 - Application内部のworkerおよびqueue状態
+
+## 19. 実行可能なServer状態核
+
+初版Runtimeは、本書の確定済みマトリクスをTransport非依存の純粋関数として実装します。
+
+```cpp
+ServerTransition reduce_server_goal(
+    const ServerGoalContext& current,
+    ServerGoalEvent event);
+```
+
+Server固有のContext、Event、reducerは`action_server_state_machine.hpp`／`action_server_state_machine.cpp`に置きます。`action_state_machine.hpp`はServer／Clientが共有する遷移結果の語彙だけを定義します。いずれもPDU、Endpoint、時刻、mutex、Application callbackを参照しません。
+
+```text
+入力:
+  GoalState
+  cancel_decision_pending
+  cancel_origin
+  terminal_status
+  ServerGoalEvent
+
+出力:
+  TransitionDecision
+  next context
+  semantic effects
+  commit timing
+```
+
+`semantic effects`はpacket操作ではありません。`SEND_CANCEL_RESPONSE_ACCEPTED`、`COMMIT_RESULT`、`RELEASE_GOAL`など、上位Services層がProtocol処理へ変換する意味上の指示です。
+
+commit timingは次の二種類です。
+
+```text
+IMMEDIATE:
+  effectの成否と独立して意味状態をcommitする
+  例: terminal Result commit
+
+AFTER_EFFECT_SUCCESS:
+  effectが成功した場合だけnext contextをcommitする
+  例: Client起因Cancel Response、Client Cancel Request送信
+```
+
+初版では曖昧だったセルを次へ固定します。
+
+- `FINISHING`中の重複`COMPLETE_*`は`APPLICATION_API_ERROR`。
+- `EXECUTING`中の`COMPLETE_CANCELED`は`APPLICATION_API_ERROR`。
+- Cancel判断待ち中の追加Cancelは`IGNORE`し、既存Contextを維持する。
+- Runtime起因Cancelが既存Cancel判断と競合した場合は`IGNORE`し、originを上書きしない。
+- Result送信失敗、切断、shutdown、timeoutはterminal statusを生成せず`DEFER`する。
+
+上位`GoalTransaction`はGoal単位mutex内でreducerを呼び、`TransitionCommit`に従ってnext contextを適用します。状態核自身へ排他やI/Oを持ち込みません。
 - Applicationのハング、complete忘れ、watchdog
 - Runtimeが正規のイベント処理を継続できない致命的障害
 - 状態・イベント処理の排他実装

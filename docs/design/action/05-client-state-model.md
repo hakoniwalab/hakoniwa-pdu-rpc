@@ -338,6 +338,43 @@ RESULT_RECEIVED
 - Goal Response timeout後にServer側Goalが残る可能性に対し、Client側へProtocol主状態、状態照会、自動再送を追加しない。
 - Hakoniwa共通ProtocolはROS 2 status topic相当を持たず、ROS Bridgeが管理中GoalからROS statusを生成する。
 - 通信異常をGoalの`CANCELED`または`ABORTED`へ自動変換しない。
+
+## 15. 実行可能なClient状態核
+
+Goal Responseでacceptされた後のClient Contextは、Transport非依存の純粋関数として実装します。
+
+Client固有のContext、Event、reducerは`action_client_state_machine.hpp`／`action_client_state_machine.cpp`に置きます。Server固有ファイルへClient状態を混在させません。`action_state_machine.hpp`は両者が共有する遷移結果の語彙だけを定義します。
+
+```cpp
+ClientTransition reduce_client_goal(
+    const ClientGoalContext& current,
+    const ClientGoalEvent& event);
+```
+
+Goal Request送信からGoal Response受信までのpre-accept ContextはEndpoint契約として既に実装されており、このreducerの対象外です。
+
+Client reducerは次をContextとして保持します。
+
+```text
+GoalState
+cancel_response_pending
+result_pending
+next_feedback_sequence
+terminal_status
+```
+
+初版では曖昧だったセルを次へ固定します。
+
+- `FINISHING`中の重複Resultは`IDEMPOTENT`として診断し、Applicationへ再配送しない。
+- `FINISHING`中のFeedbackとCancel Responseは`IGNORE`して診断する。
+- pending ContextのないCancel Responseは`IGNORE`して診断する。
+- `EXECUTING`で`CANCELED` Result、`CANCELING`で`SUCCEEDED` Resultを受信した場合は`IGNORE`して診断する。
+- Feedback sequence不一致は`IGNORE`し、期待sequenceを進めない。
+- timeout、切断、shutdownはterminal statusを生成せず`DEFER`する。
+
+Clientの`REQUEST_CANCEL`は送信effect成功後にだけ`cancel_response_pending=true`をcommitします。Result受信は意味上確定済みのProtocol入力であるため即時commitし、Application配送とContext解放をsemantic effectsとして上位へ返します。
+
+Server reducerとClient reducerは同じ`GoalState`と遷移結果語彙を共有しますが、別モジュール関数として維持します。Server状態をClientが推測したり、両者のpending Contextを一つの状態機械へ統合してはなりません。
 - Runtimeの致命的内部障害からの正規状態遷移は初版の対象外とする。
 
 ## 15. レビューで確認する事項

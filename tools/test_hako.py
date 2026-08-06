@@ -320,6 +320,8 @@ class OperationCompatibilityTests(unittest.TestCase):
     def test_reviewed_test_suite_includes_action_contracts(self):
         expected = {
             "hakoniwa_pdu_action_configuration_test",
+            "hakoniwa_pdu_action_server_state_machine_test",
+            "hakoniwa_pdu_action_client_state_machine_test",
             "hakoniwa_pdu_action_server_initialization_test",
             "hakoniwa_pdu_action_goal_response_transaction_test",
             "hakoniwa_pdu_action_cancel_response_serialization_test",
