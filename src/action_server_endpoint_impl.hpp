@@ -19,6 +19,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -108,14 +109,6 @@ private:
         RESULT_COMMITTED,
     };
 
-    enum class PendingResponse : std::uint8_t {
-        NONE,
-        GOAL_ACCEPT,
-        GOAL_REJECT,
-        CANCEL_ACCEPT,
-        CANCEL_REJECT,
-    };
-
     // Transport-facing association between an upper-layer Goal transaction
     // and the slot/channels on which its packets are exchanged. This is not
     // the Action Protocol EXECUTING/CANCELING/FINISHING state machine.
@@ -123,7 +116,6 @@ private:
         GoalId goal_id{};
         std::size_t slot_index{0};
         PacketBindingState state{PacketBindingState::AWAITING_GOAL_DECISION};
-        PendingResponse pending_response{PendingResponse::NONE};
         std::uint32_t next_feedback_sequence{0};
         bool cancel_decision_pending{false};
     };
@@ -184,6 +176,16 @@ private:
         std::uint8_t response_kind,
         std::uint8_t status,
         PduData packet = {});
+
+    void send_goal_error_reply(
+        const GoalId& goal_id,
+        std::size_t slot_index,
+        std::string_view reason);
+
+    void log_ignored_cancel_request(
+        const GoalId& goal_id,
+        std::size_t slot_index,
+        std::string_view reason) const;
 
     void release_binding_locked(
         std::map<GoalId, ActionPacketBinding>::iterator binding);

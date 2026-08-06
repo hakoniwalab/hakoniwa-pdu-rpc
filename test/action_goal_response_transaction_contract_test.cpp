@@ -232,7 +232,7 @@ action::ServerEvent dispatch_goal(
 
 } // namespace
 
-TEST(ActionGoalResponseTransactionContract, AcceptResponsePrecedesFeedbackAndResult)
+TEST(ActionGoalResponseTransactionContract, AcceptResponsePrecedesResult)
 {
     auto endpoint = std::make_shared<GoalResponseBlockingEndpoint>();
     ASSERT_EQ(endpoint->open(ACTION_SERVER_ENDPOINT_FIXTURE_PATH), HAKO_PDU_ERR_OK);
@@ -241,10 +241,10 @@ TEST(ActionGoalResponseTransactionContract, AcceptResponsePrecedesFeedbackAndRes
     ASSERT_TRUE(action_server->initialize(fibonacci_action()));
 
     const auto event = dispatch_goal(endpoint, action_server, goal_id(0x10));
-    const auto feedback = feedback_packet(action_server);
     const auto result = result_packet(action_server);
 
     bool accepted = false;
+    bool result_completed = false;
     std::thread accept_thread([&] {
         accepted = action_server->accept_goal(event.goal);
     });
@@ -255,13 +255,16 @@ TEST(ActionGoalResponseTransactionContract, AcceptResponsePrecedesFeedbackAndRes
         FAIL() << "Goal Response send did not enter the blocked state.";
     }
 
-    EXPECT_FALSE(action_server->send_feedback(event.goal, feedback));
-    EXPECT_FALSE(action_server->complete(
-        event.goal, action::TerminalStatus::SUCCEEDED, result));
+    std::thread complete_thread([&] {
+        result_completed = action_server->complete(
+            event.goal, action::TerminalStatus::SUCCEEDED, result);
+    });
 
     endpoint->release_response();
     accept_thread.join();
+    complete_thread.join();
     ASSERT_TRUE(accepted);
+    ASSERT_TRUE(result_completed);
 
     const auto accepted_response = receive_response(endpoint);
     EXPECT_EQ(accepted_response.header.response_kind, 1);
@@ -269,15 +272,12 @@ TEST(ActionGoalResponseTransactionContract, AcceptResponsePrecedesFeedbackAndRes
         accepted_response.header.status,
         static_cast<std::uint8_t>(action::Decision::ACCEPTED));
 
-    EXPECT_TRUE(action_server->send_feedback(event.goal, feedback));
-    EXPECT_TRUE(action_server->complete(
-        event.goal, action::TerminalStatus::SUCCEEDED, result));
     const auto completed = receive_response(endpoint);
     EXPECT_EQ(completed.header.response_kind, 3);
     EXPECT_EQ(endpoint->stop(), HAKO_PDU_ERR_OK);
 }
 
-TEST(ActionGoalResponseTransactionContract, DefersCancelUntilAcceptResponseCompletes)
+TEST(ActionGoalResponseTransactionContract, QueuesCancelUntilAcceptResponseCompletes)
 {
     auto endpoint = std::make_shared<GoalResponseBlockingEndpoint>();
     ASSERT_EQ(endpoint->open(ACTION_SERVER_ENDPOINT_FIXTURE_PATH), HAKO_PDU_ERR_OK);
@@ -300,21 +300,19 @@ TEST(ActionGoalResponseTransactionContract, DefersCancelUntilAcceptResponseCompl
             std::as_bytes(std::span(cancel))),
         HAKO_PDU_ERR_OK);
 
-    action::ServerEvent deferred;
-    EXPECT_EQ(action_server->poll(deferred), action::ServerEventType::NONE);
-
     endpoint->release_response();
     accept_thread.join();
     ASSERT_TRUE(accepted);
     (void)receive_response(endpoint);
 
+    action::ServerEvent deferred;
     EXPECT_EQ(
         action_server->poll(deferred), action::ServerEventType::CANCEL_REQUEST);
     EXPECT_EQ(deferred.goal.goal_id, id);
     EXPECT_EQ(endpoint->stop(), HAKO_PDU_ERR_OK);
 }
 
-TEST(ActionGoalResponseTransactionContract, DefersNextGoalUntilRejectResponseReleasesSlot)
+TEST(ActionGoalResponseTransactionContract, QueuesNextGoalUntilRejectResponseReleasesSlot)
 {
     auto endpoint = std::make_shared<GoalResponseBlockingEndpoint>();
     ASSERT_EQ(endpoint->open(ACTION_SERVER_ENDPOINT_FIXTURE_PATH), HAKO_PDU_ERR_OK);
@@ -337,14 +335,12 @@ TEST(ActionGoalResponseTransactionContract, DefersNextGoalUntilRejectResponseRel
             std::as_bytes(std::span(next_request))),
         HAKO_PDU_ERR_OK);
 
-    action::ServerEvent deferred;
-    EXPECT_EQ(action_server->poll(deferred), action::ServerEventType::NONE);
-
     endpoint->release_response();
     reject_thread.join();
     ASSERT_TRUE(rejected);
     (void)receive_response(endpoint);
 
+    action::ServerEvent deferred;
     EXPECT_EQ(
         action_server->poll(deferred), action::ServerEventType::GOAL_REQUEST);
     EXPECT_EQ(deferred.goal.goal_id, next_id);

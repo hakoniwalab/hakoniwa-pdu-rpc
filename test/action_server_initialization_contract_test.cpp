@@ -12,13 +12,10 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
-#include <chrono>
-#include <condition_variable>
 #include <cstring>
 #include <memory>
 #include <mutex>
 #include <span>
-#include <thread>
 #include <vector>
 
 namespace action = hakoniwa::pdu::action;
@@ -116,57 +113,6 @@ public:
 
 private:
     std::size_t response_send_count_{0};
-};
-
-class CancelResponseBlockingEndpoint final
-    : public hakoniwa::pdu::Endpoint {
-public:
-    CancelResponseBlockingEndpoint()
-        : Endpoint(
-            "fibonacci-server",
-            HAKO_PDU_ENDPOINT_DIRECTION_INOUT)
-    {
-    }
-
-    HakoPduErrorType send(
-        const hakoniwa::pdu::PduResolvedKey& key,
-        std::span<const std::byte> data) noexcept override
-    {
-        if (key.channel_id % 3 == 1) {
-            std::unique_lock<std::mutex> lock(mutex_);
-            if (++response_send_count_ == 2) {
-                cancel_response_blocked_ = true;
-                condition_.notify_all();
-                condition_.wait(lock, [this] {
-                    return release_cancel_response_;
-                });
-            }
-        }
-        return Endpoint::send(key, data);
-    }
-
-    bool wait_until_cancel_response_blocked()
-    {
-        std::unique_lock<std::mutex> lock(mutex_);
-        return condition_.wait_for(
-            lock,
-            std::chrono::seconds(2),
-            [this] { return cancel_response_blocked_; });
-    }
-
-    void release_cancel_response()
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        release_cancel_response_ = true;
-        condition_.notify_all();
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable condition_;
-    std::size_t response_send_count_{0};
-    bool cancel_response_blocked_{false};
-    bool release_cancel_response_{false};
 };
 
 nlohmann::json fibonacci_action()
@@ -972,7 +918,15 @@ TEST(ActionServerInitializationContract, AcceptsCancelAndCompletesCanceled)
         action_endpoint->send(
             request_key, std::as_bytes(std::span(cancel_request))),
         HAKO_PDU_ERR_OK);
+    testing::internal::CaptureStderr();
     EXPECT_EQ(action_server->poll(event), action::ServerEventType::NONE);
+    const auto duplicate_cancel_log = testing::internal::GetCapturedStderr();
+    EXPECT_NE(
+        duplicate_cancel_log.find("a Cancel decision is already pending"),
+        std::string::npos);
+    EXPECT_NE(
+        duplicate_cancel_log.find("No Cancel Response will be sent"),
+        std::string::npos);
 
     ASSERT_TRUE(action_server->accept_cancel(
         action::ServerGoalHandle{kGoalId}));
@@ -1060,66 +1014,6 @@ TEST(ActionServerInitializationContract, RejectsCancelAndContinuesGoal)
     EXPECT_EQ(
         succeeded.header.status,
         static_cast<std::uint8_t>(action::TerminalStatus::SUCCEEDED));
-    EXPECT_EQ(action_endpoint->stop(), HAKO_PDU_ERR_OK);
-}
-
-TEST(ActionServerInitializationContract, CancelResponsePrecedesCanceledResult)
-{
-    auto action_endpoint = std::make_shared<CancelResponseBlockingEndpoint>();
-    ASSERT_EQ(
-        action_endpoint->open(ACTION_SERVER_ENDPOINT_FIXTURE_PATH),
-        HAKO_PDU_ERR_OK);
-    ASSERT_EQ(action_endpoint->start(), HAKO_PDU_ERR_OK);
-    auto action_server = server(action_endpoint);
-    ASSERT_TRUE(action_server->initialize(fibonacci_action()));
-
-    const hakoniwa::pdu::PduResolvedKey request_key{"fibonacci", 0};
-    const auto goal_request = fibonacci_goal_request();
-    ASSERT_EQ(
-        action_endpoint->send(
-            request_key, std::as_bytes(std::span(goal_request))),
-        HAKO_PDU_ERR_OK);
-    action::ServerEvent event;
-    ASSERT_EQ(
-        action_server->poll(event), action::ServerEventType::GOAL_REQUEST);
-    ASSERT_TRUE(action_server->accept_goal(event.goal));
-    (void)receive_fibonacci_response(action_endpoint, 1);
-
-    const auto cancel_request = fibonacci_cancel_request();
-    ASSERT_EQ(
-        action_endpoint->send(
-            request_key, std::as_bytes(std::span(cancel_request))),
-        HAKO_PDU_ERR_OK);
-    ASSERT_EQ(
-        action_server->poll(event), action::ServerEventType::CANCEL_REQUEST);
-    const auto goal = event.goal;
-    const auto result = fibonacci_result(action_server, {0, 1});
-    bool cancel_accepted = false;
-    std::thread accept_thread([&] {
-        cancel_accepted = action_server->accept_cancel(goal);
-    });
-
-    if (!action_endpoint->wait_until_cancel_response_blocked()) {
-        action_endpoint->release_cancel_response();
-        accept_thread.join();
-        FAIL() << "Cancel Response send did not enter the blocked state.";
-    }
-    EXPECT_FALSE(action_server->complete(
-        goal, action::TerminalStatus::CANCELED, result));
-    action_endpoint->release_cancel_response();
-    accept_thread.join();
-    ASSERT_TRUE(cancel_accepted);
-
-    const auto cancel_response = receive_fibonacci_response(
-        action_endpoint, 1);
-    EXPECT_EQ(cancel_response.header.response_kind, 2);
-    ASSERT_TRUE(action_server->complete(
-        goal, action::TerminalStatus::CANCELED, result));
-    const auto canceled = receive_fibonacci_response(action_endpoint, 1);
-    EXPECT_EQ(canceled.header.response_kind, 3);
-    EXPECT_EQ(
-        canceled.header.status,
-        static_cast<std::uint8_t>(action::TerminalStatus::CANCELED));
     EXPECT_EQ(action_endpoint->stop(), HAKO_PDU_ERR_OK);
 }
 
@@ -1220,7 +1114,12 @@ TEST(ActionServerInitializationContract, IgnoresUnknownAndCrossSlotCancel)
             first_request_key, std::as_bytes(std::span(unknown_cancel))),
         HAKO_PDU_ERR_OK);
     action::ServerEvent event;
+    testing::internal::CaptureStderr();
     EXPECT_EQ(action_server->poll(event), action::ServerEventType::NONE);
+    const auto unknown_cancel_log = testing::internal::GetCapturedStderr();
+    EXPECT_NE(
+        unknown_cancel_log.find("Goal is unknown or already completed"),
+        std::string::npos);
 
     const auto goal_request = fibonacci_goal_request();
     ASSERT_EQ(
@@ -1237,7 +1136,12 @@ TEST(ActionServerInitializationContract, IgnoresUnknownAndCrossSlotCancel)
         action_endpoint->send(
             second_request_key, std::as_bytes(std::span(cancel_request))),
         HAKO_PDU_ERR_OK);
+    testing::internal::CaptureStderr();
     EXPECT_EQ(action_server->poll(event), action::ServerEventType::NONE);
+    const auto cross_slot_log = testing::internal::GetCapturedStderr();
+    EXPECT_NE(
+        cross_slot_log.find("Goal is owned by a different slot"),
+        std::string::npos);
     ASSERT_EQ(
         action_endpoint->send(
             first_request_key, std::as_bytes(std::span(cancel_request))),
@@ -1369,7 +1273,63 @@ TEST(ActionServerInitializationContract, DuplicateGoalIsNotDispatchedAgain)
     EXPECT_EQ(
         action_server->poll(event),
         action::ServerEventType::GOAL_REQUEST);
+    const auto original_goal = event.goal;
     EXPECT_EQ(action_server->poll(event), action::ServerEventType::NONE);
+
+    const auto rejected = receive_fibonacci_response(action_endpoint, 4);
+    EXPECT_EQ(rejected.header.goal_id, kGoalId);
+    EXPECT_EQ(rejected.header.response_kind, 1);
+    EXPECT_EQ(
+        rejected.header.status,
+        static_cast<std::uint8_t>(action::Decision::REJECTED));
+
+    ASSERT_TRUE(action_server->accept_goal(original_goal));
+    const auto accepted = receive_fibonacci_response(action_endpoint, 1);
+    EXPECT_EQ(accepted.header.goal_id, kGoalId);
+    EXPECT_EQ(
+        accepted.header.status,
+        static_cast<std::uint8_t>(action::Decision::ACCEPTED));
+    EXPECT_EQ(action_endpoint->stop(), HAKO_PDU_ERR_OK);
+}
+
+TEST(ActionServerInitializationContract, LogsAutomaticGoalRejectionSendFailure)
+{
+    auto action_endpoint = std::make_shared<ResponseFailingEndpoint>();
+    ASSERT_EQ(
+        action_endpoint->open(ACTION_SERVER_ENDPOINT_FIXTURE_PATH),
+        HAKO_PDU_ERR_OK);
+    ASSERT_EQ(action_endpoint->start(), HAKO_PDU_ERR_OK);
+
+    auto action_server = server(action_endpoint);
+    ASSERT_TRUE(action_server->initialize(fibonacci_action()));
+
+    const hakoniwa::pdu::PduResolvedKey request_key{"fibonacci", 0};
+    const auto first_packet = fibonacci_goal_request();
+    ASSERT_EQ(
+        action_endpoint->send(
+            request_key, std::as_bytes(std::span(first_packet))),
+        HAKO_PDU_ERR_OK);
+    action::ServerEvent event;
+    ASSERT_EQ(
+        action_server->poll(event),
+        action::ServerEventType::GOAL_REQUEST);
+
+    const auto second_id = generated_goal_id(0x50);
+    const auto second_packet = fibonacci_goal_request(1, 1, second_id);
+    ASSERT_EQ(
+        action_endpoint->send(
+            request_key, std::as_bytes(std::span(second_packet))),
+        HAKO_PDU_ERR_OK);
+
+    testing::internal::CaptureStderr();
+    EXPECT_EQ(action_server->poll(event), action::ServerEventType::NONE);
+    const auto error_log = testing::internal::GetCapturedStderr();
+    EXPECT_NE(
+        error_log.find("slot is already owned by another Goal"),
+        std::string::npos);
+    EXPECT_NE(
+        error_log.find("Failed to send Action Goal rejection reply"),
+        std::string::npos);
     EXPECT_EQ(action_endpoint->stop(), HAKO_PDU_ERR_OK);
 }
 

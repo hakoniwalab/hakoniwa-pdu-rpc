@@ -65,13 +65,16 @@ SERVICE_CONTRACT_TARGETS = tuple(
 ACTION_CONTRACT_TARGETS = (
     "hakoniwa_pdu_action_configuration_test",
     "hakoniwa_pdu_action_server_initialization_test",
+    "hakoniwa_pdu_action_goal_response_transaction_test",
+    "hakoniwa_pdu_action_cancel_response_serialization_test",
     "hakoniwa_pdu_action_client_endpoint_test",
     "hakoniwa_pdu_action_packet_codec_test",
 )
 REVIEWED_TEST_TARGETS = SERVICE_CONTRACT_TARGETS + ACTION_CONTRACT_TARGETS
 REVIEWED_TEST_REGEX = (
     "^hakoniwa_pdu_(rpc_(basic|infinite_wait|timeout_cancel|cancel_race)"
-    "|action_(configuration|server_initialization|client_endpoint|packet_codec))_test$"
+    "|action_(configuration|server_initialization|goal_response_transaction"
+    "|cancel_response_serialization|client_endpoint|packet_codec))_test$"
 )
 
 

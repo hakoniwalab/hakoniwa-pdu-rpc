@@ -5,8 +5,10 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <set>
 #include <utility>
 
@@ -51,6 +53,16 @@ bool has_valid_packet_prefix(
         && metadata.heap_off >= metadata.base_off + required_base_size
         && metadata.heap_off <= metadata.total_size
         && metadata.total_size <= packet.size();
+}
+
+std::string format_goal_id(const GoalId& goal_id)
+{
+    std::ostringstream stream;
+    stream << std::hex << std::setfill('0');
+    for (const auto value : goal_id) {
+        stream << std::setw(2) << static_cast<unsigned int>(value);
+    }
+    return stream.str();
 }
 
 } // namespace
@@ -289,6 +301,71 @@ bool ActionServerEndpointImpl::send_response_packet(
         routing.response,
         std::as_bytes(std::span(packet.data(), wire_size)))
         == HAKO_PDU_ERR_OK;
+}
+
+void ActionServerEndpointImpl::send_goal_error_reply(
+    const GoalId& goal_id,
+    std::size_t slot_index,
+    std::string_view reason)
+{
+    std::cerr
+        << "ERROR: Rejecting Action Goal Request for action '"
+        << action_name_
+        << "', slot "
+        << slot_index
+        << ": "
+        << reason
+        << "."
+        << std::endl;
+
+    const ActionPacketBinding rejected_binding{
+        goal_id,
+        slot_index,
+        PacketBindingState::AWAITING_GOAL_DECISION,
+    };
+    PduData response;
+    if (!create_control_response_packet(response)) {
+        std::cerr
+            << "ERROR: Failed to create Action Goal rejection reply for action '"
+            << action_name_
+            << "', slot "
+            << slot_index
+            << "."
+            << std::endl;
+        return;
+    }
+    if (!send_response_packet(
+            rejected_binding,
+            RESPONSE_KIND_GOAL,
+            static_cast<std::uint8_t>(Decision::REJECTED),
+            std::move(response))) {
+        std::cerr
+            << "ERROR: Failed to send Action Goal rejection reply for action '"
+            << action_name_
+            << "', slot "
+            << slot_index
+            << "."
+            << std::endl;
+        return;
+    }
+}
+
+void ActionServerEndpointImpl::log_ignored_cancel_request(
+    const GoalId& goal_id,
+    std::size_t slot_index,
+    std::string_view reason) const
+{
+    std::cerr
+        << "WARNING: Ignoring Action Cancel Request for action '"
+        << action_name_
+        << "', slot "
+        << slot_index
+        << ", goal_id "
+        << format_goal_id(goal_id)
+        << ": "
+        << reason
+        << ". No Cancel Response will be sent."
+        << std::endl;
 }
 
 void ActionServerEndpointImpl::release_binding_locked(
@@ -549,6 +626,13 @@ ServerEventType ActionServerEndpointImpl::poll(
 
     HakoCpp_ActionRequestHeader header{};
     if (pending_packet.slot_index >= slot_routing_.size()) {
+        std::cerr
+            << "ERROR: Action request packet references an unavailable slot "
+            << pending_packet.slot_index
+            << " for action '"
+            << action_name_
+            << "'. No response can be sent."
+            << std::endl;
         return ServerEventType::NONE;
     }
     const auto& routing = slot_routing_[pending_packet.slot_index];
@@ -573,33 +657,50 @@ ServerEventType ActionServerEndpointImpl::poll(
         return ServerEventType::NONE;
     }
 
-    bool defer_request = false;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (pending_packet.slot_index < slot_owners_.size()
-            && slot_owners_[pending_packet.slot_index].has_value()) {
-            const auto owner = packet_bindings_.find(
-                *slot_owners_[pending_packet.slot_index]);
-            defer_request = owner != packet_bindings_.end()
-                && owner->second.pending_response != PendingResponse::NONE;
-        }
-    }
-    if (defer_request) {
-        std::lock_guard<std::mutex> queue_lock(pending_packets_->mutex);
-        pending_packets_->packets.push_back(std::move(pending_packet));
-        return ServerEventType::NONE;
-    }
-
     if (header.request_kind == REQUEST_KIND_CANCEL) {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto binding = packet_bindings_.find(header.goal_id);
-        if (binding == packet_bindings_.end()
-            || binding->second.slot_index != pending_packet.slot_index
-            || binding->second.state != PacketBindingState::GOAL_ACCEPTED
-            || binding->second.pending_response != PendingResponse::NONE
-            || binding->second.cancel_decision_pending) {
-            // Unknown, late, cross-slot, and duplicate Cancel Requests are
-            // intentionally ignored without creating a Context or response.
+        if (binding == packet_bindings_.end()) {
+            log_ignored_cancel_request(
+                header.goal_id,
+                pending_packet.slot_index,
+                "Goal is unknown or already completed");
+            return ServerEventType::NONE;
+        }
+        if (binding->second.slot_index != pending_packet.slot_index) {
+            log_ignored_cancel_request(
+                header.goal_id,
+                pending_packet.slot_index,
+                "Goal is owned by a different slot");
+            return ServerEventType::NONE;
+        }
+        if (binding->second.state
+            == PacketBindingState::AWAITING_GOAL_DECISION) {
+            log_ignored_cancel_request(
+                header.goal_id,
+                pending_packet.slot_index,
+                "Goal acceptance has not completed");
+            return ServerEventType::NONE;
+        }
+        if (binding->second.state == PacketBindingState::CANCEL_ACCEPTED) {
+            log_ignored_cancel_request(
+                header.goal_id,
+                pending_packet.slot_index,
+                "Cancel was already accepted");
+            return ServerEventType::NONE;
+        }
+        if (binding->second.state == PacketBindingState::RESULT_COMMITTED) {
+            log_ignored_cancel_request(
+                header.goal_id,
+                pending_packet.slot_index,
+                "terminal Result is already committed");
+            return ServerEventType::NONE;
+        }
+        if (binding->second.cancel_decision_pending) {
+            log_ignored_cancel_request(
+                header.goal_id,
+                pending_packet.slot_index,
+                "a Cancel decision is already pending");
             return ServerEventType::NONE;
         }
         binding->second.cancel_decision_pending = true;
@@ -610,20 +711,21 @@ ServerEventType ActionServerEndpointImpl::poll(
         return event_out.type;
     }
 
-    bool slot_collision = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (packet_bindings_.contains(header.goal_id)) {
-            std::cerr
-                << "ERROR: Duplicate Action Goal ID received and ignored "
-                << "for action '"
-                << action_name_
-                << "'."
-                << std::endl;
+            send_goal_error_reply(
+                header.goal_id,
+                pending_packet.slot_index,
+                "duplicate Goal ID");
             return ServerEventType::NONE;
         }
         if (slot_owners_[pending_packet.slot_index].has_value()) {
-            slot_collision = true;
+            send_goal_error_reply(
+                header.goal_id,
+                pending_packet.slot_index,
+                "slot is already owned by another Goal");
+            return ServerEventType::NONE;
         } else {
             slot_owners_[pending_packet.slot_index] = header.goal_id;
             packet_bindings_.emplace(
@@ -634,31 +736,6 @@ ServerEventType ActionServerEndpointImpl::poll(
                     PacketBindingState::AWAITING_GOAL_DECISION,
                 });
         }
-    }
-
-    if (slot_collision) {
-        std::cerr
-            << "ERROR: Action slot is already owned by another Goal for action '"
-            << action_name_
-            << "', slot "
-            << pending_packet.slot_index
-            << "."
-            << std::endl;
-        ActionPacketBinding rejected_binding{
-            header.goal_id,
-            pending_packet.slot_index,
-            PacketBindingState::AWAITING_GOAL_DECISION,
-        };
-        rejected_binding.pending_response = PendingResponse::GOAL_REJECT;
-        PduData response;
-        if (create_control_response_packet(response)) {
-            (void)send_response_packet(
-                rejected_binding,
-                RESPONSE_KIND_GOAL,
-                static_cast<std::uint8_t>(Decision::REJECTED),
-                std::move(response));
-        }
-        return ServerEventType::NONE;
     }
 
     event_out.type = ServerEventType::GOAL_REQUEST;
@@ -674,43 +751,26 @@ bool ActionServerEndpointImpl::accept_goal(const ServerGoalHandle& goal)
         return false;
     }
 
-    ActionPacketBinding committed_binding;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!initialized_) {
-            return false;
-        }
-
-        const auto binding = packet_bindings_.find(goal.goal_id);
-        if (binding == packet_bindings_.end()
-            || binding->second.state
-                != PacketBindingState::AWAITING_GOAL_DECISION
-            || binding->second.pending_response != PendingResponse::NONE) {
-            return false;
-        }
-
-        binding->second.pending_response = PendingResponse::GOAL_ACCEPT;
-        committed_binding = binding->second;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!initialized_) {
+        return false;
     }
 
+    const auto binding = packet_bindings_.find(goal.goal_id);
+    if (binding == packet_bindings_.end()
+        || binding->second.state
+            != PacketBindingState::AWAITING_GOAL_DECISION) {
+        return false;
+    }
     PduData response;
     const bool sent = create_control_response_packet(response)
         && send_response_packet(
-            committed_binding,
+            binding->second,
             RESPONSE_KIND_GOAL,
             static_cast<std::uint8_t>(Decision::ACCEPTED),
             std::move(response));
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto binding = packet_bindings_.find(goal.goal_id);
-        if (binding != packet_bindings_.end()
-            && binding->second.pending_response
-                == PendingResponse::GOAL_ACCEPT) {
-            if (sent) {
-                binding->second.state = PacketBindingState::GOAL_ACCEPTED;
-            }
-            binding->second.pending_response = PendingResponse::NONE;
-        }
+    if (sent) {
+        binding->second.state = PacketBindingState::GOAL_ACCEPTED;
     }
     return sent;
 }
@@ -722,44 +782,26 @@ bool ActionServerEndpointImpl::reject_goal(
         return false;
     }
 
-    ActionPacketBinding committed_binding;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!initialized_) {
-            return false;
-        }
-
-        const auto binding = packet_bindings_.find(goal.goal_id);
-        if (binding == packet_bindings_.end()
-            || binding->second.state
-                != PacketBindingState::AWAITING_GOAL_DECISION
-            || binding->second.pending_response != PendingResponse::NONE) {
-            return false;
-        }
-
-        binding->second.pending_response = PendingResponse::GOAL_REJECT;
-        committed_binding = binding->second;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!initialized_) {
+        return false;
     }
 
+    const auto binding = packet_bindings_.find(goal.goal_id);
+    if (binding == packet_bindings_.end()
+        || binding->second.state
+            != PacketBindingState::AWAITING_GOAL_DECISION) {
+        return false;
+    }
     PduData response;
     const bool sent = create_control_response_packet(response)
         && send_response_packet(
-            committed_binding,
+            binding->second,
             RESPONSE_KIND_GOAL,
             static_cast<std::uint8_t>(Decision::REJECTED),
             std::move(response));
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto binding = packet_bindings_.find(goal.goal_id);
-        if (binding != packet_bindings_.end()
-            && binding->second.pending_response
-                == PendingResponse::GOAL_REJECT) {
-            if (sent) {
-                release_binding_locked(binding);
-            } else {
-                binding->second.pending_response = PendingResponse::NONE;
-            }
-        }
+    if (sent) {
+        release_binding_locked(binding);
     }
     return sent;
 }
@@ -771,42 +813,26 @@ bool ActionServerEndpointImpl::accept_cancel(
         return false;
     }
 
-    ActionPacketBinding committed_binding;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!initialized_) {
-            return false;
-        }
-        const auto binding = packet_bindings_.find(goal.goal_id);
-        if (binding == packet_bindings_.end()
-            || binding->second.state != PacketBindingState::GOAL_ACCEPTED
-            || binding->second.pending_response != PendingResponse::NONE
-            || !binding->second.cancel_decision_pending) {
-            return false;
-        }
-        binding->second.pending_response = PendingResponse::CANCEL_ACCEPT;
-        committed_binding = binding->second;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!initialized_) {
+        return false;
     }
-
+    const auto binding = packet_bindings_.find(goal.goal_id);
+    if (binding == packet_bindings_.end()
+        || binding->second.state != PacketBindingState::GOAL_ACCEPTED
+        || !binding->second.cancel_decision_pending) {
+        return false;
+    }
     PduData response;
     const bool sent = create_control_response_packet(response)
         && send_response_packet(
-            committed_binding,
+            binding->second,
             RESPONSE_KIND_CANCEL,
             static_cast<std::uint8_t>(Decision::ACCEPTED),
             std::move(response));
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto binding = packet_bindings_.find(goal.goal_id);
-        if (binding != packet_bindings_.end()
-            && binding->second.pending_response
-                == PendingResponse::CANCEL_ACCEPT) {
-            if (sent) {
-                binding->second.state = PacketBindingState::CANCEL_ACCEPTED;
-                binding->second.cancel_decision_pending = false;
-            }
-            binding->second.pending_response = PendingResponse::NONE;
-        }
+    if (sent) {
+        binding->second.state = PacketBindingState::CANCEL_ACCEPTED;
+        binding->second.cancel_decision_pending = false;
     }
     return sent;
 }
@@ -846,41 +872,25 @@ bool ActionServerEndpointImpl::reject_cancel(
         return false;
     }
 
-    ActionPacketBinding committed_binding;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!initialized_) {
-            return false;
-        }
-        const auto binding = packet_bindings_.find(goal.goal_id);
-        if (binding == packet_bindings_.end()
-            || binding->second.state != PacketBindingState::GOAL_ACCEPTED
-            || binding->second.pending_response != PendingResponse::NONE
-            || !binding->second.cancel_decision_pending) {
-            return false;
-        }
-        binding->second.pending_response = PendingResponse::CANCEL_REJECT;
-        committed_binding = binding->second;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!initialized_) {
+        return false;
     }
-
+    const auto binding = packet_bindings_.find(goal.goal_id);
+    if (binding == packet_bindings_.end()
+        || binding->second.state != PacketBindingState::GOAL_ACCEPTED
+        || !binding->second.cancel_decision_pending) {
+        return false;
+    }
     PduData response;
     const bool sent = create_control_response_packet(response)
         && send_response_packet(
-            committed_binding,
+            binding->second,
             RESPONSE_KIND_CANCEL,
             static_cast<std::uint8_t>(Decision::REJECTED),
             std::move(response));
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto binding = packet_bindings_.find(goal.goal_id);
-        if (binding != packet_bindings_.end()
-            && binding->second.pending_response
-                == PendingResponse::CANCEL_REJECT) {
-            if (sent) {
-                binding->second.cancel_decision_pending = false;
-            }
-            binding->second.pending_response = PendingResponse::NONE;
-        }
+    if (sent) {
+        binding->second.cancel_decision_pending = false;
     }
     return sent;
 }
@@ -901,8 +911,6 @@ bool ActionServerEndpointImpl::send_feedback(
     if (binding == packet_bindings_.end()
         || (binding->second.state != PacketBindingState::GOAL_ACCEPTED
             && binding->second.state != PacketBindingState::CANCEL_ACCEPTED)
-        || binding->second.pending_response == PendingResponse::GOAL_ACCEPT
-        || binding->second.pending_response == PendingResponse::GOAL_REJECT
         || binding->second.slot_index >= slot_routing_.size()) {
         return false;
     }
@@ -950,61 +958,51 @@ bool ActionServerEndpointImpl::complete(
         return false;
     }
 
-    ActionPacketBinding committed_binding;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!initialized_) {
-            return false;
-        }
-        const auto binding = packet_bindings_.find(goal.goal_id);
-        if (binding == packet_bindings_.end()
-            || binding->second.pending_response != PendingResponse::NONE) {
-            return false;
-        }
-        const bool executing_completion =
-            binding->second.state == PacketBindingState::GOAL_ACCEPTED
-            && (status == TerminalStatus::SUCCEEDED
-                || status == TerminalStatus::ABORTED);
-        const bool canceling_completion =
-            binding->second.state == PacketBindingState::CANCEL_ACCEPTED
-            && (status == TerminalStatus::CANCELED
-                || status == TerminalStatus::ABORTED);
-        if (!executing_completion && !canceling_completion) {
-            return false;
-        }
-        if (binding->second.slot_index >= slot_routing_.size()) {
-            return false;
-        }
-        const auto& routing = slot_routing_[binding->second.slot_index];
-        std::size_t wire_size = 0;
-        if (!validate_packet_capacity(
-                result_pdu,
-                routing.response_packet_type,
-                routing.response_packet_base_size,
-                routing.response_heap_capacity,
-                false,
-                wire_size)) {
-            // Invalid Application input must not commit the Goal. The caller
-            // may correct the encoded Result and call complete() again.
-            return false;
-        }
-        binding->second.state = PacketBindingState::RESULT_COMMITTED;
-        binding->second.cancel_decision_pending = false;
-        committed_binding = binding->second;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!initialized_) {
+        return false;
+    }
+    const auto binding = packet_bindings_.find(goal.goal_id);
+    if (binding == packet_bindings_.end()) {
+        return false;
+    }
+    const bool executing_completion =
+        binding->second.state == PacketBindingState::GOAL_ACCEPTED
+        && (status == TerminalStatus::SUCCEEDED
+            || status == TerminalStatus::ABORTED);
+    const bool canceling_completion =
+        binding->second.state == PacketBindingState::CANCEL_ACCEPTED
+        && (status == TerminalStatus::CANCELED
+            || status == TerminalStatus::ABORTED);
+    if (!executing_completion && !canceling_completion) {
+        return false;
+    }
+    if (binding->second.slot_index >= slot_routing_.size()) {
+        return false;
+    }
+    const auto& routing = slot_routing_[binding->second.slot_index];
+    std::size_t wire_size = 0;
+    if (!validate_packet_capacity(
+            result_pdu,
+            routing.response_packet_type,
+            routing.response_packet_base_size,
+            routing.response_heap_capacity,
+            false,
+            wire_size)) {
+        // Invalid Application input must not commit the Goal. The caller may
+        // correct the encoded Result and call complete() again.
+        return false;
     }
 
+    binding->second.state = PacketBindingState::RESULT_COMMITTED;
+    binding->second.cancel_decision_pending = false;
     const bool sent = send_response_packet(
-        committed_binding,
+        binding->second,
         RESPONSE_KIND_RESULT,
         static_cast<std::uint8_t>(status),
         result_pdu);
     if (sent) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto binding = packet_bindings_.find(goal.goal_id);
-        if (binding != packet_bindings_.end()
-            && binding->second.state == PacketBindingState::RESULT_COMMITTED) {
-            release_binding_locked(binding);
-        }
+        release_binding_locked(binding);
     }
     return sent;
 }

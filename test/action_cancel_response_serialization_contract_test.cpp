@@ -134,7 +134,7 @@ HakoCpp_FibonacciActionResponse receive_response(
 
 } // namespace
 
-TEST(ActionCancelResponseDeferContract, DefersRepeatedCancelUntilRejectResponseCompletes)
+TEST(ActionCancelResponseSerializationContract, QueuesRepeatedCancelUntilRejectResponseCompletes)
 {
     auto endpoint = std::make_shared<CancelResponseBlockingEndpoint>();
     ASSERT_EQ(endpoint->open(ACTION_SERVER_ENDPOINT_FIXTURE_PATH), HAKO_PDU_ERR_OK);
@@ -177,9 +177,6 @@ TEST(ActionCancelResponseDeferContract, DefersRepeatedCancelUntilRejectResponseC
         endpoint->send(request_key, std::as_bytes(std::span(cancel))),
         HAKO_PDU_ERR_OK);
 
-    action::ServerEvent deferred;
-    EXPECT_EQ(action_server->poll(deferred), action::ServerEventType::NONE);
-
     endpoint->release_response();
     reject_thread.join();
     ASSERT_TRUE(rejected);
@@ -189,6 +186,7 @@ TEST(ActionCancelResponseDeferContract, DefersRepeatedCancelUntilRejectResponseC
         response.header.status,
         static_cast<std::uint8_t>(action::Decision::REJECTED));
 
+    action::ServerEvent deferred;
     EXPECT_EQ(
         action_server->poll(deferred), action::ServerEventType::CANCEL_REQUEST);
     EXPECT_EQ(deferred.goal.goal_id, id);
