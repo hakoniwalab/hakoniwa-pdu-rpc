@@ -75,25 +75,33 @@ COMPLETE_CANCELED
 
 ### 3.3 Cancel Response配送と状態公開
 
-Client起因Cancelのaccept／rejectでは、判断とResponse配送の間にpacket bindingの配送中状態を置きます。
+Client起因Cancelのaccept／rejectでは、Goalの意味状態を増やさず、Response配送中であることを`pending_response`で管理します。
 
 ```text
 accept:
-  GOAL_ACCEPTED + cancel_decision_pending
-    -> CANCEL_ACCEPT_RESPONSE_SENDING
+  state = GOAL_ACCEPTED
+  cancel_decision_pending = true
+  pending_response = NONE
+    -> pending_response = CANCEL_ACCEPT
     -> CANCEL_RESPONSE(ACCEPTED)送信成功
-    -> CANCEL_ACCEPTED
+    -> state = CANCEL_ACCEPTED
+    -> cancel_decision_pending = false
+    -> pending_response = NONE
 
 reject:
-  GOAL_ACCEPTED + cancel_decision_pending
-    -> CANCEL_REJECT_RESPONSE_SENDING
+  state = GOAL_ACCEPTED
+  cancel_decision_pending = true
+  pending_response = NONE
+    -> pending_response = CANCEL_REJECT
     -> CANCEL_RESPONSE(REJECTED)送信成功
-    -> GOAL_ACCEPTED + cancel_decision_pending=false
+    -> state = GOAL_ACCEPTED
+    -> cancel_decision_pending = false
+    -> pending_response = NONE
 ```
 
-配送中状態は上位Protocolの公開Goal状態ではなく、Cancel判断とpacket配送順序を結ぶEndpoint内部状態です。この間、同じGoalのterminal `complete()`はcommitできません。これにより、Cancel accept時は必ず`CANCEL_RESPONSE(ACCEPTED)`が`RESULT(CANCELED / ABORTED)`より先にWireへ送信されます。
+`pending_response`は公開Goal状態ではなく、判断とWire配送順序を結ぶEndpoint内部の直交Contextです。`pending_response != NONE`の間、同一Goalのterminal `complete()`および別のaccept／reject判断はcommitできません。これにより、Cancel accept時は必ず`CANCEL_RESPONSE(ACCEPTED)`が`RESULT(CANCELED / ABORTED)`より先にWireへ送信されます。
 
-Cancel Response送信に失敗した場合は`GOAL_ACCEPTED + cancel_decision_pending=true`へ戻し、同じaccept／reject判断を再実行できます。通信異常をGoalのterminal statusへ変換しません。初期対象のTCPでは、非OKの同期送信は完全なProtocol packetを配送できていないものとして扱います。接続断後の再接続手順は後続Policyで定義します。
+Cancel Response送信に失敗した場合は、意味状態を`GOAL_ACCEPTED`のまま維持し、`cancel_decision_pending=true`、`pending_response=NONE`へ戻します。これにより、Applicationは同じaccept／reject判断を再実行できます。通信異常をGoalのterminal statusへ変換しません。初期対象のTCPでは、非OKの同期送信は完全なProtocol packetを配送できていないものとして扱います。接続断後の再接続手順は後続Policyで定義します。
 
 ### 3.4 後着する通常成功
 
@@ -186,8 +194,8 @@ CANCEL_RESPONSE(REJECTED)
 
 | Event | EXECUTING | CANCELING | FINISHING |
 | --- | --- | --- | --- |
-| `CANCEL_REQUEST_RECEIVED` | pendingでなければ`DEFER`: Applicationへ通知。判断までは`SAME`。pendingなら`IGNORE` | `IGNORE`: 既存のCancel commitを変更せず、追加Responseを送らない。`SAME` | `IGNORE`: Result確定済み。Cancel Responseを送らず破棄。`SAME` |
-| `DUPLICATE_CANCEL_REQUEST_RECEIVED` | 判断待ち中は`IGNORE`し、追加dispatch／Responseを生成しない。`SAME` | `IGNORE`: 既存のCancel commitを変更しない。`SAME` | `IGNORE`: Cancel Responseを送らず破棄。`SAME` |
+| `CANCEL_REQUEST_RECEIVED` | pendingでなければ`DEFER`: Applicationへ通知。判断までは`SAME`。pendingなら`IGNORE` | `IGNORE`: 既存Cancel commitを変更せず、追加Responseを送らない。`SAME` | `IGNORE`: Result確定済み。Cancel Responseを送らず破棄。`SAME` |
+| `DUPLICATE_CANCEL_REQUEST_RECEIVED` | 判断待ち中は`IGNORE`し、追加dispatch／Responseを生成しない。`SAME` | `IGNORE`: 既存Cancel commitを変更しない。`SAME` | `IGNORE`: Cancel Responseを送らず破棄。`SAME` |
 
 Server Applicationイベントについては、次を正とします。
 
@@ -196,7 +204,7 @@ Server Applicationイベントについては、次を正とします。
 | `ACCEPT_CANCEL` | pending Contextが有効なら`ALLOW`して`CANCELING`へ | `APPLICATION_API_ERROR` | `APPLICATION_API_ERROR`: Result確定済み |
 | `REJECT_CANCEL` | pending Contextが有効なら`ALLOW`して`EXECUTING`を維持 | `APPLICATION_API_ERROR` | `APPLICATION_API_ERROR`: Result確定済み |
 
-Result commitとCancel acceptは、同一Goal Contextに対する排他的な状態更新として実装します。
+Result commitとCancel acceptは、同一Goal Contextに対する排他的な状態更新として実装します。Endpoint実装では、`pending_response != NONE`を共通排他条件として扱います。
 
 初版TransportはTCPを前提とし、Cancel Request単位の`request_id`を持ちません。このため同一Goalの判断待ち中またはCancel受理後に届く追加Cancel Requestは、再送か新規要求かを区別せず無応答で破棄します。Cancelを`REJECTED`と判断した後はGoalが`EXECUTING`へ戻るため、Clientは改めてCancel Requestを送信できます。
 
@@ -598,6 +606,7 @@ Application response timeout policy
 - unknownまたは解放済み`goal_id`へのCancel Requestは無応答で破棄する。
 - 後着するCancel判断はApplication API Errorとする。
 - 後着イベントは、先にcommitされた状態とterminal statusを変更しない。
+- Response配送中は`pending_response`で共通排他し、意味状態を増やさない。
 - 初版必須Contract Testは正常Goal、Goal reject、Cancel accept／reject、Cancel／Result race、複数Goal、token誤用を含む。
 - Runtime Contract TestをRegistry生成型およびROS E2Eから分離する。
 - Deferred項目を実装エージェントが独自判断で補完しない。
