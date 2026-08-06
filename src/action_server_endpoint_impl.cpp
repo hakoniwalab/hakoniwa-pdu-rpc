@@ -629,7 +629,7 @@ ServerEventType ActionServerEndpointImpl::poll(
         const ActionPacketBinding rejected_binding{
             header.goal_id,
             pending_packet.slot_index,
-            PacketBindingState::GOAL_REJECTED,
+            PacketBindingState::GOAL_REJECT_RESPONSE_SENDING,
         };
         PduData response;
         if (create_control_response_packet(response)) {
@@ -669,19 +669,30 @@ bool ActionServerEndpointImpl::accept_goal(const ServerGoalHandle& goal)
             return false;
         }
 
-        binding->second.state = PacketBindingState::GOAL_ACCEPTED;
+        binding->second.state =
+            PacketBindingState::GOAL_ACCEPT_RESPONSE_SENDING;
         committed_binding = binding->second;
     }
 
     PduData response;
-    if (!create_control_response_packet(response)) {
-        return false;
+    const bool sent = create_control_response_packet(response)
+        && send_response_packet(
+            committed_binding,
+            RESPONSE_KIND_GOAL,
+            static_cast<std::uint8_t>(Decision::ACCEPTED),
+            std::move(response));
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto binding = packet_bindings_.find(goal.goal_id);
+        if (binding != packet_bindings_.end()
+            && binding->second.state
+                == PacketBindingState::GOAL_ACCEPT_RESPONSE_SENDING) {
+            binding->second.state = sent
+                ? PacketBindingState::GOAL_ACCEPTED
+                : PacketBindingState::AWAITING_GOAL_DECISION;
+        }
     }
-    return send_response_packet(
-        committed_binding,
-        RESPONSE_KIND_GOAL,
-        static_cast<std::uint8_t>(Decision::ACCEPTED),
-        std::move(response));
+    return sent;
 }
 
 bool ActionServerEndpointImpl::reject_goal(
@@ -705,24 +716,30 @@ bool ActionServerEndpointImpl::reject_goal(
             return false;
         }
 
-        binding->second.state = PacketBindingState::GOAL_REJECTED;
+        binding->second.state =
+            PacketBindingState::GOAL_REJECT_RESPONSE_SENDING;
         committed_binding = binding->second;
     }
 
     PduData response;
-    if (!create_control_response_packet(response)) {
-        return false;
-    }
-    const bool sent = send_response_packet(
-        committed_binding,
-        RESPONSE_KIND_GOAL,
-        static_cast<std::uint8_t>(Decision::REJECTED),
-        std::move(response));
-    if (sent) {
+    const bool sent = create_control_response_packet(response)
+        && send_response_packet(
+            committed_binding,
+            RESPONSE_KIND_GOAL,
+            static_cast<std::uint8_t>(Decision::REJECTED),
+            std::move(response));
+    {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto binding = packet_bindings_.find(goal.goal_id);
-        if (binding != packet_bindings_.end()) {
-            release_binding_locked(binding);
+        if (binding != packet_bindings_.end()
+            && binding->second.state
+                == PacketBindingState::GOAL_REJECT_RESPONSE_SENDING) {
+            if (sent) {
+                release_binding_locked(binding);
+            } else {
+                binding->second.state =
+                    PacketBindingState::AWAITING_GOAL_DECISION;
+            }
         }
     }
     return sent;
