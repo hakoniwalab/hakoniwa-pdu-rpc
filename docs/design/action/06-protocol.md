@@ -319,6 +319,10 @@ response_kind = RESULT:
   3 = ABORTED
 ```
 
+初版のResultはServerからResponse channelへpushします。Server Runtimeはterminal statusとResult bodyをcommitしてから1回だけ送信し、Client Runtimeは`goal_id`とslot ownershipを検証してApplicationへ配送します。`EXECUTING`からは`SUCCEEDED`または`ABORTED`を許可し、`CANCELED`はCancel受理後の`CANCELING`からだけ許可します。
+
+Result packetの形式・容量検証はterminal commit前に行い、Application入力エラーではGoalを維持します。Result送信成功後、ServerはGoal Contextとslot ownershipを解放します。ClientもResultをイベントへ移した後に対応Contextとslotを解放します。検証通過後のTransport送信失敗では、Server Contextを誤再利用防止のため`FINISHING`で保持し、再送と解放のPolicyは後続仕様とします。
+
 ### 8.6 sequence_no
 
 ```text

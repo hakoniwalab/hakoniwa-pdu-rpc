@@ -123,6 +123,31 @@ action::PduData feedback_packet(
     return packet;
 }
 
+action::PduData result_packet(
+    const action::GoalId& id,
+    action::TerminalStatus status,
+    std::vector<std::int32_t> sequence)
+{
+    HakoCpp_FibonacciActionResponse response{};
+    response.header.version = 1;
+    response.header.response_kind = 3;
+    response.header.status = static_cast<std::uint8_t>(status);
+    response.header.goal_id = id;
+    response.body.sequence = std::move(sequence);
+
+    hako::pdu::msgs::sample_action_msgs::FibonacciActionResponse convertor;
+    action::PduData packet(1024, 0);
+    const int encoded_size = convertor.cpp2pdu(
+        response,
+        reinterpret_cast<char*>(packet.data()),
+        static_cast<int>(packet.size()));
+    EXPECT_GT(encoded_size, 0);
+    if (encoded_size > 0) {
+        packet.resize(static_cast<std::size_t>(encoded_size));
+    }
+    return packet;
+}
+
 class ActionClientFixture : public ::testing::Test {
 protected:
     void SetUp() override
@@ -357,6 +382,89 @@ TEST_F(ActionClientFixture, DeliversAcceptedGoalFeedbackInSequence)
             feedback_key, std::as_bytes(std::span(second))),
         HAKO_PDU_ERR_OK);
     EXPECT_EQ(action_client->poll(event), action::ClientEventType::NONE);
+}
+
+TEST_F(ActionClientFixture, DeliversTerminalResultAndReleasesSlot)
+{
+    ASSERT_TRUE(action_client->initialize(fibonacci_action()));
+    const auto id = goal_id(0xd0);
+    const auto next_id = goal_id(0xe0);
+    const auto goal = encoded_goal(action_client);
+    action::ClientGoalHandle handle;
+    ASSERT_TRUE(action_client->send_goal(goal, id, handle));
+
+    const hakoniwa::pdu::PduResolvedKey response_key{"fibonacci", 1};
+    const auto accepted = goal_response(id, action::Decision::ACCEPTED);
+    ASSERT_EQ(
+        action_endpoint->send(
+            response_key, std::as_bytes(std::span(accepted))),
+        HAKO_PDU_ERR_OK);
+    action::ClientEvent event;
+    ASSERT_EQ(
+        action_client->poll(event),
+        action::ClientEventType::GOAL_RESPONSE);
+
+    const auto result = result_packet(
+        id, action::TerminalStatus::SUCCEEDED, {0, 1, 1, 2, 3, 5});
+    ASSERT_EQ(
+        action_endpoint->send(
+            response_key, std::as_bytes(std::span(result))),
+        HAKO_PDU_ERR_OK);
+    ASSERT_EQ(action_client->poll(event), action::ClientEventType::RESULT);
+    EXPECT_EQ(event.goal.goal_id, id);
+    EXPECT_EQ(event.terminal_status, action::TerminalStatus::SUCCEEDED);
+
+    HakoCpp_FibonacciActionResponse decoded{};
+    hako::pdu::msgs::sample_action_msgs::FibonacciActionResponse convertor;
+    ASSERT_TRUE(convertor.pdu2cpp(
+        reinterpret_cast<char*>(event.pdu.data()), decoded));
+    EXPECT_EQ(
+        decoded.body.sequence,
+        (std::vector<std::int32_t>{0, 1, 1, 2, 3, 5}));
+
+    ASSERT_EQ(
+        action_endpoint->send(
+            response_key, std::as_bytes(std::span(result))),
+        HAKO_PDU_ERR_OK);
+    EXPECT_EQ(action_client->poll(event), action::ClientEventType::NONE);
+    EXPECT_TRUE(action_client->send_goal(goal, next_id, handle));
+}
+
+TEST_F(ActionClientFixture, IgnoresInvalidResultStatusAndRetainsSlot)
+{
+    ASSERT_TRUE(action_client->initialize(fibonacci_action()));
+    const auto id = goal_id(0xf0);
+    const auto goal = encoded_goal(action_client);
+    action::ClientGoalHandle handle;
+    ASSERT_TRUE(action_client->send_goal(goal, id, handle));
+
+    const hakoniwa::pdu::PduResolvedKey response_key{"fibonacci", 1};
+    const auto accepted = goal_response(id, action::Decision::ACCEPTED);
+    ASSERT_EQ(
+        action_endpoint->send(
+            response_key, std::as_bytes(std::span(accepted))),
+        HAKO_PDU_ERR_OK);
+    action::ClientEvent event;
+    ASSERT_EQ(
+        action_client->poll(event),
+        action::ClientEventType::GOAL_RESPONSE);
+
+    const auto invalid = result_packet(
+        id, action::TerminalStatus::UNSPECIFIED, {});
+    ASSERT_EQ(
+        action_endpoint->send(
+            response_key, std::as_bytes(std::span(invalid))),
+        HAKO_PDU_ERR_OK);
+    EXPECT_EQ(action_client->poll(event), action::ClientEventType::NONE);
+    const auto canceled = result_packet(
+        id, action::TerminalStatus::CANCELED, {});
+    ASSERT_EQ(
+        action_endpoint->send(
+            response_key, std::as_bytes(std::span(canceled))),
+        HAKO_PDU_ERR_OK);
+    EXPECT_EQ(action_client->poll(event), action::ClientEventType::NONE);
+    EXPECT_FALSE(action_client->send_goal(
+        goal, goal_id(0x20), handle));
 }
 
 TEST_F(ActionClientFixture, ClearPendingEventsDoesNotReleaseActiveContext)

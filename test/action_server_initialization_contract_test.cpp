@@ -65,6 +65,30 @@ private:
     bool fail_feedback_{true};
 };
 
+class ResultFailingOnceEndpoint final : public hakoniwa::pdu::Endpoint {
+public:
+    ResultFailingOnceEndpoint()
+        : Endpoint(
+            "fibonacci-server",
+            HAKO_PDU_ENDPOINT_DIRECTION_INOUT)
+    {
+    }
+
+    HakoPduErrorType send(
+        const hakoniwa::pdu::PduResolvedKey& key,
+        std::span<const std::byte> data) noexcept override
+    {
+        if (key.channel_id % 3 == 1
+            && ++response_send_count_ == 2) {
+            return HAKO_PDU_ERR_IO_ERROR;
+        }
+        return Endpoint::send(key, data);
+    }
+
+private:
+    std::size_t response_send_count_{0};
+};
+
 nlohmann::json fibonacci_action()
 {
     return nlohmann::json::parse(R"({
@@ -179,6 +203,23 @@ action::PduData fibonacci_feedback(
     hako::pdu::msgs::sample_action_msgs::FibonacciActionFeedback convertor;
     const int encoded_size = convertor.cpp2pdu(
         feedback,
+        reinterpret_cast<char*>(packet.data()),
+        static_cast<int>(packet.size()));
+    EXPECT_GT(encoded_size, 0);
+    return packet;
+}
+
+action::PduData fibonacci_result(
+    const std::shared_ptr<action::ActionServerEndpointImpl>& action_server,
+    std::vector<std::int32_t> sequence)
+{
+    action::PduData packet;
+    EXPECT_TRUE(action_server->create_result_buffer(packet));
+    HakoCpp_FibonacciActionResponse result{};
+    result.body.sequence = std::move(sequence);
+    hako::pdu::msgs::sample_action_msgs::FibonacciActionResponse convertor;
+    const int encoded_size = convertor.cpp2pdu(
+        result,
         reinterpret_cast<char*>(packet.data()),
         static_cast<int>(packet.size()));
     EXPECT_GT(encoded_size, 0);
@@ -720,6 +761,132 @@ TEST(ActionServerInitializationContract, FeedbackSequenceIsIndependentPerGoal)
     EXPECT_EQ(first.header.sequence_no, 0U);
     EXPECT_EQ(second.header.goal_id, second_id);
     EXPECT_EQ(second.header.sequence_no, 0U);
+    EXPECT_EQ(action_endpoint->stop(), HAKO_PDU_ERR_OK);
+}
+
+TEST(ActionServerInitializationContract, CompletesGoalAndReleasesSlotAfterResultSend)
+{
+    auto action_endpoint = endpoint();
+    ASSERT_EQ(
+        action_endpoint->open(ACTION_SERVER_ENDPOINT_FIXTURE_PATH),
+        HAKO_PDU_ERR_OK);
+    ASSERT_EQ(action_endpoint->start(), HAKO_PDU_ERR_OK);
+
+    auto action_server = server(action_endpoint);
+    ASSERT_TRUE(action_server->initialize(fibonacci_action()));
+    const auto request = fibonacci_goal_request();
+    const hakoniwa::pdu::PduResolvedKey request_key{"fibonacci", 0};
+    ASSERT_EQ(
+        action_endpoint->send(
+            request_key, std::as_bytes(std::span(request))),
+        HAKO_PDU_ERR_OK);
+    action::ServerEvent event;
+    ASSERT_EQ(
+        action_server->poll(event), action::ServerEventType::GOAL_REQUEST);
+
+    const auto result = fibonacci_result(
+        action_server, {0, 1, 1, 2, 3, 5});
+    EXPECT_FALSE(action_server->complete(
+        event.goal, action::TerminalStatus::SUCCEEDED, result));
+    ASSERT_TRUE(action_server->accept_goal(event.goal));
+    (void)receive_fibonacci_response(action_endpoint, 1);
+    EXPECT_FALSE(action_server->complete(
+        event.goal, action::TerminalStatus::SUCCEEDED, {}));
+    ASSERT_TRUE(action_server->complete(
+        event.goal, action::TerminalStatus::SUCCEEDED, result));
+    EXPECT_FALSE(action_server->complete(
+        event.goal, action::TerminalStatus::SUCCEEDED, result));
+    EXPECT_FALSE(action_server->send_feedback(
+        event.goal, fibonacci_feedback(action_server, {0, 1})));
+
+    std::size_t result_wire_size = 0;
+    const auto response = receive_fibonacci_response(
+        action_endpoint, 1, &result_wire_size);
+    EXPECT_EQ(response.header.version, 1);
+    EXPECT_EQ(response.header.response_kind, 3);
+    EXPECT_EQ(
+        response.header.status,
+        static_cast<std::uint8_t>(action::TerminalStatus::SUCCEEDED));
+    EXPECT_EQ(response.header.goal_id, kGoalId);
+    EXPECT_EQ(
+        response.body.sequence,
+        (std::vector<std::int32_t>{0, 1, 1, 2, 3, 5}));
+    EXPECT_LT(result_wire_size, result.size());
+
+    const auto second_id = action::GoalId{
+        0x50, 0x51, 0x52, 0x53,
+        0x60, 0x61, 0x62, 0x63,
+        0x70, 0x71, 0x72, 0x73,
+        0x80, 0x81, 0x82, 0x83,
+    };
+    const auto second_request = fibonacci_goal_request(1, 1, second_id);
+    ASSERT_EQ(
+        action_endpoint->send(
+            request_key, std::as_bytes(std::span(second_request))),
+        HAKO_PDU_ERR_OK);
+    ASSERT_EQ(
+        action_server->poll(event), action::ServerEventType::GOAL_REQUEST);
+    EXPECT_EQ(event.goal.goal_id, second_id);
+    ASSERT_TRUE(action_server->accept_goal(event.goal));
+    (void)receive_fibonacci_response(action_endpoint, 1);
+    EXPECT_FALSE(action_server->complete(
+        event.goal, action::TerminalStatus::CANCELED, result));
+    EXPECT_TRUE(action_server->complete(
+        event.goal, action::TerminalStatus::ABORTED, result));
+    const auto aborted = receive_fibonacci_response(action_endpoint, 1);
+    EXPECT_EQ(
+        aborted.header.status,
+        static_cast<std::uint8_t>(action::TerminalStatus::ABORTED));
+    EXPECT_EQ(action_endpoint->stop(), HAKO_PDU_ERR_OK);
+}
+
+TEST(ActionServerInitializationContract, ResultSendFailureRetainsFinishingSlot)
+{
+    auto action_endpoint = std::make_shared<ResultFailingOnceEndpoint>();
+    ASSERT_EQ(
+        action_endpoint->open(ACTION_SERVER_ENDPOINT_FIXTURE_PATH),
+        HAKO_PDU_ERR_OK);
+    ASSERT_EQ(action_endpoint->start(), HAKO_PDU_ERR_OK);
+
+    auto action_server = server(action_endpoint);
+    ASSERT_TRUE(action_server->initialize(fibonacci_action()));
+    const auto request = fibonacci_goal_request();
+    const hakoniwa::pdu::PduResolvedKey request_key{"fibonacci", 0};
+    ASSERT_EQ(
+        action_endpoint->send(
+            request_key, std::as_bytes(std::span(request))),
+        HAKO_PDU_ERR_OK);
+    action::ServerEvent event;
+    ASSERT_EQ(
+        action_server->poll(event), action::ServerEventType::GOAL_REQUEST);
+    ASSERT_TRUE(action_server->accept_goal(event.goal));
+    (void)receive_fibonacci_response(action_endpoint, 1);
+
+    const auto result = fibonacci_result(action_server, {0, 1, 1});
+    EXPECT_FALSE(action_server->complete(
+        event.goal, action::TerminalStatus::SUCCEEDED, result));
+    EXPECT_FALSE(action_server->complete(
+        event.goal, action::TerminalStatus::SUCCEEDED, result));
+    EXPECT_FALSE(action_server->send_feedback(
+        event.goal, fibonacci_feedback(action_server, {0, 1})));
+
+    const auto second_id = action::GoalId{
+        0x50, 0x51, 0x52, 0x53,
+        0x60, 0x61, 0x62, 0x63,
+        0x70, 0x71, 0x72, 0x73,
+        0x80, 0x81, 0x82, 0x83,
+    };
+    const auto second_request = fibonacci_goal_request(1, 1, second_id);
+    ASSERT_EQ(
+        action_endpoint->send(
+            request_key, std::as_bytes(std::span(second_request))),
+        HAKO_PDU_ERR_OK);
+    EXPECT_EQ(action_server->poll(event), action::ServerEventType::NONE);
+    const auto rejected = receive_fibonacci_response(action_endpoint, 1);
+    EXPECT_EQ(rejected.header.goal_id, second_id);
+    EXPECT_EQ(
+        rejected.header.status,
+        static_cast<std::uint8_t>(action::Decision::REJECTED));
     EXPECT_EQ(action_endpoint->stop(), HAKO_PDU_ERR_OK);
 }
 

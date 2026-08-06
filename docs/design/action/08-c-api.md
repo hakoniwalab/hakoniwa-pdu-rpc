@@ -489,6 +489,12 @@ hako_pdu_action_server_complete(
 
 `complete()`成功後、Applicationは同じ`goal_token`へ新規Feedbackや別の完了を送れません。
 
+初版の`complete()`は、accept済みGoalに対する`SUCCEEDED`または`ABORTED`を同期送信します。`CANCELED`はCancel受理後の`CANCELING`状態からだけ許可し、Cancel実装と同時に接続します。Runtimeは送信開始前にGoalを`FINISHING`へcommitして二重Resultと後続Feedbackを拒否します。同期送信が成功した時点でServer側Goal Contextとslot ownershipを解放します。
+
+Applicationから渡されたResult packetの形式・容量検証はterminal commitより前に行います。検証失敗はApplication入力エラーとしてGoalを`EXECUTING`に保ち、修正したpacketで再実行できます。
+
+検証通過後のTransport送信失敗ではGoalを`FINISHING`のまま保持し、slotを再利用しません。これにより、送信成否が不明なGoalのlaneへ別Goalを重ねません。再送、Runtime error通知、保持期限による解放は後続Policyで定義します。
+
 ## 7. Buffer所有権
 
 既存RPC C APIと同じ規則を使用します。

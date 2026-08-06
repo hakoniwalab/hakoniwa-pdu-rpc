@@ -105,6 +105,7 @@ private:
         AWAITING_GOAL_DECISION,
         GOAL_ACCEPTED,
         GOAL_REJECTED,
+        GOAL_FINISHING,
     };
 
     // Transport-facing association between an upper-layer Goal transaction
@@ -173,6 +174,9 @@ private:
         std::uint8_t response_kind,
         std::uint8_t status,
         PduData packet = {});
+
+    void release_binding_locked(
+        std::map<GoalId, ActionPacketBinding>::iterator binding);
 
     // TODO(outbound): connect Cancel decisions and terminal Results to the
     // common send_response_packet() path and track delivery separately from

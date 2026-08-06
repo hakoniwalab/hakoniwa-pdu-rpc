@@ -205,7 +205,7 @@ Cancel Request送信後、Cancel Response受信までを表します。
 
 acceptされたGoalについてterminal Resultを待っていることを表します。
 
-Resultをpushで受信するか、Clientが明示的に取得要求を送るかはProtocol文書で決定します。どちらの場合も、待ち状態を新しいGoal主状態として追加しません。
+初版ではResultをServer pushで受信します。待ち状態を新しいGoal主状態として追加せず、accept済みGoal ContextとslotをResult受信まで保持します。
 
 ## 8. Client Application APIイベント × 状態マトリクス
 
@@ -230,7 +230,9 @@ pending Contextが存在しないCancel Responseは、Client Application APIの�
 
 Feedbackの期待sequenceはGoal accept時に0で初期化します。受信した`sequence_no`が期待値と一致した場合だけApplicationへ通知して期待値を1増加させます。重複、逆転、欠番は通常Feedbackとして通知せず診断対象として無視します。`uint32`の最大値後はmoduloで0へ戻ります。
 
-`RESULT_RECEIVED`に含まれるterminal statusは、少なくとも`SUCCEEDED`、`CANCELED`、`ABORTED`を扱います。
+`RESULT_RECEIVED`に含まれるterminal statusは`SUCCEEDED`、`CANCELED`、`ABORTED`を扱います。ただしCancel未実装の初期段階では、`EXECUTING`相当のContextが受理するのは`SUCCEEDED`と`ABORTED`だけです。`CANCELED`はCancel Responseを受理して`CANCELING`へ進む実装と同時に有効化します。
+
+ResultをApplicationイベントへコピーした後、Client RuntimeはそのGoal Contextとslot ownershipを解放します。解放後に届いた重複または遅延Resultは、相関するContextがないためApplicationへ再配送しません。
 
 Server側がRuntime起因Cancelを開始した場合、Client endpointが切断済みならCancel Responseを受信しない可能性があります。再接続後の状態照会、Result再取得、遅延Cancel Responseの扱いは後続Protocolで定義します。
 
@@ -344,10 +346,9 @@ RESULT_RECEIVED
 2. 重複Cancel Responseを冪等処理またはIGNOREのどちらにするか。
 3. `FINISHING`中の遅延FeedbackおよびCancel ResponseをIGNOREとするか、診断対象とするか。
 4. 重複Resultを冪等処理するために保持すべき情報は何か。
-5. ResultをServer pushとClient pullのどちらで配送するか。
-6. Cancel ResponseおよびResultのtimeout Policyをどこで定義するか。
-7. accept済みGoalの通信切断後に、再接続、状態照会、Result再取得、Context解放条件をどう定義するか。
-8. Client shutdown時に未終端GoalへCancelを試行するか。
+5. Cancel ResponseおよびResultのtimeout Policyをどこで定義するか。
+6. accept済みGoalの通信切断後に、再接続、状態照会、Result再取得、Context解放条件をどう定義するか。
+7. Client shutdown時に未終端GoalへCancelを試行するか。
 
 ## 16. 対象外
 

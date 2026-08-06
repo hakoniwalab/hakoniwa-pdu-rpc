@@ -49,6 +49,7 @@ private:
     static constexpr std::uint8_t ACTION_PROTOCOL_VERSION = 1;
     static constexpr std::uint8_t REQUEST_KIND_GOAL = 1;
     static constexpr std::uint8_t RESPONSE_KIND_GOAL = 1;
+    static constexpr std::uint8_t RESPONSE_KIND_RESULT = 3;
 
     struct SlotRouting {
         std::size_t slot_index{0};

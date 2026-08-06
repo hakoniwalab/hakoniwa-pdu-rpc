@@ -442,11 +442,11 @@ ClientEventType ActionClientEndpointImpl::poll(ClientEvent& event_out)
                 received_size)
             && decode_response_header(pending.pdu, header)
             && header.version == ACTION_PROTOCOL_VERSION
-            && header.response_kind == RESPONSE_KIND_GOAL
             && is_valid_goal_id(header.goal_id)) {
             std::lock_guard<std::mutex> lock(mutex_);
             const auto binding = packet_bindings_.find(header.goal_id);
-            if (binding != packet_bindings_.end()
+            if (header.response_kind == RESPONSE_KIND_GOAL
+                && binding != packet_bindings_.end()
                 && binding->second.slot_index == pending.slot_index
                 && binding->second.state
                     == BindingState::AWAITING_GOAL_RESPONSE
@@ -464,6 +464,23 @@ ClientEventType ActionClientEndpointImpl::poll(ClientEvent& event_out)
                 } else {
                     release_binding_locked(binding);
                 }
+                return event_out.type;
+            }
+            if (header.response_kind == RESPONSE_KIND_RESULT
+                && binding != packet_bindings_.end()
+                && binding->second.slot_index == pending.slot_index
+                && binding->second.state == BindingState::ACCEPTED
+                && (header.status
+                        == static_cast<std::uint8_t>(TerminalStatus::SUCCEEDED)
+                    || header.status
+                        == static_cast<std::uint8_t>(TerminalStatus::ABORTED))) {
+                event_out.type = ClientEventType::RESULT;
+                event_out.action_name = action_name_;
+                event_out.goal.goal_id = header.goal_id;
+                event_out.terminal_status =
+                    static_cast<TerminalStatus>(header.status);
+                event_out.pdu = std::move(pending.pdu);
+                release_binding_locked(binding);
                 return event_out.type;
             }
         }

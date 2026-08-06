@@ -291,6 +291,17 @@ bool ActionServerEndpointImpl::send_response_packet(
         == HAKO_PDU_ERR_OK;
 }
 
+void ActionServerEndpointImpl::release_binding_locked(
+    std::map<GoalId, ActionPacketBinding>::iterator binding)
+{
+    const auto slot_index = binding->second.slot_index;
+    if (slot_index < slot_owners_.size()
+        && slot_owners_[slot_index] == binding->first) {
+        slot_owners_[slot_index].reset();
+    }
+    packet_bindings_.erase(binding);
+}
+
 ActionServerEndpointImpl::ActionServerEndpointImpl(
     const std::string& action_name,
     std::uint64_t delta_time_usec,
@@ -699,12 +710,7 @@ bool ActionServerEndpointImpl::reject_goal(
         std::lock_guard<std::mutex> lock(mutex_);
         const auto binding = packet_bindings_.find(goal.goal_id);
         if (binding != packet_bindings_.end()) {
-            const auto slot_index = binding->second.slot_index;
-            if (slot_index < slot_owners_.size()
-                && slot_owners_[slot_index] == goal.goal_id) {
-                slot_owners_[slot_index].reset();
-            }
-            packet_bindings_.erase(binding);
+            release_binding_locked(binding);
         }
     }
     return sent;
@@ -828,20 +834,59 @@ bool ActionServerEndpointImpl::complete(
     TerminalStatus status,
     const PduData& result_pdu)
 {
-    (void)goal;
-    (void)status;
-    (void)result_pdu;
+    if (!goal.valid()
+        || (status != TerminalStatus::SUCCEEDED
+            && status != TerminalStatus::ABORTED)) {
+        // CANCELED is valid only after Cancel has committed. That state is
+        // introduced with the Cancel implementation, not inferred here.
+        return false;
+    }
 
-    // TODO:
-    // - find the Goal Context keyed by goal_id
-    // - validate status against the current Goal state
-    // - commit exactly one immutable terminal Result
-    // - atomically arbitrate terminal completion against Cancel acceptance
-    // - if Result wins, close any pending Cancel decision without emitting a
-    //   Cancel Response
-    // - transition the Goal Context to FINISHING
-    // - release the Context after Result delivery responsibility ends
-    return false;
+    ActionPacketBinding committed_binding;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_) {
+            return false;
+        }
+        const auto binding = packet_bindings_.find(goal.goal_id);
+        if (binding == packet_bindings_.end()
+            || binding->second.state != PacketBindingState::GOAL_ACCEPTED) {
+            return false;
+        }
+        if (binding->second.slot_index >= slot_routing_.size()) {
+            return false;
+        }
+        const auto& routing = slot_routing_[binding->second.slot_index];
+        std::size_t wire_size = 0;
+        if (!validate_packet_capacity(
+                result_pdu,
+                routing.response_packet_type,
+                routing.response_packet_base_size,
+                routing.response_heap_capacity,
+                false,
+                wire_size)) {
+            // Invalid Application input must not commit the Goal. The caller
+            // may correct the encoded Result and call complete() again.
+            return false;
+        }
+        binding->second.state = PacketBindingState::GOAL_FINISHING;
+        committed_binding = binding->second;
+    }
+
+    const bool sent = send_response_packet(
+        committed_binding,
+        RESPONSE_KIND_RESULT,
+        static_cast<std::uint8_t>(status),
+        result_pdu);
+    if (sent) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto binding = packet_bindings_.find(goal.goal_id);
+        if (binding != packet_bindings_.end()
+            && binding->second.state == PacketBindingState::GOAL_FINISHING) {
+            release_binding_locked(binding);
+        }
+    }
+    return sent;
 }
 
 void ActionServerEndpointImpl::clear_pending_events()
