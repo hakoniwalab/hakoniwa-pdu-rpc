@@ -41,8 +41,17 @@ TEST(ActionServerInitializationContract, AcceptsResolvedLogicalConfiguration)
     action::ActionServerEndpointImpl server(
         "fibonacci", 1000, endpoint(), time_source());
 
-    EXPECT_TRUE(server.initialize(
-        fibonacci_action(), 24, std::string("fibonacci-client")));
+    EXPECT_TRUE(server.initialize(fibonacci_action()));
+}
+
+TEST(ActionServerInitializationContract, RejectsMalformedConfiguration)
+{
+    action::ActionServerEndpointImpl server(
+        "fibonacci", 1000, endpoint(), time_source());
+    auto configuration = fibonacci_action();
+    configuration.erase("type");
+
+    EXPECT_FALSE(server.initialize(configuration));
 }
 
 TEST(ActionServerInitializationContract, RejectsActionNameMismatch)
@@ -50,24 +59,7 @@ TEST(ActionServerInitializationContract, RejectsActionNameMismatch)
     action::ActionServerEndpointImpl server(
         "move_robot", 1000, endpoint(), time_source());
 
-    EXPECT_FALSE(server.initialize(fibonacci_action(), 24));
-}
-
-TEST(ActionServerInitializationContract, RejectsClientEndpointMismatch)
-{
-    action::ActionServerEndpointImpl server(
-        "fibonacci", 1000, endpoint(), time_source());
-
-    EXPECT_FALSE(server.initialize(
-        fibonacci_action(), 24, std::string("another-client")));
-}
-
-TEST(ActionServerInitializationContract, RejectsInvalidMetadataSize)
-{
-    action::ActionServerEndpointImpl server(
-        "fibonacci", 1000, endpoint(), time_source());
-
-    EXPECT_FALSE(server.initialize(fibonacci_action(), 0));
+    EXPECT_FALSE(server.initialize(fibonacci_action()));
 }
 
 TEST(ActionServerInitializationContract, RequiresEndpointAndTimeSource)
@@ -77,6 +69,6 @@ TEST(ActionServerInitializationContract, RequiresEndpointAndTimeSource)
     action::ActionServerEndpointImpl missing_time_source(
         "fibonacci", 1000, endpoint(), nullptr);
 
-    EXPECT_FALSE(missing_endpoint.initialize(fibonacci_action(), 24));
-    EXPECT_FALSE(missing_time_source.initialize(fibonacci_action(), 24));
+    EXPECT_FALSE(missing_endpoint.initialize(fibonacci_action()));
+    EXPECT_FALSE(missing_time_source.initialize(fibonacci_action()));
 }
