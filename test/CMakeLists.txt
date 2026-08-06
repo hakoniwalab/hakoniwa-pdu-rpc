@@ -83,6 +83,19 @@ target_compile_definitions(hakoniwa_pdu_action_goal_response_transaction_test PR
 add_test(NAME hakoniwa_pdu_action_goal_response_transaction_test COMMAND hakoniwa_pdu_action_goal_response_transaction_test)
 set_tests_properties(hakoniwa_pdu_action_goal_response_transaction_test PROPERTIES TIMEOUT 30)
 
+add_executable(hakoniwa_pdu_action_cancel_response_defer_test
+  action_cancel_response_defer_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_cancel_response_defer_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_include_directories(hakoniwa_pdu_action_cancel_response_defer_test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_compile_definitions(hakoniwa_pdu_action_cancel_response_defer_test PRIVATE
+  ACTION_SERVER_ENDPOINT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_server_endpoint.json"
+)
+add_test(NAME hakoniwa_pdu_action_cancel_response_defer_test COMMAND hakoniwa_pdu_action_cancel_response_defer_test)
+set_tests_properties(hakoniwa_pdu_action_cancel_response_defer_test PROPERTIES TIMEOUT 30)
+
 add_executable(hakoniwa_pdu_action_client_endpoint_test
   action_client_endpoint_contract_test.cpp
 )
@@ -179,6 +192,7 @@ set(HAKO_PDU_RPC_NATIVE_CONTRACT_TARGETS
   hakoniwa_pdu_action_configuration_test
   hakoniwa_pdu_action_server_initialization_test
   hakoniwa_pdu_action_goal_response_transaction_test
+  hakoniwa_pdu_action_cancel_response_defer_test
   hakoniwa_pdu_action_client_endpoint_test
   hakoniwa_pdu_action_packet_codec_test
   hakoniwa_pdu_rpc_basic_test
