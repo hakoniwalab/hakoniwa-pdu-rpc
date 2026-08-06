@@ -87,7 +87,7 @@ Registryはデータを表現できるようにしますが、そのデータを
 
 `hakoniwa-pdu-rpc`は、Hakoniwa Actionの通信ライフサイクルと実行時Protocolを所有します。
 
-- Action Client RuntimeによるUUID形式の`goal_id`生成
+- 上位Client Application／Adapterが指定したUUID形式`goal_id`の検証と衝突検出（Runtime自動生成はpending）
 - 外部Adapterが指定した互換UUIDの受け入れ
 - Goal送信、Goal Response受信、および相関
 - `goal_id`による複数Goal Executionの独立管理
@@ -310,7 +310,7 @@ Endpoint/TransportはActionのGoal、Feedback、Resultの意味や状態遷移�
 | `.action`解析 | 主 |  |  |  |  |
 | PDU型・レイアウト | 主 | 利用 | 利用 | 利用 | 配送 |
 | `goal_id`データ定義 | 主 | 利用 | 利用 | 利用 | 透過 |
-| `goal_id`生成 |  | Client Runtime | ROS UUID指定 |  |  |
+| `goal_id`生成 |  | 上位Applicationから受領 | ROS UUID指定 | 主（非ROS Client） |  |
 | `goal_id`相関・状態管理 |  | 主 | ROS GoalHandle対応 | 利用 | 透過 |
 | Goal受理Protocol |  | 主 | Adapter | 判断 | 透過 |
 | Protocol上の自動拒否 |  | 主 | 透過 |  | 透過 |
@@ -384,7 +384,7 @@ Application側候補:
 
 現時点では以下を設計判断とします。
 
-- 通常のHakoniwa ClientではAction Client Runtimeが送信前にUUIDを生成する。
+- 初期APIでは通常のHakoniwa Clientも上位Applicationが送信前にUUIDを生成し、Runtime自動生成はpendingとする。
 - ROS BridgeなどのAdapterは、外部で生成された互換UUIDを指定できる。
 - Action Server Runtimeは重複検査、登録、状態管理、終了済みID保持を担当する。
 
@@ -428,7 +428,7 @@ FeedbackをRuntimeがキューイングするか、Endpointイベントをその
 5. ApplicationはGoalの業務処理、受理判断、並列実行、直列化、キュー、排他、優先度、preemption、Feedback生成、Result生成、安全なCancel処理を所有する。
 6. Endpoint/Transportは配送とClient接続収容を所有し、Action意味論を所有しない。
 7. `maxClients`はTransportの接続数上限であり、Actionの同時実行数とは定義しない。
-8. `goal_id`はClient RuntimeまたはAdapterがUUIDとして送信前に用意し、Server Runtimeが重複検査とlifecycle管理を行う。
+8. `goal_id`は上位ApplicationまたはAdapterがUUIDとして送信前に用意し、Client Runtimeはall-zeroおよびactiveなIDとの衝突を同期エラーとして拒否する。Server Runtimeは受信後の重複検査とlifecycle管理を行う。Runtimeによる自動生成はpendingとする。
 9. Goalの受理判断は、Protocol上の自動拒否とApplication判断に分割する。
 10. Applicationのaccept後、Protocol状態は直ちに`EXECUTING`とし、Application内部のqueue状態はProtocolへ露出しない。
 11. 通信切断などRuntimeが観測可能な条件から停止を要求する場合、RuntimeはApplicationの正規Cancel経路を利用する。

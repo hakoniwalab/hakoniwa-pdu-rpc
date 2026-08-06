@@ -59,11 +59,19 @@ OPERATIONS: dict[str, OperationSpec] = {
     "package-test": OperationSpec(),
 }
 TEST_COMMANDS = {name for name, spec in OPERATIONS.items() if spec.tests}
-REVIEWED_TEST_TARGETS = tuple(
+SERVICE_CONTRACT_TARGETS = tuple(
     spec.target for spec in OPERATIONS.values() if spec.target is not None
 )
+ACTION_CONTRACT_TARGETS = (
+    "hakoniwa_pdu_action_configuration_test",
+    "hakoniwa_pdu_action_server_initialization_test",
+    "hakoniwa_pdu_action_client_endpoint_test",
+    "hakoniwa_pdu_action_packet_codec_test",
+)
+REVIEWED_TEST_TARGETS = SERVICE_CONTRACT_TARGETS + ACTION_CONTRACT_TARGETS
 REVIEWED_TEST_REGEX = (
-    "^hakoniwa_pdu_rpc_(basic|infinite_wait|timeout_cancel|cancel_race)_test$"
+    "^hakoniwa_pdu_(rpc_(basic|infinite_wait|timeout_cancel|cancel_race)"
+    "|action_(configuration|server_initialization|client_endpoint|packet_codec))_test$"
 )
 
 

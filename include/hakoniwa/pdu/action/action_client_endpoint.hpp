@@ -3,7 +3,6 @@
 #include "action_types.hpp"
 
 #include <nlohmann/json_fwd.hpp>
-#include <optional>
 #include <string>
 #include <utility>
 
@@ -15,10 +14,9 @@ public:
 
     virtual bool initialize(const nlohmann::json& action_config) = 0;
 
-    // Normal clients omit requested_goal_id and let the Runtime generate a
-    // non-zero UUID. Protocol adapters may provide an external GoalId that must
-    // be preserved; an explicitly requested all-zero GoalId is invalid and
-    // must be rejected.
+    // Goal identity is owned by the upper application or protocol adapter.
+    // The Runtime preserves the supplied ID and does not generate one.
+    // All-zero and already-active GoalIds are rejected synchronously.
     //
     // The returned typed ClientGoalHandle is the Native API identity used for
     // cancel requests and event correlation. No separate client token is
@@ -27,8 +25,8 @@ public:
     // timeout_usec applies only while waiting for GOAL_RESPONSE; zero disables
     // that timeout. It does not time out Result or Cancel Response delivery.
     virtual bool send_goal(const PduData& goal_pdu,
+                           const GoalId& goal_id,
                            ClientGoalHandle& goal_handle_out,
-                           std::optional<GoalId> requested_goal_id = std::nullopt,
                            std::uint64_t timeout_usec = 0) = 0;
     virtual bool send_cancel(const ClientGoalHandle& goal) = 0;
     virtual ClientEventType poll(ClientEvent& event_out) = 0;

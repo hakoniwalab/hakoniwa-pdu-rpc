@@ -122,13 +122,13 @@ Result(goal_id = X)
 
 ### 5.2 生成と管理の責務
 
-`goal_id`は、Goal送信前にAction Client RuntimeがUUIDとして生成します。
+初期APIでは、`goal_id`はGoal送信前に上位Client ApplicationまたはProtocol Adapterが生成します。Runtimeによる自動生成helperはpendingです。
 
 ROS 2 Bridgeなど、外部Actionシステムが既に互換性のあるUUIDを持つAdapterは、その外部UUIDを`goal_id`として指定できます。
 
 ```text
 通常のHakoniwa Client
-  Action Client RuntimeがUUIDを生成
+  上位Client Application／AdapterがUUIDを生成
 
 ROS 2 Adapter
   ROS Goal UUIDをgoal_idとして指定
@@ -268,7 +268,7 @@ ClientはGoalを提示し、Goal Response、Feedback、Resultを受信し、必�
 
 ClientはAction固有のGoal bodyを生成しますが、Goalを受理するかどうかや業務処理を実行する責任は持ちません。
 
-Action Client RuntimeはGoal送信前にUUID形式の`goal_id`を生成し、複数のGoal Executionをそれぞれ独立して追跡できるようにします。
+上位Client Application／AdapterはGoal送信前にUUID形式の`goal_id`を生成し、Action Client Runtimeは複数のGoal Executionをそれぞれ独立して追跡します。
 
 ### Server
 
@@ -295,7 +295,7 @@ Action対応のために既存Service RPCの意味やPDUレイアウトを変更
 
 1. Actionは「長時間RPC」ではなく、RPC基盤上に構築されるGoal Executionセッションとする。
 2. 1回のGoal Executionは128-bit UUIDの`goal_id`で識別する。
-3. `goal_id`は原則としてAction Client Runtimeが送信前に生成し、Server Runtimeが重複検査とlifecycle管理を行う。
+3. 初期APIでは上位Client Application／Adapterが送信前に`goal_id`を生成し、Client／Server Runtimeが重複検査とlifecycle管理を行う。Runtime自動生成はpendingとする。
 4. 同一Action Typeおよび同一Endpointに複数のGoal Executionが同時に存在することをProtocol上許容する。
 5. 並列実行、直列化、キュー、拒否、排他、優先度、preemptionはAction Server Applicationの実行ポリシーとする。
 6. `maxClients`はTransportの接続収容数であり、Actionの同時実行上限とは定義しない。

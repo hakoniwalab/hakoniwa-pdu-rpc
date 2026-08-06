@@ -7,7 +7,6 @@
 
 #include <map>
 #include <memory>
-#include <optional>
 #include <string>
 
 namespace hakoniwa::pdu::action {
@@ -28,14 +27,12 @@ public:
     void stop_all_services();
     void clear_all_instances();
 
-    // Ordinary callers retain the typed ClientGoalHandle returned by
-    // send_goal(). The same handle is used for cancel requests and event
-    // correlation; no separate client token is exposed. Adapters may request a
-    // specific GoalId when an external protocol identity must be preserved.
+    // The upper application owns GoalId generation. The Runtime preserves the
+    // supplied non-zero ID and rejects active collisions synchronously.
     bool send_goal(const std::string& action_name,
                    const PduData& goal_pdu,
+                   const GoalId& goal_id,
                    ClientGoalHandle& goal_handle_out,
-                   std::optional<GoalId> requested_goal_id = std::nullopt,
                    std::uint64_t timeout_usec = 0);
     bool send_cancel(const std::string& action_name,
                      const ClientGoalHandle& goal);

@@ -21,13 +21,14 @@ inline bool is_valid_goal_id(const GoalId& goal_id) noexcept {
 
 // Client-side typed handle for a Goal identity.
 //
-// send_goal() returns this handle, and the same value is used for cancel
+// The upper application supplies the GoalId to send_goal(). The Runtime returns
+// it in this handle, and the same value is used for cancel
 // requests and Client event correlation. GoalId remains directly available to
 // adapters that must preserve an external protocol identity, such as a ROS 2
 // Action bridge.
 //
-// The all-zero GoalId is reserved as invalid. Runtime-generated IDs must be
-// non-zero, and an explicitly requested all-zero ID must be rejected.
+// The all-zero GoalId is reserved as invalid. The Runtime does not generate
+// GoalIds; invalid or already-active IDs must be rejected synchronously.
 struct ClientGoalHandle {
     GoalId goal_id{};
 

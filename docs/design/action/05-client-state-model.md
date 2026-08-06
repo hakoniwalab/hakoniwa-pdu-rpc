@@ -73,13 +73,13 @@ FINISHING -> RELEASE
 
 `SEND_GOAL`を呼び出した時点で、Client RuntimeはGoal Requestを送信するためのContextを作成します。
 
-通常のHakoniwa ClientではRuntimeがUUID形式の`goal_id`を生成します。ROS BridgeなどのAdapterは、外部で生成された互換UUIDを`goal_id`として指定できます。生成元が異なっても、以降の状態遷移は同じです。
+初期APIでは、通常のHakoniwa Clientも上位ApplicationがUUID形式の`goal_id`を指定します。ROS BridgeなどのAdapterは、外部で生成された互換UUIDをそのまま指定します。Runtimeは自動生成せず、all-zeroまたはactive Goalとの衝突を同期エラーとして拒否します。Runtime自動生成helperはpendingです。
 
 Goal Responseを受信するまでは、accept済みGoalの主状態を持ちません。
 
 ```text
 SEND_GOAL
-  -> goal_idを生成、または外部UUIDを受け入れる
+  -> 上位Application／Adapter指定のgoal_idを検証する
   -> Goal Context生成
   -> Goal Request送信
   -> goal_response_pending = true
@@ -318,7 +318,7 @@ RESULT_RECEIVED
 - Goal Response待ち、Cancel Response待ち、Result待ちはpending Contextとして管理する。
 - `GOAL_REQUESTING`、`CANCEL_REQUESTING`、`RESULT_WAITING`などの主状態を追加しない。
 - Client Application APIは初版では`SEND_GOAL`と`REQUEST_CANCEL`を必須とする。
-- 通常ClientはRuntimeが`goal_id`を生成し、Adapterは外部UUIDを指定できる。
+- 初期APIでは通常ClientとAdapterのどちらも上位層が`goal_id`を指定し、Runtime自動生成はpendingとする。
 - Hakoniwa Protocol v1のCancelは単一`goal_id`を対象とし、ROS 2の一括CancelはBridgeが単一Goal Cancelへ分解する。
 - Cancel Request送信だけでは`CANCELING`へ遷移しない。
 - Cancel Response ACCEPTED受信時に`CANCELING`へ遷移する。

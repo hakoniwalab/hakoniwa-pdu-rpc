@@ -97,7 +97,7 @@ Result(goal_id = X)
 
 ### 3.2 生成責任
 
-通常のHakoniwa Action Clientでは、Action Client RuntimeがGoal送信前に`goal_id`を生成します。
+初期APIでは、通常のHakoniwa Action Clientも上位ApplicationがGoal送信前に`goal_id`を生成します。Runtime自動生成はpendingです。
 
 ```text
 Client Application
@@ -149,7 +149,7 @@ Server internal identity
 
 Protocol上は、異なるGoalが同じ`goal_id`を共有しないことを要求します。
 
-Client RuntimeまたはAdapterは、実運用上十分な一意性を持つUUIDを生成します。
+上位Client ApplicationまたはAdapterは、実運用上十分な一意性を持つUUIDを生成します。
 
 Server Runtimeは、自身が管理する範囲で重複を検出します。
 
@@ -347,7 +347,7 @@ Transportが使用するEndpoint、connection、channel、client IDなどは、�
 ## 13. 今回の設計判断
 
 1. `goal_id`は128-bit UUIDとする。
-2. 通常のClientではAction Client RuntimeがGoal送信前に生成する。
+2. 初期APIでは通常のClientも上位ApplicationがGoal送信前に生成し、Runtime自動生成はpendingとする。
 3. Adapterは外部で生成された互換UUIDを指定できる。
 4. `goal_id`はGoal RequestからGoal Responseまで、受理後は終端Resultまで続くライフサイクル全体の相関キーとする。
 5. Server RuntimeはUUIDの検査、重複検査、登録、相関、ライフサイクル管理を行う。

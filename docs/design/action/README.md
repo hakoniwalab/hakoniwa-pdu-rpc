@@ -22,7 +22,7 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 - ActionはROS 2固有機能ではなく、箱庭で利用できる独立した通信・実行ライフサイクルとして定義します。
 - Actionは単に応答時間の長いService RPCではなく、`goal_id`で識別されるGoal lifecycleとして扱います。
 - 1回のGoalは128-bit UUIDの`goal_id`で識別します。
-- `goal_id`は原則としてAction Client RuntimeがGoal送信前に生成し、Server Runtimeが重複検査とlifecycle管理を行います。
+- 初期APIでは上位Client Application／Adapterが非zeroの`goal_id`を生成し、Client／Server Runtimeが重複検査とlifecycle管理を行います。Runtimeによる自動生成helperはpendingです。
 - 同一Action Typeに対して、異なる`goal_id`を持つ複数のGoalを同時に扱えるProtocolとします。
 - Goal Request、Goal Response、Feedback、Cancel、Resultは、通信経路や接続方法に依存せず`goal_id`で相関します。
 - RPC Runtimeは、複数Goalを`goal_id`ごとに独立して相関・配送・状態管理できる能力を提供します。
@@ -68,7 +68,7 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 以下は、これまでのレビューで合意した方向性です。後続のProtocol、競合規約、API設計では、この前提を狭めない形で具体化します。
 
 - 1回のGoalを128-bit UUIDの`goal_id`で識別する。
-- 通常のHakoniwa ClientではAction Client Runtimeが`goal_id`を生成する。
+- 初期APIでは通常のHakoniwa Clientも上位Applicationが`goal_id`を指定する。Runtime自動生成は後続helperとしてpendingとする。
 - ROS BridgeなどのAdapterは、外部で生成された互換UUIDを指定できる。
 - Server Runtimeは`goal_id`の形式検査、重複検査、登録、相関、状態管理を担当する。
 - `goal_id`は、Goal RequestからGoal Responseまで、受理後は終端Resultまで続くGoal lifecycleの相関キーである。

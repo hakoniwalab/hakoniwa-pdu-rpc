@@ -125,8 +125,9 @@ hako_pdu_action_error_t hako_pdu_action_client_create_goal_buffer_alloc(
     size_t* out_size);
 
 /*
- * requested_goal_id may be NULL. In that case the Runtime generates a UUID.
- * out_goal receives the actual Goal identity and is used for cancel requests.
+ * goal_id is required and owned by the upper application or adapter. The
+ * Runtime preserves it and rejects all-zero or active collisions. out_goal
+ * receives the same Goal identity and is used for cancel requests.
  * timeout_usec applies only while waiting for GOAL_RESPONSE. Zero means no
  * Goal Response timeout. It does not impose a Result or Cancel Response
  * deadline on an accepted Goal.
@@ -136,7 +137,7 @@ hako_pdu_action_error_t hako_pdu_action_client_send_goal(
     const char* action_name,
     const uint8_t* pdu,
     size_t pdu_size,
-    const hako_pdu_action_goal_id_t* requested_goal_id,
+    const hako_pdu_action_goal_id_t* goal_id,
     hako_pdu_action_client_goal_handle_t* out_goal,
     uint64_t timeout_usec);
 hako_pdu_action_error_t hako_pdu_action_client_cancel_goal(

@@ -413,13 +413,18 @@ This checks the exported CMake package and downstream link contract.
 
 ## Contract Tests
 
-The default test command runs the reviewed RPC contract suite:
+The default test command runs the reviewed Service RPC and Action contract suite:
 
 ```bash
 python tools/hako.py test
 ```
 
 The suite is intentionally split by contract so a failure identifies which lifecycle guarantee changed.
+
+The Action portion currently covers configuration resolution, packet codecs,
+Server Goal accept/reject, and Client Goal send/response/timeout contracts. It
+is included in `hako.py test`; focused Service RPC commands remain available as
+shown below.
 
 | Contract | Command | Main guarantee |
 |---|---|---|

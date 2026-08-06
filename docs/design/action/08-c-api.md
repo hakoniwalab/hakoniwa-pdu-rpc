@@ -67,8 +67,8 @@ typedef struct {
 } hako_pdu_action_goal_id_t;
 ```
 
-- Client Runtimeが通常生成します。
-- ROS Adapterなどは、外部で生成された互換UUIDを指定できます。
+- 初期APIでは上位Client ApplicationまたはROS Adapterなどの外部Protocol層が生成し、必須指定します。
+- Runtimeによる自動生成helperはpendingです。
 - Client／Server間のProtocol相関に使用します。
 - Client poll結果およびServer poll結果へ含めます。
 
@@ -250,7 +250,7 @@ hako_pdu_action_client_send_goal(
     const char* action_name,
     const uint8_t* goal_pdu,
     size_t goal_pdu_size,
-    const hako_pdu_action_goal_id_t* requested_goal_id,
+    const hako_pdu_action_goal_id_t* goal_id,
     hako_pdu_action_client_goal_handle_t* out_goal,
     uint64_t timeout_usec);
 
@@ -270,7 +270,7 @@ void
 hako_pdu_action_client_destroy(...);
 ```
 
-`requested_goal_id == NULL`の場合はRuntimeがUUIDを生成し、実際のGoal identityを`out_goal`へ返します。外部AdapterがUUIDを保持している場合は、`requested_goal_id`を指定できます。
+`goal_id`は必須です。Runtimeは指定値を変更せず`out_goal`へ返します。all-zeroまたは同じClient RuntimeでactiveなGoalとの衝突は同期エラーとして拒否します。RuntimeによるUUID自動生成helperはpendingです。
 
 `timeout_usec`はGoal Request送信後、Goal Responseを受信するまでにだけ適用します。`0`はGoal Response timeoutなしを表します。Goalがacceptされた後のResult待ち、およびCancel Response待ちには適用しません。
 
@@ -565,7 +565,7 @@ typedef enum {
 
 Protocol上のGoal rejectやCancel rejectはC API呼び出し失敗ではありません。Applicationの正常な判断として相手側へResponseを送ります。
 
-Clientが明示指定した`requested_goal_id`が、そのClient Runtimeで管理中または保持中のGoalと重複する場合、`send_goal()`は`HAKO_PDU_ACTION_ERROR_DUPLICATE_GOAL`を返します。Serverが受信時に検出したduplicate Goal RequestはProtocol上のGoal rejectとして処理し、Server Applicationへ新規Goalイベントを公開しません。
+Clientが指定した`goal_id`が、そのClient Runtimeで管理中または保持中のGoalと重複する場合、`send_goal()`は`HAKO_PDU_ACTION_ERROR_DUPLICATE_GOAL`を返します。Serverが受信時に検出したduplicate Goal RequestはProtocol上のGoal rejectとして処理し、Server Applicationへ新規Goalイベントを公開しません。
 
 ## 10. Mux Serverとの対称性
 
