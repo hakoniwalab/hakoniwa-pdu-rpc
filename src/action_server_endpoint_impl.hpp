@@ -104,8 +104,9 @@ private:
     enum class PacketBindingState : std::uint8_t {
         AWAITING_GOAL_DECISION,
         GOAL_ACCEPTED,
+        CANCEL_ACCEPTED,
         GOAL_REJECTED,
-        GOAL_FINISHING,
+        RESULT_COMMITTED,
     };
 
     // Transport-facing association between an upper-layer Goal transaction
@@ -116,6 +117,7 @@ private:
         std::size_t slot_index{0};
         PacketBindingState state{PacketBindingState::AWAITING_GOAL_DECISION};
         std::uint32_t next_feedback_sequence{0};
+        bool cancel_decision_pending{false};
     };
 
     std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_;
@@ -178,13 +180,8 @@ private:
     void release_binding_locked(
         std::map<GoalId, ActionPacketBinding>::iterator binding);
 
-    // TODO(outbound): connect Cancel decisions and terminal Results to the
-    // common send_response_packet() path and track delivery separately from
-    // the one-shot decision record.
     // TODO(binding): retain the ingress Endpoint/connection association when
     // mux or other multi-session transports are connected.
-    // TODO(binding): resolve Cancel packets through the accepted binding and
-    // forward them to the upper Goal transaction layer.
     // TODO(runtime error): expose synchronous Endpoint send failures through
     // the specified Runtime Error event without converting them to ABORTED.
 };

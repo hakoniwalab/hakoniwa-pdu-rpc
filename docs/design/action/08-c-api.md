@@ -489,7 +489,7 @@ hako_pdu_action_server_complete(
 
 `complete()`成功後、Applicationは同じ`goal_token`へ新規Feedbackや別の完了を送れません。
 
-初版の`complete()`は、accept済みGoalに対する`SUCCEEDED`または`ABORTED`を同期送信します。`CANCELED`はCancel受理後の`CANCELING`状態からだけ許可し、Cancel実装と同時に接続します。Runtimeは送信開始前にGoalを`FINISHING`へcommitして二重Resultと後続Feedbackを拒否します。同期送信が成功した時点でServer側Goal Contextとslot ownershipを解放します。
+初版の`complete()`は、accept済みGoalに対する`SUCCEEDED`または`ABORTED`、Cancel受理後の`CANCELING`に対する`CANCELED`または`ABORTED`を同期送信します。Runtimeは送信開始前にGoalを`FINISHING`へcommitして二重Resultと後続Feedbackを拒否します。Endpoint実装内では、このpacket binding状態を上位Protocol状態と区別して`RESULT_COMMITTED`と表現します。同期送信が成功した時点でServer側Goal Contextとslot ownershipを解放します。
 
 Applicationから渡されたResult packetの形式・容量検証はterminal commitより前に行います。検証失敗はApplication入力エラーとしてGoalを`EXECUTING`に保ち、修正したpacketで再実行できます。
 

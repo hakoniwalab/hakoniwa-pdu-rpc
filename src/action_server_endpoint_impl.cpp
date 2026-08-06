@@ -573,11 +573,23 @@ ServerEventType ActionServerEndpointImpl::poll(
         return ServerEventType::NONE;
     }
 
-    // Cancel lifecycle validation requires the Goal Context implemented in a
-    // subsequent step. Keep the packet boundary active without exposing an
-    // unvalidated CANCEL_REQUEST event yet.
-    if (header.request_kind != REQUEST_KIND_GOAL) {
-        return ServerEventType::NONE;
+    if (header.request_kind == REQUEST_KIND_CANCEL) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto binding = packet_bindings_.find(header.goal_id);
+        if (binding == packet_bindings_.end()
+            || binding->second.slot_index != pending_packet.slot_index
+            || binding->second.state != PacketBindingState::GOAL_ACCEPTED
+            || binding->second.cancel_decision_pending) {
+            // Unknown, late, cross-slot, and duplicate Cancel Requests are
+            // intentionally ignored without creating a Context or response.
+            return ServerEventType::NONE;
+        }
+        binding->second.cancel_decision_pending = true;
+        event_out.type = ServerEventType::CANCEL_REQUEST;
+        event_out.goal.goal_id = header.goal_id;
+        event_out.action_name = action_name_;
+        event_out.pdu = std::move(pending_packet.pdu);
+        return event_out.type;
     }
 
     bool slot_collision = false;
@@ -719,17 +731,36 @@ bool ActionServerEndpointImpl::reject_goal(
 bool ActionServerEndpointImpl::accept_cancel(
     const ServerGoalHandle& goal)
 {
-    (void)goal;
+    if (!goal.valid()) {
+        return false;
+    }
 
-    // TODO:
-    // - find the accepted Goal Context keyed by goal_id
-    // - ensure that a Cancel decision is pending
-    // - atomically arbitrate Cancel acceptance against terminal completion
-    // - transition EXECUTING -> CANCELING
-    // - send CANCEL_RESPONSE(ACCEPTED) for a Client-origin Cancel
-    //
-    // Runtime-origin cancellation does not emit a Client Cancel Response.
-    return false;
+    ActionPacketBinding committed_binding;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_) {
+            return false;
+        }
+        const auto binding = packet_bindings_.find(goal.goal_id);
+        if (binding == packet_bindings_.end()
+            || binding->second.state != PacketBindingState::GOAL_ACCEPTED
+            || !binding->second.cancel_decision_pending) {
+            return false;
+        }
+        binding->second.state = PacketBindingState::CANCEL_ACCEPTED;
+        binding->second.cancel_decision_pending = false;
+        committed_binding = binding->second;
+    }
+
+    PduData response;
+    if (!create_control_response_packet(response)) {
+        return false;
+    }
+    return send_response_packet(
+        committed_binding,
+        RESPONSE_KIND_CANCEL,
+        static_cast<std::uint8_t>(Decision::ACCEPTED),
+        std::move(response));
 }
 
 bool ActionServerEndpointImpl::create_result_buffer(PduData& pdu_out)
@@ -763,17 +794,35 @@ bool ActionServerEndpointImpl::create_feedback_buffer(PduData& pdu_out)
 bool ActionServerEndpointImpl::reject_cancel(
     const ServerGoalHandle& goal)
 {
-    (void)goal;
+    if (!goal.valid()) {
+        return false;
+    }
 
-    // TODO:
-    // - find the accepted Goal Context keyed by goal_id
-    // - ensure that a Cancel decision is pending
-    // - clear the pending Cancel decision
-    // - keep the Goal in EXECUTING
-    // - send CANCEL_RESPONSE(REJECTED) for a Client-origin Cancel
-    //
-    // Runtime-origin rejection remains local to the Runtime.
-    return false;
+    ActionPacketBinding committed_binding;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_) {
+            return false;
+        }
+        const auto binding = packet_bindings_.find(goal.goal_id);
+        if (binding == packet_bindings_.end()
+            || binding->second.state != PacketBindingState::GOAL_ACCEPTED
+            || !binding->second.cancel_decision_pending) {
+            return false;
+        }
+        binding->second.cancel_decision_pending = false;
+        committed_binding = binding->second;
+    }
+
+    PduData response;
+    if (!create_control_response_packet(response)) {
+        return false;
+    }
+    return send_response_packet(
+        committed_binding,
+        RESPONSE_KIND_CANCEL,
+        static_cast<std::uint8_t>(Decision::REJECTED),
+        std::move(response));
 }
 
 bool ActionServerEndpointImpl::send_feedback(
@@ -790,7 +839,8 @@ bool ActionServerEndpointImpl::send_feedback(
     }
     const auto binding = packet_bindings_.find(goal.goal_id);
     if (binding == packet_bindings_.end()
-        || binding->second.state != PacketBindingState::GOAL_ACCEPTED
+        || (binding->second.state != PacketBindingState::GOAL_ACCEPTED
+            && binding->second.state != PacketBindingState::CANCEL_ACCEPTED)
         || binding->second.slot_index >= slot_routing_.size()) {
         return false;
     }
@@ -834,11 +884,7 @@ bool ActionServerEndpointImpl::complete(
     TerminalStatus status,
     const PduData& result_pdu)
 {
-    if (!goal.valid()
-        || (status != TerminalStatus::SUCCEEDED
-            && status != TerminalStatus::ABORTED)) {
-        // CANCELED is valid only after Cancel has committed. That state is
-        // introduced with the Cancel implementation, not inferred here.
+    if (!goal.valid()) {
         return false;
     }
 
@@ -849,8 +895,18 @@ bool ActionServerEndpointImpl::complete(
             return false;
         }
         const auto binding = packet_bindings_.find(goal.goal_id);
-        if (binding == packet_bindings_.end()
-            || binding->second.state != PacketBindingState::GOAL_ACCEPTED) {
+        if (binding == packet_bindings_.end()) {
+            return false;
+        }
+        const bool executing_completion =
+            binding->second.state == PacketBindingState::GOAL_ACCEPTED
+            && (status == TerminalStatus::SUCCEEDED
+                || status == TerminalStatus::ABORTED);
+        const bool canceling_completion =
+            binding->second.state == PacketBindingState::CANCEL_ACCEPTED
+            && (status == TerminalStatus::CANCELED
+                || status == TerminalStatus::ABORTED);
+        if (!executing_completion && !canceling_completion) {
             return false;
         }
         if (binding->second.slot_index >= slot_routing_.size()) {
@@ -869,7 +925,8 @@ bool ActionServerEndpointImpl::complete(
             // may correct the encoded Result and call complete() again.
             return false;
         }
-        binding->second.state = PacketBindingState::GOAL_FINISHING;
+        binding->second.state = PacketBindingState::RESULT_COMMITTED;
+        binding->second.cancel_decision_pending = false;
         committed_binding = binding->second;
     }
 
@@ -882,7 +939,7 @@ bool ActionServerEndpointImpl::complete(
         std::lock_guard<std::mutex> lock(mutex_);
         const auto binding = packet_bindings_.find(goal.goal_id);
         if (binding != packet_bindings_.end()
-            && binding->second.state == PacketBindingState::GOAL_FINISHING) {
+            && binding->second.state == PacketBindingState::RESULT_COMMITTED) {
             release_binding_locked(binding);
         }
     }

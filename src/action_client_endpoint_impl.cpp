@@ -133,7 +133,8 @@ bool ActionClientEndpointImpl::validate_packet_capacity(
 
 bool ActionClientEndpointImpl::write_request_header(
     PduData& packet,
-    const GoalId& goal_id) const
+    const GoalId& goal_id,
+    std::uint8_t request_kind) const
 {
     if (!valid_packet_prefix(packet, sizeof(Hako_ActionRequestHeader))) {
         return false;
@@ -144,7 +145,7 @@ bool ActionClientEndpointImpl::write_request_header(
     }
     HakoCpp_ActionRequestHeader header{};
     header.version = ACTION_PROTOCOL_VERSION;
-    header.request_kind = REQUEST_KIND_GOAL;
+    header.request_kind = request_kind;
     header.reserved = {0, 0};
     header.goal_id = goal_id;
     PduDynamicMemory dynamic_memory;
@@ -152,6 +153,20 @@ bool ActionClientEndpointImpl::write_request_header(
         header,
         *reinterpret_cast<Hako_ActionRequestHeader*>(base_ptr),
         dynamic_memory);
+}
+
+bool ActionClientEndpointImpl::create_control_request_packet(
+    PduData& packet_out) const
+{
+    if (slot_routing_.empty()) {
+        return false;
+    }
+    const auto& routing = slot_routing_.front();
+    return create_packet_buffer(
+        routing.request_packet_type,
+        routing.request_packet_base_size,
+        0,
+        packet_out);
 }
 
 bool ActionClientEndpointImpl::decode_response_header(
@@ -379,7 +394,7 @@ bool ActionClientEndpointImpl::send_goal(
             routing.request_heap_capacity,
             false,
             wire_size)
-        || !write_request_header(packet, goal_id)
+        || !write_request_header(packet, goal_id, REQUEST_KIND_GOAL)
         || endpoint_->send(
                routing.request,
                std::as_bytes(std::span(packet.data(), wire_size)))
@@ -399,8 +414,63 @@ bool ActionClientEndpointImpl::send_goal(
 bool ActionClientEndpointImpl::send_cancel(
     const ClientGoalHandle& goal)
 {
-    (void)goal;
-    return false;
+    if (!goal.valid()) {
+        return false;
+    }
+
+    ClientPacketBinding committed_binding;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_) {
+            return false;
+        }
+        const auto binding = packet_bindings_.find(goal.goal_id);
+        if (binding == packet_bindings_.end()
+            || binding->second.state != BindingState::ACCEPTED) {
+            return false;
+        }
+        binding->second.state = BindingState::AWAITING_CANCEL_RESPONSE;
+        committed_binding = binding->second;
+    }
+
+    PduData packet;
+    if (!create_control_request_packet(packet)
+        || committed_binding.slot_index >= slot_routing_.size()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto binding = packet_bindings_.find(goal.goal_id);
+        if (binding != packet_bindings_.end()
+            && binding->second.state
+                == BindingState::AWAITING_CANCEL_RESPONSE) {
+            binding->second.state = BindingState::ACCEPTED;
+        }
+        return false;
+    }
+
+    const auto& routing = slot_routing_[committed_binding.slot_index];
+    std::size_t wire_size = 0;
+    const bool sent = validate_packet_capacity(
+            packet,
+            routing.request_packet_type,
+            routing.request_packet_base_size,
+            routing.request_heap_capacity,
+            false,
+            wire_size)
+        && write_request_header(
+            packet, goal.goal_id, REQUEST_KIND_CANCEL)
+        && endpoint_->send(
+               routing.request,
+               std::as_bytes(std::span(packet.data(), wire_size)))
+            == HAKO_PDU_ERR_OK;
+    if (!sent) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto binding = packet_bindings_.find(goal.goal_id);
+        if (binding != packet_bindings_.end()
+            && binding->second.state
+                == BindingState::AWAITING_CANCEL_RESPONSE) {
+            binding->second.state = BindingState::ACCEPTED;
+        }
+    }
+    return sent;
 }
 
 void ActionClientEndpointImpl::release_binding_locked(
@@ -469,11 +539,18 @@ ClientEventType ActionClientEndpointImpl::poll(ClientEvent& event_out)
             if (header.response_kind == RESPONSE_KIND_RESULT
                 && binding != packet_bindings_.end()
                 && binding->second.slot_index == pending.slot_index
-                && binding->second.state == BindingState::ACCEPTED
-                && (header.status
-                        == static_cast<std::uint8_t>(TerminalStatus::SUCCEEDED)
-                    || header.status
-                        == static_cast<std::uint8_t>(TerminalStatus::ABORTED))) {
+                && (((binding->second.state == BindingState::ACCEPTED
+                         || binding->second.state
+                             == BindingState::AWAITING_CANCEL_RESPONSE)
+                        && (header.status == static_cast<std::uint8_t>(
+                                TerminalStatus::SUCCEEDED)
+                            || header.status == static_cast<std::uint8_t>(
+                                TerminalStatus::ABORTED)))
+                    || (binding->second.state == BindingState::CANCELING
+                        && (header.status == static_cast<std::uint8_t>(
+                                TerminalStatus::CANCELED)
+                            || header.status == static_cast<std::uint8_t>(
+                                TerminalStatus::ABORTED))))) {
                 event_out.type = ClientEventType::RESULT;
                 event_out.action_name = action_name_;
                 event_out.goal.goal_id = header.goal_id;
@@ -481,6 +558,25 @@ ClientEventType ActionClientEndpointImpl::poll(ClientEvent& event_out)
                     static_cast<TerminalStatus>(header.status);
                 event_out.pdu = std::move(pending.pdu);
                 release_binding_locked(binding);
+                return event_out.type;
+            }
+            if (header.response_kind == RESPONSE_KIND_CANCEL
+                && binding != packet_bindings_.end()
+                && binding->second.slot_index == pending.slot_index
+                && binding->second.state
+                    == BindingState::AWAITING_CANCEL_RESPONSE
+                && (header.status
+                        == static_cast<std::uint8_t>(Decision::ACCEPTED)
+                    || header.status
+                        == static_cast<std::uint8_t>(Decision::REJECTED))) {
+                event_out.type = ClientEventType::CANCEL_RESPONSE;
+                event_out.action_name = action_name_;
+                event_out.goal.goal_id = header.goal_id;
+                event_out.decision = static_cast<Decision>(header.status);
+                event_out.pdu = std::move(pending.pdu);
+                binding->second.state = event_out.decision == Decision::ACCEPTED
+                    ? BindingState::CANCELING
+                    : BindingState::ACCEPTED;
                 return event_out.type;
             }
         }
@@ -506,7 +602,10 @@ ClientEventType ActionClientEndpointImpl::poll(ClientEvent& event_out)
             const auto binding = packet_bindings_.find(header.goal_id);
             if (binding != packet_bindings_.end()
                 && binding->second.slot_index == pending.slot_index
-                && binding->second.state == BindingState::ACCEPTED) {
+                && (binding->second.state == BindingState::ACCEPTED
+                    || binding->second.state
+                        == BindingState::AWAITING_CANCEL_RESPONSE
+                    || binding->second.state == BindingState::CANCELING)) {
                 if (header.sequence_no
                     != binding->second.next_feedback_sequence) {
                     std::cerr

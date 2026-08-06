@@ -164,8 +164,8 @@ CANCEL_RESPONSE(REJECTED)
 
 | Event | EXECUTING | CANCELING | FINISHING |
 | --- | --- | --- | --- |
-| `CANCEL_REQUEST_RECEIVED` | `DEFER`: Applicationへ通知。判断までは`SAME` | 重複Cancel policyを適用。既存のCancel commitを変更しない。`SAME` | `IGNORE`: Result確定済み。Cancel Responseを送らず破棄。`SAME` |
-| `DUPLICATE_CANCEL_REQUEST_RECEIVED` | 判断待ち中は重複policyを適用。`SAME` | 既存のCancel commitを変更しない。`SAME` | `IGNORE`: Cancel Responseを送らず破棄。`SAME` |
+| `CANCEL_REQUEST_RECEIVED` | pendingでなければ`DEFER`: Applicationへ通知。判断までは`SAME`。pendingなら`IGNORE` | `IGNORE`: 既存のCancel commitを変更せず、追加Responseを送らない。`SAME` | `IGNORE`: Result確定済み。Cancel Responseを送らず破棄。`SAME` |
+| `DUPLICATE_CANCEL_REQUEST_RECEIVED` | 判断待ち中は`IGNORE`し、追加dispatch／Responseを生成しない。`SAME` | `IGNORE`: 既存のCancel commitを変更しない。`SAME` | `IGNORE`: Cancel Responseを送らず破棄。`SAME` |
 
 Server Applicationイベントについては、次を正とします。
 
@@ -175,6 +175,8 @@ Server Applicationイベントについては、次を正とします。
 | `REJECT_CANCEL` | pending Contextが有効なら`ALLOW`して`EXECUTING`を維持 | `APPLICATION_API_ERROR` | `APPLICATION_API_ERROR`: Result確定済み |
 
 Result commitとCancel acceptは、同一Goal Contextに対する排他的な状態更新として実装します。
+
+初版TransportはTCPを前提とし、Cancel Request単位の`request_id`を持ちません。このため同一Goalの判断待ち中またはCancel受理後に届く追加Cancel Requestは、再送か新規要求かを区別せず無応答で破棄します。Cancelを`REJECTED`と判断した後はGoalが`EXECUTING`へ戻るため、Clientは改めてCancel Requestを送信できます。
 
 ## 6. Protocolシーケンス
 

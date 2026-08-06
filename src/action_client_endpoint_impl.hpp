@@ -48,7 +48,9 @@ public:
 private:
     static constexpr std::uint8_t ACTION_PROTOCOL_VERSION = 1;
     static constexpr std::uint8_t REQUEST_KIND_GOAL = 1;
+    static constexpr std::uint8_t REQUEST_KIND_CANCEL = 2;
     static constexpr std::uint8_t RESPONSE_KIND_GOAL = 1;
+    static constexpr std::uint8_t RESPONSE_KIND_CANCEL = 2;
     static constexpr std::uint8_t RESPONSE_KIND_RESULT = 3;
 
     struct SlotRouting {
@@ -71,6 +73,8 @@ private:
         AWAITING_GOAL_RESPONSE,
         GOAL_RESPONSE_TIMED_OUT,
         ACCEPTED,
+        AWAITING_CANCEL_RESPONSE,
+        CANCELING,
     };
 
     struct ClientPacketBinding {
@@ -122,7 +126,9 @@ private:
         std::size_t& wire_size_out) const;
     bool write_request_header(
         PduData& packet,
-        const GoalId& goal_id) const;
+        const GoalId& goal_id,
+        std::uint8_t request_kind) const;
+    bool create_control_request_packet(PduData& packet_out) const;
     bool decode_response_header(
         const PduData& packet,
         HakoCpp_ActionResponseHeader& header_out) const;

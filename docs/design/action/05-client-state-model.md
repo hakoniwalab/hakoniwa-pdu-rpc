@@ -230,7 +230,7 @@ pending Contextが存在しないCancel Responseは、Client Application APIの�
 
 Feedbackの期待sequenceはGoal accept時に0で初期化します。受信した`sequence_no`が期待値と一致した場合だけApplicationへ通知して期待値を1増加させます。重複、逆転、欠番は通常Feedbackとして通知せず診断対象として無視します。`uint32`の最大値後はmoduloで0へ戻ります。
 
-`RESULT_RECEIVED`に含まれるterminal statusは`SUCCEEDED`、`CANCELED`、`ABORTED`を扱います。ただしCancel未実装の初期段階では、`EXECUTING`相当のContextが受理するのは`SUCCEEDED`と`ABORTED`だけです。`CANCELED`はCancel Responseを受理して`CANCELING`へ進む実装と同時に有効化します。
+`RESULT_RECEIVED`に含まれるterminal statusは`SUCCEEDED`、`CANCELED`、`ABORTED`を扱います。`EXECUTING`相当のContextでは`SUCCEEDED`または`ABORTED`、Cancel Responseを受理した`CANCELING`では`CANCELED`または`ABORTED`だけを受理します。Cancel Response待ち中に`SUCCEEDED`または`ABORTED`が先着した場合はResult勝利として受理し、後着Cancel Responseを無視します。
 
 ResultをApplicationイベントへコピーした後、Client RuntimeはそのGoal Contextとslot ownershipを解放します。解放後に届いた重複または遅延Resultは、相関するContextがないためApplicationへ再配送しません。
 

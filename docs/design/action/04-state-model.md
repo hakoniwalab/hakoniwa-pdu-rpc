@@ -212,8 +212,8 @@ Next:
 
 | Event | EXECUTING | CANCELING | FINISHING |
 | --- | --- | --- | --- |
-| `CANCEL_REQUEST_RECEIVED` | `DEFER`: Applicationへ通知。判断までは`SAME` | **レビュー対象**: 冪等に既存Cancel Responseを返す、または重複として拒否。`SAME` | **レビュー対象**: completion committedとして拒否、または別の規約を適用。`SAME` |
-| `DUPLICATE_CANCEL_REQUEST_RECEIVED` | Cancel判断中なら重複Policyを適用。`SAME` | 既存のCancel受理結果を再応答する候補。`SAME` | 完了処理中として拒否する候補。`SAME` |
+| `CANCEL_REQUEST_RECEIVED` | pendingでなければ`DEFER`: Applicationへ通知。判断までは`SAME`。pendingなら`IGNORE` | `IGNORE`: 既存Cancel commitを維持し、追加Responseを送らない。`SAME` | `IGNORE`: completion committed。Responseを送らない。`SAME` |
+| `DUPLICATE_CANCEL_REQUEST_RECEIVED` | Cancel判断中は`IGNORE`し、追加dispatch／Responseを生成しない。`SAME` | `IGNORE`: 既存Cancel commitを維持。`SAME` | `IGNORE`: completion committed。`SAME` |
 | `DUPLICATE_GOAL_REQUEST_RECEIVED` | `PROTOCOL_REJECT`。既存Goalは`SAME` | `PROTOCOL_REJECT`。既存Goalは`SAME` | `PROTOCOL_REJECT`または再照会Policy。既存Goalは`SAME` |
 
 Cancel Requestの再送と別個の重複要求を識別する相関方式は、本状態モデルでは定義しません。request IDを追加するか、`goal_id`と未処理Cancel Contextだけで判定するかは、後続のProtocol文書で定義します。本書では、Runtimeが重複と判定した後の状態処理だけを扱います。
