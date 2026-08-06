@@ -103,11 +103,12 @@ private:
 
     enum class PacketBindingState : std::uint8_t {
         AWAITING_GOAL_DECISION,
+        GOAL_ACCEPT_RESPONSE_SENDING,
+        GOAL_REJECT_RESPONSE_SENDING,
         GOAL_ACCEPTED,
         CANCEL_ACCEPT_RESPONSE_SENDING,
         CANCEL_REJECT_RESPONSE_SENDING,
         CANCEL_ACCEPTED,
-        GOAL_REJECTED,
         RESULT_COMMITTED,
     };
 
