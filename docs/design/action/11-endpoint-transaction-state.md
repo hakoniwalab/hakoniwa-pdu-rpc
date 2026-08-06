@@ -9,16 +9,21 @@
 
 Actionの公開Goal状態だけでは、判断のcommitとProtocol packetの同期送信の間に発生する競合を表現できません。
 
-例として、Cancel acceptは次の複数段階を持ちます。
+Goal acceptおよびCancel acceptは、それぞれ次の複数段階を持ちます。
 
 ```text
+ApplicationがGoal acceptを選択
+  -> Goal Response送信開始
+  -> Goal Response送信成功
+  -> EXECUTINGを公開
+
 ApplicationがCancel acceptを選択
   -> Cancel Response送信開始
   -> Cancel Response送信成功
   -> CANCELINGを公開
 ```
 
-Response送信中にterminal Resultがcommitされると、`RESULT(CANCELED)`が`CANCEL_RESPONSE(ACCEPTED)`を追い越す可能性があります。本書は、このようなWire順序競合をEndpoint内部状態で防止するための契約を定義します。
+Response送信中にFeedbackまたはterminal Resultがcommitされると、Responseより先に後続packetがWireへ現れる可能性があります。本書は、このようなWire順序競合をEndpoint内部状態で防止するための契約を定義します。
 
 ## 2. 状態の二層構造
 
@@ -38,6 +43,8 @@ Endpoint Transaction状態はAction Packet Endpointが所有します。
 
 ```text
 AWAITING_GOAL_DECISION
+GOAL_ACCEPT_RESPONSE_SENDING
+GOAL_REJECT_RESPONSE_SENDING
 GOAL_ACCEPTED
 CANCEL_ACCEPT_RESPONSE_SENDING
 CANCEL_REJECT_RESPONSE_SENDING
@@ -55,29 +62,41 @@ Endpoint Transaction状態を公開Goal状態としてApplicationへ露出して
 
 Goal Requestを受信し、Applicationのaccept／reject判断を待っています。
 
-### 3.2 `GOAL_ACCEPTED`
+### 3.2 `GOAL_ACCEPT_RESPONSE_SENDING`
+
+Goal accept判断を一時commitし、`GOAL_RESPONSE(ACCEPTED)`を同期送信しています。
+
+この状態では、同一GoalのFeedback、Cancel、terminal Resultをcommitしてはなりません。送信成功後に`GOAL_ACCEPTED`へ進み、送信失敗時は`AWAITING_GOAL_DECISION`へ戻ります。
+
+### 3.3 `GOAL_REJECT_RESPONSE_SENDING`
+
+Goal reject判断を一時commitし、`GOAL_RESPONSE(REJECTED)`を同期送信しています。
+
+この状態では、同一Goalに対する他のApplication操作を受理しません。送信成功後にGoal Contextとslot ownershipを解放し、送信失敗時は`AWAITING_GOAL_DECISION`へ戻ります。
+
+### 3.4 `GOAL_ACCEPTED`
 
 Goal Responseの送信が成功し、Goal laneが実行中です。
 
 `cancel_decision_pending=false`では通常実行中、`true`ではCancel RequestをApplicationへdispatch済みです。
 
-### 3.3 `CANCEL_ACCEPT_RESPONSE_SENDING`
+### 3.5 `CANCEL_ACCEPT_RESPONSE_SENDING`
 
 Cancel accept判断を一時commitし、`CANCEL_RESPONSE(ACCEPTED)`を同期送信しています。
 
 この状態では、同一Goalのterminal Resultをcommitしてはなりません。送信成功後に`CANCEL_ACCEPTED`へ進み、送信失敗時は`GOAL_ACCEPTED + cancel_decision_pending=true`へ戻ります。
 
-### 3.4 `CANCEL_REJECT_RESPONSE_SENDING`
+### 3.6 `CANCEL_REJECT_RESPONSE_SENDING`
 
 Cancel reject判断を一時commitし、`CANCEL_RESPONSE(REJECTED)`を同期送信しています。
 
 この状態では、同一Goalのterminal Resultをcommitしてはなりません。送信成功後は`GOAL_ACCEPTED + cancel_decision_pending=false`へ戻り、送信失敗時は`GOAL_ACCEPTED + cancel_decision_pending=true`へ戻ります。
 
-### 3.5 `CANCEL_ACCEPTED`
+### 3.7 `CANCEL_ACCEPTED`
 
 `CANCEL_RESPONSE(ACCEPTED)`の送信が成功し、公開Goal状態を`CANCELING`として扱える状態です。
 
-### 3.6 `RESULT_COMMITTED`
+### 3.8 `RESULT_COMMITTED`
 
 terminal statusとResult bodyをcommitし、Resultの配送責任が残っています。
 
@@ -97,11 +116,15 @@ IGNORE      inbound packetをApplicationへ通知せず破棄する
 | Endpoint Transaction状態 | `accept_goal` | `reject_goal` | `accept_cancel` | `reject_cancel` | `send_feedback` | `complete(SUCCEEDED)` | `complete(CANCELED)` | `complete(ABORTED)` |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `AWAITING_GOAL_DECISION` | ALLOW | ALLOW | REJECT | REJECT | REJECT | REJECT | REJECT | REJECT |
+| `GOAL_ACCEPT_RESPONSE_SENDING` | REJECT | REJECT | REJECT | REJECT | REJECT | REJECT | REJECT | REJECT |
+| `GOAL_REJECT_RESPONSE_SENDING` | REJECT | REJECT | REJECT | REJECT | REJECT | REJECT | REJECT | REJECT |
 | `GOAL_ACCEPTED` | REJECT | REJECT | CONDITIONAL: `cancel_decision_pending=true` | CONDITIONAL: `cancel_decision_pending=true` | ALLOW | ALLOW | REJECT | ALLOW |
 | `CANCEL_ACCEPT_RESPONSE_SENDING` | REJECT | REJECT | REJECT | REJECT | ALLOW | REJECT | REJECT | REJECT |
 | `CANCEL_REJECT_RESPONSE_SENDING` | REJECT | REJECT | REJECT | REJECT | ALLOW | REJECT | REJECT | REJECT |
 | `CANCEL_ACCEPTED` | REJECT | REJECT | REJECT | REJECT | ALLOW | REJECT | ALLOW | ALLOW |
 | `RESULT_COMMITTED` | REJECT | REJECT | REJECT | REJECT | REJECT | REJECT | REJECT | REJECT |
+
+Goal Response配送中は、ClientがまだGoal accept／rejectを認識していないため、Feedback、Cancel、Resultを禁止します。
 
 Cancel Response配送中もFeedbackを許可します。Feedbackは非終端通知であり、Client RuntimeもCancel Response待ち中および`CANCELING`中にFeedbackを受理します。
 
@@ -110,6 +133,8 @@ Cancel Response配送中もFeedbackを許可します。Feedbackは非終端通�
 | Endpoint Transaction状態 | Goal Request | Cancel Request |
 | --- | --- | --- |
 | `AWAITING_GOAL_DECISION` | 同一`goal_id`の重複はIGNOREまたはProtocol reject。新規Goalは別slotのみ | IGNORE |
+| `GOAL_ACCEPT_RESPONSE_SENDING` | IGNORE | IGNORE |
+| `GOAL_REJECT_RESPONSE_SENDING` | IGNORE | IGNORE |
 | `GOAL_ACCEPTED` | 同一`goal_id`は重複としてIGNORE。別`goal_id`が同一slotならREJECT response | `cancel_decision_pending=false`ならApplicationへdispatchしtrueへ。trueならIGNORE |
 | `CANCEL_ACCEPT_RESPONSE_SENDING` | IGNORE | IGNORE |
 | `CANCEL_REJECT_RESPONSE_SENDING` | IGNORE | IGNORE |
@@ -129,6 +154,10 @@ GOAL_RESPONSE(ACCEPTED) < FEEDBACK*
 GOAL_RESPONSE(ACCEPTED) < CANCEL_RESPONSE
 GOAL_RESPONSE(ACCEPTED) < RESULT
 ```
+
+`GOAL_ACCEPT_RESPONSE_SENDING`中はFeedback、Cancel、terminal `complete()`を拒否することで、この順序を保証します。
+
+Goal reject時は、`GOAL_RESPONSE(REJECTED)`送信成功後にContextとslotを解放します。送信失敗時は判断待ちへ戻し、同じreject判断を再実行できなければなりません。
 
 ### 6.2 Cancel accept
 
@@ -159,6 +188,11 @@ Result送信成功後はContextとslotを解放する
 ### 6.5 送信失敗
 
 ```text
+Goal Response送信失敗:
+  Goal accept／reject判断を確定しない
+  AWAITING_GOAL_DECISIONへ戻る
+  同じaccept／reject判断を再実行可能にする
+
 Cancel Response送信失敗:
   Cancel判断を確定しない
   cancel_decision_pendingを維持する
@@ -189,19 +223,51 @@ ResultをApplicationイベントへ移した後、Client RuntimeはGoal Context�
 同一Goalについて、次の判断は同じmutexまたは同等の直列化機構で排他的にcommitします。
 
 ```text
+Goal accept
+Goal reject
 Cancel accept
 Cancel reject
 terminal complete
 reset／shutdownによるContext破棄
 ```
 
-Cancel ResponseのTransport送信自体をmutex外で行う場合、必ず配送中状態を先にcommitし、`complete()`がその状態を受理しないようにします。
+ResponseのTransport送信自体をmutex外で行う場合、必ず対応する配送中状態を先にcommitし、後続APIがその状態を受理しないようにします。
 
 上位Services層は、Endpoint API実行中に同一Endpointの`reset_contexts()`または破棄を並行実行しないようライフサイクルを直列化します。
 
 ## 9. 必須Contract Test
 
-### 9.1 Cancel Response順序
+### 9.1 Goal accept Response順序
+
+```text
+Goal accept Response送信を意図的にblockする
+並行してsend_feedbackおよびcomplete(SUCCEEDED)を呼ぶ
+両方とも失敗する
+Goal accept Response送信成功後にFeedback／completeが成功する
+Wire上でGoal accept ResponseがFeedback／Resultより先である
+```
+
+### 9.2 Goal accept Response送信失敗
+
+```text
+1回目のGOAL_RESPONSE(ACCEPTED)送信を失敗させる
+accept_goalはfalse
+Goal判断待ちContextとslotは維持される
+同じaccept_goalを再実行できる
+2回目成功後にGOAL_ACCEPTEDへ進む
+```
+
+### 9.3 Goal reject Response送信失敗
+
+```text
+1回目のGOAL_RESPONSE(REJECTED)送信を失敗させる
+reject_goalはfalse
+Goal判断待ちContextとslotは維持される
+同じreject_goalを再実行できる
+2回目成功後にContextとslotを解放する
+```
+
+### 9.4 Cancel Response順序
 
 ```text
 Cancel Response送信を意図的にblockする
@@ -211,7 +277,7 @@ Cancel Response送信成功後にcomplete(CANCELED)が成功する
 Wire上でCancel ResponseがResultより先である
 ```
 
-### 9.2 Cancel accept Response送信失敗
+### 9.5 Cancel accept Response送信失敗
 
 ```text
 1回目のCANCEL_RESPONSE(ACCEPTED)送信を失敗させる
@@ -221,7 +287,7 @@ pending Cancel判断は維持される
 2回目成功後にCANCEL_ACCEPTEDへ進む
 ```
 
-### 9.3 Cancel reject Response送信失敗
+### 9.6 Cancel reject Response送信失敗
 
 ```text
 1回目のCANCEL_RESPONSE(REJECTED)送信を失敗させる
@@ -231,7 +297,7 @@ pending Cancel判断は維持される
 2回目成功後に通常実行へ戻る
 ```
 
-### 9.4 Result勝利
+### 9.7 Result勝利
 
 ```text
 Cancel判断待ち中にcomplete(SUCCEEDED / ABORTED)を先にcommitする
@@ -241,7 +307,7 @@ pending Cancel判断を失効させる
 Cancel Responseを送信しない
 ```
 
-### 9.5 terminal後の禁止操作
+### 9.8 terminal後の禁止操作
 
 ```text
 RESULT_COMMITTED後:
