@@ -38,6 +38,10 @@ public:
                           const PduData& result_pdu) = 0;
 
     virtual void clear_pending_events() = 0;
+
+    // Clears all Goal contexts and slot ownership after the underlying
+    // transport has been stopped or disconnected.
+    virtual void reset_contexts() = 0;
     const std::string& get_action_name() const { return action_name_; }
 
 protected:

@@ -225,7 +225,7 @@ TEST_F(ActionClientFixture, AcceptedGoalRetainsSlotUntilTerminalResult)
     EXPECT_FALSE(action_client->send_goal(packet, second_id, handle));
 }
 
-TEST_F(ActionClientFixture, GoalResponseTimeoutEmitsOnceAndReleasesSlot)
+TEST_F(ActionClientFixture, GoalResponseTimeoutEmitsOnceAndQuarantinesSlot)
 {
     ASSERT_TRUE(action_client->initialize(fibonacci_action()));
     const auto first_id = goal_id(0x80);
@@ -242,6 +242,9 @@ TEST_F(ActionClientFixture, GoalResponseTimeoutEmitsOnceAndReleasesSlot)
     EXPECT_EQ(action_client->poll(event), action::ClientEventType::TIMEOUT);
     EXPECT_EQ(event.goal.goal_id, first_id);
     EXPECT_EQ(action_client->poll(event), action::ClientEventType::NONE);
+    EXPECT_FALSE(action_client->send_goal(packet, second_id, handle, 1000));
+
+    action_client->reset_contexts();
     EXPECT_TRUE(action_client->send_goal(packet, second_id, handle, 1000));
 }
 
@@ -269,4 +272,20 @@ TEST_F(ActionClientFixture, IgnoresResponseForUnknownGoal)
 
     action::ClientEvent event;
     EXPECT_EQ(action_client->poll(event), action::ClientEventType::NONE);
+}
+
+TEST_F(ActionClientFixture, ClearPendingEventsDoesNotReleaseActiveContext)
+{
+    ASSERT_TRUE(action_client->initialize(fibonacci_action()));
+    const auto packet = encoded_goal(action_client);
+    action::ClientGoalHandle handle;
+    ASSERT_TRUE(action_client->send_goal(packet, goal_id(0xc0), handle));
+
+    action_client->clear_pending_events();
+    EXPECT_FALSE(action_client->send_goal(
+        packet, goal_id(0xd0), handle));
+
+    action_client->reset_contexts();
+    EXPECT_TRUE(action_client->send_goal(
+        packet, goal_id(0xd0), handle));
 }

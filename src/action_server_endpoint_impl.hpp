@@ -65,6 +65,7 @@ public:
         const PduData& result_pdu) override;
 
     void clear_pending_events() override;
+    void reset_contexts() override;
 
 private:
     static constexpr std::uint8_t ACTION_PROTOCOL_VERSION = 1;
@@ -130,6 +131,7 @@ private:
     std::deque<ServerEvent> pending_events_;
     std::shared_ptr<PendingPacketQueue> pending_packets_;
     std::vector<SlotRouting> slot_routing_;
+    std::vector<std::optional<GoalId>> slot_owners_;
     std::map<GoalId, ActionPacketBinding> packet_bindings_;
     std::optional<ActionDefinition> action_definition_;
     bool initialized_{false};

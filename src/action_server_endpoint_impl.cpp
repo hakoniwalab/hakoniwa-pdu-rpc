@@ -482,6 +482,7 @@ bool ActionServerEndpointImpl::initialize(
 
     action_definition_ = std::move(parsed_definition);
     slot_routing_ = std::move(parsed_routing);
+    slot_owners_.resize(slot_routing_.size());
     initialized_ = true;
 
     std::weak_ptr<PendingPacketQueue> weak_queue = pending_packets_;
@@ -568,6 +569,7 @@ ServerEventType ActionServerEndpointImpl::poll(
         return ServerEventType::NONE;
     }
 
+    bool slot_collision = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (packet_bindings_.contains(header.goal_id)) {
@@ -579,13 +581,42 @@ ServerEventType ActionServerEndpointImpl::poll(
                 << std::endl;
             return ServerEventType::NONE;
         }
-        packet_bindings_.emplace(
-            header.goal_id,
-            ActionPacketBinding{
+        if (slot_owners_[pending_packet.slot_index].has_value()) {
+            slot_collision = true;
+        } else {
+            slot_owners_[pending_packet.slot_index] = header.goal_id;
+            packet_bindings_.emplace(
                 header.goal_id,
-                pending_packet.slot_index,
-                PacketBindingState::AWAITING_GOAL_DECISION,
-            });
+                ActionPacketBinding{
+                    header.goal_id,
+                    pending_packet.slot_index,
+                    PacketBindingState::AWAITING_GOAL_DECISION,
+                });
+        }
+    }
+
+    if (slot_collision) {
+        std::cerr
+            << "ERROR: Action slot is already owned by another Goal for action '"
+            << action_name_
+            << "', slot "
+            << pending_packet.slot_index
+            << "."
+            << std::endl;
+        const ActionPacketBinding rejected_binding{
+            header.goal_id,
+            pending_packet.slot_index,
+            PacketBindingState::GOAL_REJECTED,
+        };
+        PduData response;
+        if (create_control_response_packet(response)) {
+            (void)send_response_packet(
+                rejected_binding,
+                RESPONSE_KIND_GOAL,
+                static_cast<std::uint8_t>(Decision::REJECTED),
+                std::move(response));
+        }
+        return ServerEventType::NONE;
     }
 
     event_out.type = ServerEventType::GOAL_REQUEST;
@@ -666,7 +697,15 @@ bool ActionServerEndpointImpl::reject_goal(
         std::move(response));
     if (sent) {
         std::lock_guard<std::mutex> lock(mutex_);
-        packet_bindings_.erase(goal.goal_id);
+        const auto binding = packet_bindings_.find(goal.goal_id);
+        if (binding != packet_bindings_.end()) {
+            const auto slot_index = binding->second.slot_index;
+            if (slot_index < slot_owners_.size()
+                && slot_owners_[slot_index] == goal.goal_id) {
+                slot_owners_[slot_index].reset();
+            }
+            packet_bindings_.erase(binding);
+        }
     }
     return sent;
 }
@@ -772,14 +811,17 @@ void ActionServerEndpointImpl::clear_pending_events()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     pending_events_.clear();
-    for (auto binding = packet_bindings_.begin();
-         binding != packet_bindings_.end();) {
-        if (binding->second.state
-            == PacketBindingState::AWAITING_GOAL_DECISION) {
-            binding = packet_bindings_.erase(binding);
-        } else {
-            ++binding;
-        }
+    std::lock_guard<std::mutex> queue_lock(pending_packets_->mutex);
+    pending_packets_->packets.clear();
+}
+
+void ActionServerEndpointImpl::reset_contexts()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    pending_events_.clear();
+    packet_bindings_.clear();
+    for (auto& owner : slot_owners_) {
+        owner.reset();
     }
     std::lock_guard<std::mutex> queue_lock(pending_packets_->mutex);
     pending_packets_->packets.clear();

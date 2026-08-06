@@ -211,6 +211,10 @@ accepted Goal terminal completion
   -> slot release
 ```
 
+Goal Response timeoutはslot解放条件ではありません。Clientが応答待ちを諦めた時点でもServerがGoalを処理中またはaccept済みの可能性があるため、Client Runtimeは該当slotをquarantineし、transport stop／disconnect後の明示resetまで別Goalへ再利用しません。
+
+Server Runtimeは`slot_index -> active goal_id`の所有関係も保持します。使用中slotで異なるGoal IDのGoal Requestを受信した場合はApplicationへ配送せず、Protocol上のGoal rejectとして応答します。
+
 スロット割り当てはTransport routing上の資源管理です。Protocol上のGoal identityは引き続き`goal_id`です。
 
 ## 6. 予約スロット数

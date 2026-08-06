@@ -105,12 +105,15 @@ REQUEST_SEND_FAILED(GOAL)
 RESPONSE_TIMEOUT(GOAL_RESPONSE)
   -> goal_response_pending = false
   -> Client Applicationへtimeoutを通知
-  -> RELEASE
+  -> slotをquarantineして保持
+  -> transport stop / disconnect後の明示resetでRELEASE
 ```
 
 初版Client APIの`send_goal(..., timeout_usec)`は、このGoal Response待ちにだけ適用します。`timeout_usec=0`はGoal Response timeoutなしを表します。Goalがacceptされた後のResult待ち、およびCancel Response待ちには同じ値を流用しません。それらのtimeout／保持Policyは初版の公開契約へ含めません。
 
-Goal Response timeout時、Goal RequestがServerへ到達し、Server側でaccept済みとなっている可能性があります。しかし、Client Runtimeはこの可能性を理由に追加主状態、状態照会、自動再送、特別な救済処理を導入しません。Client側では通信失敗としてContextを解放し、Server側で残存Goalが発生し得ることは異常ケースとして扱います。
+Goal Response timeout時、Goal RequestがServerへ到達し、Server側でaccept済みとなっている可能性があります。このためClient RuntimeはTIMEOUTを一度だけ通知した後もpacket bindingとslot ownershipを保持し、同じslotを別Goalへ再利用しません。この保持状態はaccept済みGoalの主状態ではなく、通信laneを安全側へ隔離する内部状態です。状態照会、自動再送、自動Cancelは導入しません。
+
+timeout後の遅延Goal Responseは通常のGoal ResponseとしてApplicationへ再通知せず、診断対象として無視します。slotはtransportのstopまたはdisconnect後に行う明示的なContext reset、あるいはRuntime instanceの破棄によって回収します。`clear_pending_events()`は受信queueだけを破棄するAPIであり、Goal Contextやslot ownershipを解放しません。
 
 `GOAL_REQUESTING`や`ACCEPTED`などの追加主状態は設けません。これはROS 2 Action ClientがGoal Response待ちをFutureで表現する考え方と整合します。
 
@@ -252,9 +255,9 @@ Runtime自体のクラッシュ、メモリ破壊、プロセス強制終了な�
 | `TRANSPORT_DISCONNECTED` | Applicationへ通信切断を通知し、再接続Policyへ`DEFER`。`SAME` | 同左。Server側の停止処理を推測しない。`SAME` | Result通知・Context解放の状況に応じて保持Policyへ`DEFER` |
 | `CLIENT_SHUTDOWN_REQUESTED` | shutdown policyへ`DEFER`。Goalを自動的に`CANCELED`または`ABORTED`へ変更しない | 同左 | Application通知とContext解放Policyへ`DEFER` |
 
-Goal確立前の`REQUEST_SEND_FAILED(GOAL)`および`RESPONSE_TIMEOUT(GOAL_RESPONSE)`は4節で定義します。どちらもaccept済みGoalの主状態を生成せず、Client Applicationへ通信失敗を通知してGoal確立前Contextを解放します。
+Goal確立前の`REQUEST_SEND_FAILED(GOAL)`および`RESPONSE_TIMEOUT(GOAL_RESPONSE)`は4節で定義します。どちらもaccept済みGoalの主状態を生成しません。Request送信失敗ではContextを解放できますが、Goal Response timeoutではServer側の受理状態が不明なため、Client Applicationへ通信失敗を通知したうえでslotをquarantineします。
 
-Goal Response timeout後にServer側へGoalが残る可能性はありますが、初版Client Runtimeは状態照会、自動再送、受理状態UNKNOWNなどの特別な救済を提供しません。このケースはServer側の異常ケースとして記録し、Client状態モデルは単純な通信失敗として閉じます。
+Goal Response timeout後にServer側へGoalが残る可能性はありますが、初版Client Runtimeは状態照会、自動再送、受理状態UNKNOWNなどの特別な救済を提供しません。TIMEOUTを一度だけ通知し、該当slotを再利用せずに明示resetまで隔離します。
 
 ## 12. 通信異常とGoal terminal statusの分離
 
@@ -274,7 +277,7 @@ accept済みGoalの通信異常時点では、Server上のGoalが`EXECUTING`、`
 
 accept済みGoalについては、Client Runtimeが通信異常をClient Applicationへ通知し、Goal Contextを保持したうえで、再接続、状態照会、Result再取得、保持期限による解放などのPolicyへ委譲します。
 
-Goal確立前のGoal Request送信失敗またはGoal Response timeoutは、Client Applicationへ通信失敗を通知してContextを解放します。Goal Response timeout時にServer側でGoalが残り得ることを理由に、Client側へ新しい主状態や救済Protocolを追加しません。
+Goal確立前のGoal Request送信失敗はContextを解放します。Goal Response timeoutはClient Applicationへ通信失敗を通知しますが、Server側でGoalが残り得るためpacket bindingとslotを明示resetまで保持します。Client側へ新しいProtocol主状態や救済Protocolは追加しません。
 
 ## 13. ROS 2 Action Clientとの親和性
 
@@ -326,8 +329,9 @@ RESULT_RECEIVED
 - Result受信時に`FINISHING`へ遷移し、Application通知後にContextを解放する。
 - ClientとServer間のProtocolイベントは共通のデータ契約を使用する。
 - Client Application APIの二重呼び出しは`APPLICATION_API_ERROR`として扱う。
-- Goal Request送信失敗とGoal Response timeoutは、Client側では通信失敗としてGoal確立前Contextを解放する。
-- Goal Response timeout後にServer側Goalが残る可能性に対し、Client側へ特別な状態、照会、自動再送を追加しない。
+- Goal Request送信失敗はGoal確立前Contextを解放する。
+- Goal Response timeoutは一度だけ通知し、packet bindingとslotを明示resetまでquarantineする。
+- Goal Response timeout後にServer側Goalが残る可能性に対し、Client側へProtocol主状態、状態照会、自動再送を追加しない。
 - Hakoniwa共通ProtocolはROS 2 status topic相当を持たず、ROS Bridgeが管理中GoalからROS statusを生成する。
 - 通信異常をGoalの`CANCELED`または`ABORTED`へ自動変換しない。
 - Runtimeの致命的内部障害からの正規状態遷移は初版の対象外とする。

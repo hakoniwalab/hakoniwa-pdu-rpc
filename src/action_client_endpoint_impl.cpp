@@ -449,7 +449,11 @@ ClientEventType ActionClientEndpointImpl::poll(ClientEvent& event_out)
             event_out.type = ClientEventType::TIMEOUT;
             event_out.action_name = action_name_;
             event_out.goal.goal_id = binding->first;
-            release_binding_locked(binding);
+            // A Goal Response timeout only means that the Client stopped
+            // waiting. The Server may already own this Goal, so quarantine the
+            // slot until an explicit lifecycle reset instead of reusing it for
+            // another Goal.
+            binding->second.state = BindingState::GOAL_RESPONSE_TIMED_OUT;
             return event_out.type;
         }
     }
@@ -460,6 +464,19 @@ void ActionClientEndpointImpl::clear_pending_events()
 {
     std::lock_guard<std::mutex> lock(pending_packets_->mutex);
     pending_packets_->packets.clear();
+}
+
+void ActionClientEndpointImpl::reset_contexts()
+{
+    {
+        std::lock_guard<std::mutex> lock(pending_packets_->mutex);
+        pending_packets_->packets.clear();
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    packet_bindings_.clear();
+    for (auto& owner : slot_owners_) {
+        owner.reset();
+    }
 }
 
 } // namespace hakoniwa::pdu::action

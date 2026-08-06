@@ -41,6 +41,7 @@ public:
     ClientEventType poll(ClientEvent& event_out) override;
     bool create_goal_buffer(PduData& pdu_out) override;
     void clear_pending_events() override;
+    void reset_contexts() override;
 
 private:
     static constexpr std::uint8_t ACTION_PROTOCOL_VERSION = 1;
@@ -65,6 +66,7 @@ private:
 
     enum class BindingState : std::uint8_t {
         AWAITING_GOAL_RESPONSE,
+        GOAL_RESPONSE_TIMED_OUT,
         ACCEPTED,
     };
 

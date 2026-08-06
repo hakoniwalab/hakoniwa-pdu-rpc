@@ -36,6 +36,11 @@ public:
     virtual bool create_goal_buffer(PduData& pdu_out) = 0;
     virtual void clear_pending_events() = 0;
 
+    // Clears all Goal contexts and slot ownership after the underlying
+    // transport has been stopped or disconnected. This is intentionally
+    // separate from clear_pending_events(), which only discards queued input.
+    virtual void reset_contexts() = 0;
+
     const std::string& get_action_name() const { return action_name_; }
     const std::string& get_client_name() const { return client_name_; }
 
