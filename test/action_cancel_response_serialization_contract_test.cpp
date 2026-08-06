@@ -172,10 +172,18 @@ TEST(ActionCancelResponseSerializationContract, QueuesRepeatedCancelUntilRejectR
         rejected = action_server->reject_cancel(cancel_goal);
     });
 
-    ASSERT_TRUE(endpoint->wait_until_response_blocked());
-    ASSERT_EQ(
-        endpoint->send(request_key, std::as_bytes(std::span(cancel))),
-        HAKO_PDU_ERR_OK);
+    if (!endpoint->wait_until_response_blocked()) {
+        endpoint->release_response();
+        reject_thread.join();
+        FAIL() << "Cancel Response send did not enter the blocked state.";
+    }
+    const auto repeated_cancel_result = endpoint->send(
+        request_key, std::as_bytes(std::span(cancel)));
+    if (repeated_cancel_result != HAKO_PDU_ERR_OK) {
+        endpoint->release_response();
+        reject_thread.join();
+        FAIL() << "Failed to enqueue the repeated Cancel Request.";
+    }
 
     endpoint->release_response();
     reject_thread.join();

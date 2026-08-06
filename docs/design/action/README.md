@@ -41,25 +41,18 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 
 ## 文書構成
 
-### 現在のレビュー対象
-
 1. [基本概念](01-concepts.md)
 2. [責務境界](02-responsibility-boundaries.md)
 3. [データモデル](03-data-model.md)
-4. [状態モデル](04-state-model.md)
-
-### 後続で追加する文書
-
-```text
-05-protocol.md
-06-error-and-race-semantics.md
-07-api-design.md
-08-configuration.md
-09-file-layout.md
-10-build-contract.md
-11-ros2-mapping.md
-12-open-questions.md
-```
+4. [Server状態モデル](04-state-model.md)
+5. [Client状態モデル](05-client-state-model.md)
+6. [通信Protocol](06-protocol.md)
+7. [アーキテクチャ](07-architecture.md)
+8. [C API](08-c-api.md)
+9. [設定契約](08-configuration.md)
+10. [実装方針](09-implementation-policy.md)
+11. [Cancel／Result競合契約](10-cancel-result-race.md)
+12. [Endpoint Transaction契約](11-endpoint-transaction-state.md)
 
 推奨する読み順は、概念、責務境界、データモデル、状態モデル、通信プロトコル、競合規約、実装契約の順です。
 

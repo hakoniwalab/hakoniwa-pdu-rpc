@@ -321,6 +321,8 @@ class OperationCompatibilityTests(unittest.TestCase):
         expected = {
             "hakoniwa_pdu_action_configuration_test",
             "hakoniwa_pdu_action_server_initialization_test",
+            "hakoniwa_pdu_action_goal_response_transaction_test",
+            "hakoniwa_pdu_action_cancel_response_serialization_test",
             "hakoniwa_pdu_action_client_endpoint_test",
             "hakoniwa_pdu_action_packet_codec_test",
         }

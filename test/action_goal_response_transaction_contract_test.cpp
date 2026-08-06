@@ -292,13 +292,20 @@ TEST(ActionGoalResponseTransactionContract, QueuesCancelUntilAcceptResponseCompl
         accepted = action_server->accept_goal(event.goal);
     });
 
-    ASSERT_TRUE(endpoint->wait_until_response_blocked());
+    if (!endpoint->wait_until_response_blocked()) {
+        endpoint->release_response();
+        accept_thread.join();
+        FAIL() << "Goal Response send did not enter the blocked state.";
+    }
     const auto cancel = cancel_request(id);
-    ASSERT_EQ(
-        endpoint->send(
-            hakoniwa::pdu::PduResolvedKey{"fibonacci", 0},
-            std::as_bytes(std::span(cancel))),
-        HAKO_PDU_ERR_OK);
+    const auto cancel_send_result = endpoint->send(
+        hakoniwa::pdu::PduResolvedKey{"fibonacci", 0},
+        std::as_bytes(std::span(cancel)));
+    if (cancel_send_result != HAKO_PDU_ERR_OK) {
+        endpoint->release_response();
+        accept_thread.join();
+        FAIL() << "Failed to enqueue Cancel Request while Goal Response was blocked.";
+    }
 
     endpoint->release_response();
     accept_thread.join();
@@ -326,14 +333,21 @@ TEST(ActionGoalResponseTransactionContract, QueuesNextGoalUntilRejectResponseRel
         rejected = action_server->reject_goal(first.goal);
     });
 
-    ASSERT_TRUE(endpoint->wait_until_response_blocked());
+    if (!endpoint->wait_until_response_blocked()) {
+        endpoint->release_response();
+        reject_thread.join();
+        FAIL() << "Goal Response send did not enter the blocked state.";
+    }
     const auto next_id = goal_id(0x48);
     const auto next_request = goal_request(next_id);
-    ASSERT_EQ(
-        endpoint->send(
-            hakoniwa::pdu::PduResolvedKey{"fibonacci", 0},
-            std::as_bytes(std::span(next_request))),
-        HAKO_PDU_ERR_OK);
+    const auto next_send_result = endpoint->send(
+        hakoniwa::pdu::PduResolvedKey{"fibonacci", 0},
+        std::as_bytes(std::span(next_request)));
+    if (next_send_result != HAKO_PDU_ERR_OK) {
+        endpoint->release_response();
+        reject_thread.join();
+        FAIL() << "Failed to enqueue the next Goal while Goal Response was blocked.";
+    }
 
     endpoint->release_response();
     reject_thread.join();
