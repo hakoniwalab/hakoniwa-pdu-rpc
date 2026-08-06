@@ -124,13 +124,15 @@ action::GoalId goal_id(std::uint8_t seed)
     return id;
 }
 
-action::PduData goal_request(const action::GoalId& id)
+action::PduData request_packet(
+    const action::GoalId& id,
+    std::uint8_t request_kind)
 {
     HakoCpp_FibonacciActionRequest request{};
     request.header.version = 1;
-    request.header.request_kind = 1;
+    request.header.request_kind = request_kind;
     request.header.goal_id = id;
-    request.body.order = 8;
+    request.body.order = request_kind == 1 ? 8 : 0;
 
     hako::pdu::msgs::sample_action_msgs::FibonacciActionRequest convertor;
     action::PduData packet(1024, 0);
@@ -143,6 +145,16 @@ action::PduData goal_request(const action::GoalId& id)
         packet.resize(static_cast<std::size_t>(size));
     }
     return packet;
+}
+
+action::PduData goal_request(const action::GoalId& id)
+{
+    return request_packet(id, 1);
+}
+
+action::PduData cancel_request(const action::GoalId& id)
+{
+    return request_packet(id, 2);
 }
 
 action::PduData feedback_packet(
@@ -262,6 +274,80 @@ TEST(ActionGoalResponseTransactionContract, AcceptResponsePrecedesFeedbackAndRes
         event.goal, action::TerminalStatus::SUCCEEDED, result));
     const auto completed = receive_response(endpoint);
     EXPECT_EQ(completed.header.response_kind, 3);
+    EXPECT_EQ(endpoint->stop(), HAKO_PDU_ERR_OK);
+}
+
+TEST(ActionGoalResponseTransactionContract, DefersCancelUntilAcceptResponseCompletes)
+{
+    auto endpoint = std::make_shared<GoalResponseBlockingEndpoint>();
+    ASSERT_EQ(endpoint->open(ACTION_SERVER_ENDPOINT_FIXTURE_PATH), HAKO_PDU_ERR_OK);
+    ASSERT_EQ(endpoint->start(), HAKO_PDU_ERR_OK);
+    auto action_server = server(endpoint);
+    ASSERT_TRUE(action_server->initialize(fibonacci_action()));
+
+    const auto id = goal_id(0x20);
+    const auto event = dispatch_goal(endpoint, action_server, id);
+    bool accepted = false;
+    std::thread accept_thread([&] {
+        accepted = action_server->accept_goal(event.goal);
+    });
+
+    ASSERT_TRUE(endpoint->wait_until_response_blocked());
+    const auto cancel = cancel_request(id);
+    ASSERT_EQ(
+        endpoint->send(
+            hakoniwa::pdu::PduResolvedKey{"fibonacci", 0},
+            std::as_bytes(std::span(cancel))),
+        HAKO_PDU_ERR_OK);
+
+    action::ServerEvent deferred;
+    EXPECT_EQ(action_server->poll(deferred), action::ServerEventType::NONE);
+
+    endpoint->release_response();
+    accept_thread.join();
+    ASSERT_TRUE(accepted);
+    (void)receive_response(endpoint);
+
+    EXPECT_EQ(
+        action_server->poll(deferred), action::ServerEventType::CANCEL_REQUEST);
+    EXPECT_EQ(deferred.goal.goal_id, id);
+    EXPECT_EQ(endpoint->stop(), HAKO_PDU_ERR_OK);
+}
+
+TEST(ActionGoalResponseTransactionContract, DefersNextGoalUntilRejectResponseReleasesSlot)
+{
+    auto endpoint = std::make_shared<GoalResponseBlockingEndpoint>();
+    ASSERT_EQ(endpoint->open(ACTION_SERVER_ENDPOINT_FIXTURE_PATH), HAKO_PDU_ERR_OK);
+    ASSERT_EQ(endpoint->start(), HAKO_PDU_ERR_OK);
+    auto action_server = server(endpoint);
+    ASSERT_TRUE(action_server->initialize(fibonacci_action()));
+
+    const auto first = dispatch_goal(endpoint, action_server, goal_id(0x28));
+    bool rejected = false;
+    std::thread reject_thread([&] {
+        rejected = action_server->reject_goal(first.goal);
+    });
+
+    ASSERT_TRUE(endpoint->wait_until_response_blocked());
+    const auto next_id = goal_id(0x48);
+    const auto next_request = goal_request(next_id);
+    ASSERT_EQ(
+        endpoint->send(
+            hakoniwa::pdu::PduResolvedKey{"fibonacci", 0},
+            std::as_bytes(std::span(next_request))),
+        HAKO_PDU_ERR_OK);
+
+    action::ServerEvent deferred;
+    EXPECT_EQ(action_server->poll(deferred), action::ServerEventType::NONE);
+
+    endpoint->release_response();
+    reject_thread.join();
+    ASSERT_TRUE(rejected);
+    (void)receive_response(endpoint);
+
+    EXPECT_EQ(
+        action_server->poll(deferred), action::ServerEventType::GOAL_REQUEST);
+    EXPECT_EQ(deferred.goal.goal_id, next_id);
     EXPECT_EQ(endpoint->stop(), HAKO_PDU_ERR_OK);
 }
 
