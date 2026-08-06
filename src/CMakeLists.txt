@@ -21,6 +21,7 @@ set(HAKO_PDU_RPC_SOURCES
   rpc_client_endpoint_impl.cpp
   rpc_services_client.cpp
   action_configuration.cpp
+  action_services_server.cpp
   action_server_state_machine.cpp
   action_client_state_machine.cpp
   action_client_endpoint_impl.cpp

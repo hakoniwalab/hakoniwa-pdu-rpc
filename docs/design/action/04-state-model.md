@@ -438,7 +438,9 @@ AFTER_EFFECT_SUCCESS:
 - Runtime起因Cancelが既存Cancel判断と競合した場合は`IGNORE`し、originを上書きしない。
 - Result送信失敗、切断、shutdown、timeoutはterminal statusを生成せず`DEFER`する。
 
-上位`GoalTransaction`はGoal単位mutex内でreducerを呼び、`TransitionCommit`に従ってnext contextを適用します。状態核自身へ排他やI/Oを持ち込みません。
+`ActionServicesServer`は自身が所有するmutex内で、対応する`GoalInstance`のcontextをreducerへ渡し、`TransitionCommit`に従ってnext contextを適用します。状態核自身へ排他やI/Oを持ち込みません。初期実装では独立したGoal Transactionクラスを作りません。
+
+受信イベントとの接続は`ActionServicesServer::poll()`で行います。`GOAL_REQUEST`はaccept前なのでGoal状態を生成せずApplicationへ渡します。`CANCEL_REQUEST`と`RUNTIME_CANCEL_REQUEST`は、既存の`GoalInstance`を検索してReducerへ入力し、`NOTIFY_CANCEL_REQUEST`が返った場合だけApplicationへ通知します。
 - Applicationのハング、complete忘れ、watchdog
 - Runtimeが正規のイベント処理を継続できない致命的障害
 - 状態・イベント処理の排他実装

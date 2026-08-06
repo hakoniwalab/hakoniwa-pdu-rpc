@@ -102,6 +102,11 @@ ServerTransition reduce_server_goal(
         return complete_server_goal(current, TerminalStatus::CANCELED);
     case ServerGoalEvent::COMPLETE_ABORTED:
         return complete_server_goal(current, TerminalStatus::ABORTED);
+    case ServerGoalEvent::COMPLETE_UNSPECIFIED:
+        return server_result(
+            current,
+            TransitionDecision::APPLICATION_API_ERROR,
+            TransitionEffect::RECORD_DIAGNOSTIC);
 
     case ServerGoalEvent::ACCEPT_CANCEL:
     case ServerGoalEvent::REJECT_CANCEL: {

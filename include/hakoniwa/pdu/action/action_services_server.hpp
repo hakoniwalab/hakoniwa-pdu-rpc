@@ -1,15 +1,19 @@
 #pragma once
 
 #include "action_server_endpoint.hpp"
+#include "action_server_state_machine.hpp"
 #include "action_types.hpp"
 #include "hakoniwa/pdu/endpoint_container.hpp"
 #include "hakoniwa/time_source/time_source.hpp"
 
-#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <vector>
 
 namespace hakoniwa::pdu::action {
+
+class ActionServicesServerTestPeer;
 
 class ActionServicesServer {
 public:
@@ -47,17 +51,33 @@ public:
                   const PduData& result_pdu);
 
 private:
+    friend class ActionServicesServerTestPeer;
+
+    // Semantic state for one accepted Goal. Packet binding and slot ownership
+    // remain in IActionServerEndpoint.
+    struct GoalInstance {
+        ServerGoalHandle goal;
+        ServerGoalContext context;
+    };
+
+    // One configured Action and its accepted Goal instances. slotCount bounds
+    // the vector size, so the initial implementation intentionally uses a
+    // simple linear lookup instead of another index or manager abstraction.
+    struct ActionInstance {
+        std::string action_name;
+        std::shared_ptr<IActionServerEndpoint> endpoint;
+        std::vector<GoalInstance> goals;
+    };
+
     std::string node_id_;
     std::string config_path_;
     std::string impl_type_;
     std::uint64_t delta_time_usec_;
 
-    std::map<std::string, std::shared_ptr<IActionServerEndpoint>> action_endpoints_;
+    std::vector<ActionInstance> actions_;
+    mutable std::mutex mutex_;
     std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
     std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container_;
-
-    // TODO(codex): the Goal Context map and locking strategy belong in the
-    // implementation. Do not expose them through this API.
 };
 
 } // namespace hakoniwa::pdu::action

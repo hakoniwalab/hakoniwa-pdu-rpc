@@ -109,7 +109,8 @@ TEST(ActionServerStateMachineContract, TerminalCompletionFollowsServerStateMatri
     for (const auto event : {
              action::ServerGoalEvent::COMPLETE_SUCCEEDED,
              action::ServerGoalEvent::COMPLETE_CANCELED,
-             action::ServerGoalEvent::COMPLETE_ABORTED}) {
+             action::ServerGoalEvent::COMPLETE_ABORTED,
+             action::ServerGoalEvent::COMPLETE_UNSPECIFIED}) {
         const auto transition = action::reduce_server_goal(
             server_context(action::GoalState::FINISHING), event);
         EXPECT_EQ(transition.decision, TD::APPLICATION_API_ERROR);
