@@ -13,13 +13,17 @@ class IActionClientEndpoint {
 public:
     virtual ~IActionClientEndpoint() = default;
 
-    virtual bool initialize(const nlohmann::json& action_config,
-                            int pdu_meta_data_size) = 0;
+    virtual bool initialize(const nlohmann::json& action_config) = 0;
 
     // Normal clients omit requested_goal_id and let the Runtime generate a
     // non-zero UUID. Protocol adapters may provide an external GoalId that must
     // be preserved; an explicitly requested all-zero GoalId is invalid and
-    // must be rejected. The returned handle is used for cancel and correlation.
+    // must be rejected.
+    //
+    // The returned typed ClientGoalHandle is the Native API identity used for
+    // cancel requests and event correlation. No separate client token is
+    // exposed.
+    //
     // timeout_usec applies only while waiting for GOAL_RESPONSE; zero disables
     // that timeout. It does not time out Result or Cancel Response delivery.
     virtual bool send_goal(const PduData& goal_pdu,

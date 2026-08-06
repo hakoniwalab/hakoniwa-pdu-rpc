@@ -3,7 +3,6 @@
 #include "action_types.hpp"
 
 #include <nlohmann/json_fwd.hpp>
-#include <optional>
 #include <string>
 #include <utility>
 
@@ -17,16 +16,16 @@ public:
 
     virtual ServerEventType poll(ServerEvent& event_out) = 0;
 
-    // event_token is one-shot and is consumed by exactly one accept/reject call.
-    // Accepting a goal creates a long-lived goal_token used for feedback and
-    // terminal completion.
+    // The typed ServerGoalHandle identifies the Goal across Goal decision,
+    // Cancel decision, Feedback, and terminal completion. No separate event or
+    // goal token is exposed through the Native API.
     virtual bool accept_goal(const ServerGoalHandle& goal) = 0;
     virtual bool reject_goal(const ServerGoalHandle& goal) = 0;
     virtual bool accept_cancel(const ServerGoalHandle& goal) = 0;
     virtual bool reject_cancel(const ServerGoalHandle& goal) = 0;
 
     virtual bool send_feedback(const ServerGoalHandle& goal,
-        const PduData& feedback_pdu) = 0;
+                               const PduData& feedback_pdu) = 0;
     virtual bool complete(const ServerGoalHandle& goal,
                           TerminalStatus status,
                           const PduData& result_pdu) = 0;
@@ -45,8 +44,8 @@ protected:
 };
 
 // Invariant for the implementation:
-// COMPLETE_SUCCEEDED and ACCEPT_CANCEL must commit atomically per goal. If the
-// Result wins, the pending cancel token is invalidated and no Cancel Response
-// is emitted. See docs/design/action/10-cancel-result-race.md.
+// COMPLETE_SUCCEEDED and ACCEPT_CANCEL must commit atomically per Goal. If the
+// Result wins, the pending Cancel decision is closed and no Cancel Response is
+// emitted. See docs/design/action/10-cancel-result-race.md.
 
 } // namespace hakoniwa::pdu::action

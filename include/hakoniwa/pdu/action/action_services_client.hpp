@@ -28,8 +28,10 @@ public:
     void stop_all_services();
     void clear_all_instances();
 
-    // Ordinary callers receive an opaque-style GoalHandle and do not need to
-    // construct or retain GoalId directly. Adapters may request a specific ID.
+    // Ordinary callers retain the typed ClientGoalHandle returned by
+    // send_goal(). The same handle is used for cancel requests and event
+    // correlation; no separate client token is exposed. Adapters may request a
+    // specific GoalId when an external protocol identity must be preserved.
     bool send_goal(const std::string& action_name,
                    const PduData& goal_pdu,
                    ClientGoalHandle& goal_handle_out,

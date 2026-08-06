@@ -19,9 +19,12 @@ inline bool is_valid_goal_id(const GoalId& goal_id) noexcept {
     return false;
 }
 
-// High-level client code should retain this handle rather than manipulate a
-// GoalId directly. GoalId remains available for adapters that must preserve an
-// external protocol identity, such as a ROS 2 Action bridge.
+// Client-side typed handle for a Goal identity.
+//
+// send_goal() returns this handle, and the same value is used for cancel
+// requests and Client event correlation. GoalId remains directly available to
+// adapters that must preserve an external protocol identity, such as a ROS 2
+// Action bridge.
 //
 // The all-zero GoalId is reserved as invalid. Runtime-generated IDs must be
 // non-zero, and an explicitly requested all-zero ID must be rejected.
@@ -117,11 +120,13 @@ struct ServerEvent {
 };
 
 // Event field contract:
-//   GOAL_REQUEST:           goal.goal_token == INVALID_GOAL_TOKEN
-//                           and goal.goal_id is non-zero
-//   CANCEL_REQUEST:         goal identifies the accepted target Goal
-//   RUNTIME_CANCEL_REQUEST: goal identifies the target Goal and cause is set
-// event_token is consumed by exactly one accept/reject operation.
+//   Client events:          goal identifies the correlated Goal.
+//   GOAL_REQUEST:           goal contains the requested non-zero GoalId.
+//   CANCEL_REQUEST:         goal identifies the accepted target Goal.
+//   RUNTIME_CANCEL_REQUEST: goal identifies the target Goal and cause is set.
+//
+// The Native API uses the typed Goal handles above as lifecycle identities. It
+// does not expose separate event or goal tokens.
 
 // TODO(codex): define the precise runtime error model without exposing
 // implementation-specific exceptions through the public API.

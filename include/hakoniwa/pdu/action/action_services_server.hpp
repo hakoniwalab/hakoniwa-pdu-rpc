@@ -28,17 +28,21 @@ public:
 
     ServerEventType poll(std::string& action_name, ServerEvent& event_out);
 
+    // poll() returns the typed ServerGoalHandle used by all subsequent Goal
+    // lifecycle operations. No separate event or goal token is exposed.
     bool accept_goal(const std::string& action_name,
-                     EventToken event_token,
-                     GoalToken& goal_token_out);
-    bool reject_goal(const std::string& action_name, EventToken event_token);
-    bool accept_cancel(const std::string& action_name, EventToken event_token);
-    bool reject_cancel(const std::string& action_name, EventToken event_token);
+                     const ServerGoalHandle& goal);
+    bool reject_goal(const std::string& action_name,
+                     const ServerGoalHandle& goal);
+    bool accept_cancel(const std::string& action_name,
+                       const ServerGoalHandle& goal);
+    bool reject_cancel(const std::string& action_name,
+                       const ServerGoalHandle& goal);
     bool send_feedback(const std::string& action_name,
-                       GoalToken goal_token,
+                       const ServerGoalHandle& goal,
                        const PduData& feedback_pdu);
     bool complete(const std::string& action_name,
-                  GoalToken goal_token,
+                  const ServerGoalHandle& goal,
                   TerminalStatus status,
                   const PduData& result_pdu);
 
@@ -52,8 +56,8 @@ private:
     std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
     std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container_;
 
-    // TODO(codex): the Goal Context map, locking strategy, and token allocator
-    // belong in the implementation. Do not expose them through this API.
+    // TODO(codex): the Goal Context map and locking strategy belong in the
+    // implementation. Do not expose them through this API.
 };
 
 } // namespace hakoniwa::pdu::action
