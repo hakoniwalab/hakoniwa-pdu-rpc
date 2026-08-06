@@ -103,13 +103,17 @@ private:
 
     enum class PacketBindingState : std::uint8_t {
         AWAITING_GOAL_DECISION,
-        GOAL_ACCEPT_RESPONSE_SENDING,
-        GOAL_REJECT_RESPONSE_SENDING,
         GOAL_ACCEPTED,
-        CANCEL_ACCEPT_RESPONSE_SENDING,
-        CANCEL_REJECT_RESPONSE_SENDING,
         CANCEL_ACCEPTED,
         RESULT_COMMITTED,
+    };
+
+    enum class PendingResponse : std::uint8_t {
+        NONE,
+        GOAL_ACCEPT,
+        GOAL_REJECT,
+        CANCEL_ACCEPT,
+        CANCEL_REJECT,
     };
 
     // Transport-facing association between an upper-layer Goal transaction
@@ -119,6 +123,7 @@ private:
         GoalId goal_id{};
         std::size_t slot_index{0};
         PacketBindingState state{PacketBindingState::AWAITING_GOAL_DECISION};
+        PendingResponse pending_response{PendingResponse::NONE};
         std::uint32_t next_feedback_sequence{0};
         bool cancel_decision_pending{false};
     };
