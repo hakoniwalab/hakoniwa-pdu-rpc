@@ -145,6 +145,41 @@ action::ClientEvent goal_response(
     return event;
 }
 
+action::ClientEvent cancel_response(
+    const action::GoalId& goal_id,
+    action::Decision decision)
+{
+    action::ClientEvent event;
+    event.type = action::ClientEventType::CANCEL_RESPONSE;
+    event.goal.goal_id = goal_id;
+    event.decision = decision;
+    return event;
+}
+
+action::ClientEvent feedback(
+    const action::GoalId& goal_id,
+    std::uint32_t sequence)
+{
+    action::ClientEvent event;
+    event.type = action::ClientEventType::FEEDBACK;
+    event.goal.goal_id = goal_id;
+    event.feedback_sequence = sequence;
+    event.pdu = {0x46};
+    return event;
+}
+
+action::ClientEvent result(
+    const action::GoalId& goal_id,
+    action::TerminalStatus status)
+{
+    action::ClientEvent event;
+    event.type = action::ClientEventType::RESULT;
+    event.goal.goal_id = goal_id;
+    event.terminal_status = status;
+    event.pdu = {0x52};
+    return event;
+}
+
 } // namespace
 
 TEST(ActionServicesClientGoalInstanceContract, SendGoalDoesNotCreateAcceptedInstance)
@@ -346,4 +381,341 @@ TEST(ActionServicesClientGoalInstanceContract, UnknownAcceptedGoalCannotCancel)
     EXPECT_FALSE(services.send_cancel(
         "demo", action::ClientGoalHandle{test_goal_id()}));
     EXPECT_EQ(endpoint->send_cancel_calls, 0);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, AcceptedCancelResponseMovesGoalToCanceling)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    const auto goal_id = test_goal_id();
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        goal_response(goal_id, action::Decision::ACCEPTED));
+    std::string action_name;
+    action::ClientEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::GOAL_RESPONSE);
+    ASSERT_TRUE(services.send_cancel("demo", event.goal));
+
+    endpoint->push_event(
+        cancel_response(goal_id, action::Decision::ACCEPTED));
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::CANCEL_RESPONSE);
+    const auto context =
+        action::ActionServicesClientTestPeer::goal_context(
+            services, "demo", goal_id);
+    EXPECT_EQ(context.state, action::GoalState::CANCELING);
+    EXPECT_FALSE(context.cancel_response_pending);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, RejectedCancelResponseKeepsExecuting)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    const auto goal_id = test_goal_id();
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        goal_response(goal_id, action::Decision::ACCEPTED));
+    std::string action_name;
+    action::ClientEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::GOAL_RESPONSE);
+    ASSERT_TRUE(services.send_cancel("demo", event.goal));
+
+    endpoint->push_event(
+        cancel_response(goal_id, action::Decision::REJECTED));
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::CANCEL_RESPONSE);
+    const auto context =
+        action::ActionServicesClientTestPeer::goal_context(
+            services, "demo", goal_id);
+    EXPECT_EQ(context.state, action::GoalState::EXECUTING);
+    EXPECT_FALSE(context.cancel_response_pending);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, CancelResponseWithoutPendingIsNop)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    const auto goal_id = test_goal_id();
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        goal_response(goal_id, action::Decision::ACCEPTED));
+    std::string action_name;
+    action::ClientEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::GOAL_RESPONSE);
+
+    endpoint->push_event(
+        cancel_response(goal_id, action::Decision::ACCEPTED));
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::NONE);
+    EXPECT_TRUE(action_name.empty());
+    const auto context =
+        action::ActionServicesClientTestPeer::goal_context(
+            services, "demo", goal_id);
+    EXPECT_EQ(context.state, action::GoalState::EXECUTING);
+    EXPECT_FALSE(context.cancel_response_pending);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, UnknownGoalCancelResponseIsError)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        cancel_response(test_goal_id(), action::Decision::ACCEPTED));
+
+    std::string action_name;
+    action::ClientEvent event;
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::ERROR);
+    EXPECT_EQ(action_name, "demo");
+}
+
+TEST(ActionServicesClientGoalInstanceContract, FeedbackAdvancesExpectedSequence)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    const auto goal_id = test_goal_id();
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        goal_response(goal_id, action::Decision::ACCEPTED));
+    std::string action_name;
+    action::ClientEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::GOAL_RESPONSE);
+
+    endpoint->push_event(feedback(goal_id, 0));
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::FEEDBACK);
+    EXPECT_EQ(event.feedback_sequence, 0U);
+    EXPECT_EQ(event.pdu, action::PduData({0x46}));
+    auto context = action::ActionServicesClientTestPeer::goal_context(
+        services, "demo", goal_id);
+    EXPECT_EQ(context.next_feedback_sequence, 1U);
+
+    endpoint->push_event(feedback(goal_id, 1));
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::FEEDBACK);
+    context = action::ActionServicesClientTestPeer::goal_context(
+        services, "demo", goal_id);
+    EXPECT_EQ(context.next_feedback_sequence, 2U);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, OutOfOrderFeedbackIsNop)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    const auto goal_id = test_goal_id();
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        goal_response(goal_id, action::Decision::ACCEPTED));
+    std::string action_name;
+    action::ClientEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::GOAL_RESPONSE);
+
+    endpoint->push_event(feedback(goal_id, 1));
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::NONE);
+    EXPECT_TRUE(action_name.empty());
+    auto context = action::ActionServicesClientTestPeer::goal_context(
+        services, "demo", goal_id);
+    EXPECT_EQ(context.next_feedback_sequence, 0U);
+
+    endpoint->push_event(feedback(goal_id, 0));
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::FEEDBACK);
+    context = action::ActionServicesClientTestPeer::goal_context(
+        services, "demo", goal_id);
+    EXPECT_EQ(context.next_feedback_sequence, 1U);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, FeedbackForUnknownGoalIsError)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(feedback(test_goal_id(), 0));
+
+    std::string action_name;
+    action::ClientEvent event;
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::ERROR);
+    EXPECT_EQ(action_name, "demo");
+}
+
+TEST(ActionServicesClientGoalInstanceContract, SucceededResultReleasesGoal)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    const auto goal_id = test_goal_id();
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        goal_response(goal_id, action::Decision::ACCEPTED));
+    std::string action_name;
+    action::ClientEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::GOAL_RESPONSE);
+
+    endpoint->push_event(
+        result(goal_id, action::TerminalStatus::SUCCEEDED));
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::RESULT);
+    EXPECT_EQ(event.terminal_status, action::TerminalStatus::SUCCEEDED);
+    EXPECT_EQ(event.pdu, action::PduData({0x52}));
+    EXPECT_EQ(
+        action::ActionServicesClientTestPeer::goal_count(services, "demo"),
+        0U);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, AbortedResultReleasesExecutingGoal)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    const auto goal_id = test_goal_id();
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        goal_response(goal_id, action::Decision::ACCEPTED));
+    std::string action_name;
+    action::ClientEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::GOAL_RESPONSE);
+
+    endpoint->push_event(
+        result(goal_id, action::TerminalStatus::ABORTED));
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::RESULT);
+    EXPECT_EQ(
+        action::ActionServicesClientTestPeer::goal_count(services, "demo"),
+        0U);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, CanceledResultReleasesCancelingGoal)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    const auto goal_id = test_goal_id();
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        goal_response(goal_id, action::Decision::ACCEPTED));
+    std::string action_name;
+    action::ClientEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::GOAL_RESPONSE);
+    ASSERT_TRUE(services.send_cancel("demo", event.goal));
+    endpoint->push_event(
+        cancel_response(goal_id, action::Decision::ACCEPTED));
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::CANCEL_RESPONSE);
+
+    endpoint->push_event(
+        result(goal_id, action::TerminalStatus::CANCELED));
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::RESULT);
+    EXPECT_EQ(event.terminal_status, action::TerminalStatus::CANCELED);
+    EXPECT_EQ(
+        action::ActionServicesClientTestPeer::goal_count(services, "demo"),
+        0U);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, ResultCanWinCancelResponseRace)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    const auto goal_id = test_goal_id();
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        goal_response(goal_id, action::Decision::ACCEPTED));
+    std::string action_name;
+    action::ClientEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::GOAL_RESPONSE);
+    ASSERT_TRUE(services.send_cancel("demo", event.goal));
+
+    endpoint->push_event(
+        result(goal_id, action::TerminalStatus::SUCCEEDED));
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::RESULT);
+    EXPECT_EQ(
+        action::ActionServicesClientTestPeer::goal_count(services, "demo"),
+        0U);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, InvalidResultForStateIsNop)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    const auto goal_id = test_goal_id();
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        goal_response(goal_id, action::Decision::ACCEPTED));
+    std::string action_name;
+    action::ClientEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::GOAL_RESPONSE);
+
+    endpoint->push_event(
+        result(goal_id, action::TerminalStatus::CANCELED));
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::NONE);
+    EXPECT_TRUE(action_name.empty());
+    EXPECT_EQ(
+        action::ActionServicesClientTestPeer::goal_count(services, "demo"),
+        1U);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, ResultForUnknownGoalIsError)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        result(test_goal_id(), action::TerminalStatus::SUCCEEDED));
+
+    std::string action_name;
+    action::ClientEvent event;
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::ERROR);
+    EXPECT_EQ(action_name, "demo");
 }

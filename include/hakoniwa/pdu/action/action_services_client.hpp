@@ -60,6 +60,34 @@ private:
         std::vector<GoalInstance> goals;
     };
 
+    ActionInstance* get_action_locked(const std::string& action_name);
+    GoalInstance* get_goal_locked(
+        ActionInstance& action,
+        const GoalId& goal_id);
+    bool has_goal_locked(
+        ActionInstance& action,
+        const GoalId& goal_id);
+    bool remove_goal_locked(
+        ActionInstance& action,
+        const GoalId& goal_id);
+
+    ClientEventType handle_goal_response_locked(
+        ActionInstance& action,
+        ClientEvent& event,
+        ClientEvent& event_out);
+    ClientEventType handle_feedback_locked(
+        ActionInstance& action,
+        ClientEvent& event,
+        ClientEvent& event_out);
+    ClientEventType handle_cancel_response_locked(
+        ActionInstance& action,
+        ClientEvent& event,
+        ClientEvent& event_out);
+    ClientEventType handle_result_locked(
+        ActionInstance& action,
+        ClientEvent& event,
+        ClientEvent& event_out);
+
     std::string node_id_;
     std::string client_name_;
     std::string config_path_;

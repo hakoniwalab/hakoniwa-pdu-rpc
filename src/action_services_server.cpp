@@ -2,7 +2,6 @@
 
 #include "hakoniwa/time_source/time_source_factory.hpp"
 
-#include <algorithm>
 #include <iostream>
 #include <utility>
 
@@ -24,6 +23,97 @@ ActionServicesServer::ActionServicesServer(
 }
 
 ActionServicesServer::~ActionServicesServer() = default;
+
+ActionServicesServer::ActionInstance* ActionServicesServer::get_action_locked(
+    const std::string& action_name)
+{
+    for (auto& action : actions_) {
+        if (action.action_name == action_name) {
+            return &action;
+        }
+    }
+    return nullptr;
+}
+
+ActionServicesServer::GoalInstance* ActionServicesServer::get_goal_locked(
+    ActionInstance& action,
+    const GoalId& goal_id)
+{
+    for (auto& goal : action.goals) {
+        if (goal.goal.goal_id == goal_id) {
+            return &goal;
+        }
+    }
+    return nullptr;
+}
+
+bool ActionServicesServer::has_goal_locked(
+    ActionInstance& action,
+    const GoalId& goal_id)
+{
+    return get_goal_locked(action, goal_id) != nullptr;
+}
+
+bool ActionServicesServer::remove_goal_locked(
+    ActionInstance& action,
+    const GoalId& goal_id)
+{
+    for (auto goal = action.goals.begin(); goal != action.goals.end(); ++goal) {
+        if (goal->goal.goal_id == goal_id) {
+            action.goals.erase(goal);
+            return true;
+        }
+    }
+    return false;
+}
+
+ServerEventType ActionServicesServer::handle_cancel_event_locked(
+    ActionInstance& action,
+    ServerEventType event_type,
+    ServerEvent& event,
+    ServerEvent& event_out)
+{
+    auto* goal = get_goal_locked(action, event.goal.goal_id);
+    if (goal == nullptr) {
+        std::cerr
+            << "ERROR: Action server event for unknown accepted Goal in '"
+            << action.action_name
+            << "'."
+            << std::endl;
+        event.type = ServerEventType::ERROR;
+        event_out = std::move(event);
+        return ServerEventType::ERROR;
+    }
+
+    const auto state_event = event_type == ServerEventType::CANCEL_REQUEST
+        ? ServerGoalEvent::CANCEL_REQUEST_RECEIVED
+        : ServerGoalEvent::RUNTIME_CANCEL_REQUESTED;
+    const auto transition = transition_server_goal(goal->context, state_event);
+    if (transition.is_error()) {
+        std::cerr
+            << "ERROR: Goal state transition failed while polling Action '"
+            << action.action_name
+            << "' (reason="
+            << server_transition_error_name(transition.error)
+            << ")."
+            << std::endl;
+        event.type = ServerEventType::ERROR;
+        event_out = std::move(event);
+        return ServerEventType::ERROR;
+    }
+    if (transition.is_nop()) {
+        std::cerr
+            << "WARNING: Ignored Action Cancel event for '"
+            << action.action_name
+            << "'."
+            << std::endl;
+        return ServerEventType::NONE;
+    }
+
+    goal->context = transition.next;
+    event_out = std::move(event);
+    return event_type;
+}
 
 ServerEventType ActionServicesServer::poll(
     std::string& action_name,
@@ -53,8 +143,16 @@ ServerEventType ActionServicesServer::poll(
             return event_type;
         }
 
-        if (event_type != ServerEventType::CANCEL_REQUEST
-            && event_type != ServerEventType::RUNTIME_CANCEL_REQUEST) {
+        if (event_type == ServerEventType::CANCEL_REQUEST
+            || event_type == ServerEventType::RUNTIME_CANCEL_REQUEST) {
+            const auto handled_type = handle_cancel_event_locked(
+                action, event_type, event, event_out);
+            if (handled_type == ServerEventType::NONE) {
+                continue;
+            }
+            action_name = action.action_name;
+            return handled_type;
+        } else {
             std::cerr
                 << "ERROR: Unsupported Action server event for '"
                 << action.action_name
@@ -64,58 +162,6 @@ ServerEventType ActionServicesServer::poll(
             event.type = ServerEventType::ERROR;
             event_out = std::move(event);
             return ServerEventType::ERROR;
-        }
-
-        const auto goal = std::find_if(
-            action.goals.begin(),
-            action.goals.end(),
-            [&event](const GoalInstance& instance) {
-                return instance.goal.goal_id == event.goal.goal_id;
-            });
-        if (goal == action.goals.end()) {
-            std::cerr
-                << "ERROR: Action server event for unknown accepted Goal in '"
-                << action.action_name
-                << "'."
-                << std::endl;
-            action_name = action.action_name;
-            event.type = ServerEventType::ERROR;
-            event_out = std::move(event);
-            return ServerEventType::ERROR;
-        }
-
-        const auto state_event = event_type == ServerEventType::CANCEL_REQUEST
-            ? ServerGoalEvent::CANCEL_REQUEST_RECEIVED
-            : ServerGoalEvent::RUNTIME_CANCEL_REQUESTED;
-        const auto transition =
-            transition_server_goal(goal->context, state_event);
-        if (transition.is_error()) {
-            std::cerr
-                << "ERROR: Goal state transition failed while polling Action '"
-                << action.action_name
-                << "' (reason="
-                << server_transition_error_name(transition.error)
-                << ")."
-                << std::endl;
-            action_name = action.action_name;
-            event.type = ServerEventType::ERROR;
-            event_out = std::move(event);
-            return ServerEventType::ERROR;
-        }
-
-        if (transition.transitioned()) {
-            goal->context = transition.next;
-            action_name = action.action_name;
-            event_out = std::move(event);
-            return event_type;
-        }
-
-        if (transition.is_nop()) {
-            std::cerr
-                << "WARNING: Ignored Action Cancel event for '"
-                << action.action_name
-                << "'."
-                << std::endl;
         }
     }
 
@@ -131,23 +177,12 @@ bool ActionServicesServer::accept_goal(
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto action = std::find_if(
-        actions_.begin(),
-        actions_.end(),
-        [&action_name](const ActionInstance& instance) {
-            return instance.action_name == action_name;
-        });
-    if (action == actions_.end() || !action->endpoint) {
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
         return false;
     }
 
-    const auto duplicate = std::find_if(
-        action->goals.begin(),
-        action->goals.end(),
-        [&goal](const GoalInstance& instance) {
-            return instance.goal.goal_id == goal.goal_id;
-        });
-    if (duplicate != action->goals.end()) {
+    if (has_goal_locked(*action, goal.goal_id)) {
         return false;
     }
 
@@ -172,23 +207,12 @@ bool ActionServicesServer::reject_goal(
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto action = std::find_if(
-        actions_.begin(),
-        actions_.end(),
-        [&action_name](const ActionInstance& instance) {
-            return instance.action_name == action_name;
-        });
-    if (action == actions_.end() || !action->endpoint) {
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
         return false;
     }
 
-    const auto accepted = std::find_if(
-        action->goals.begin(),
-        action->goals.end(),
-        [&goal](const GoalInstance& instance) {
-            return instance.goal.goal_id == goal.goal_id;
-        });
-    if (accepted != action->goals.end()) {
+    if (has_goal_locked(*action, goal.goal_id)) {
         return false;
     }
 
@@ -207,13 +231,8 @@ bool ActionServicesServer::create_feedback_buffer(
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto action = std::find_if(
-        actions_.begin(),
-        actions_.end(),
-        [&action_name](const ActionInstance& instance) {
-            return instance.action_name == action_name;
-        });
-    if (action == actions_.end() || !action->endpoint) {
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
         return false;
     }
     return action->endpoint->create_feedback_buffer(pdu_out);
@@ -228,13 +247,8 @@ bool ActionServicesServer::create_result_buffer(
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto action = std::find_if(
-        actions_.begin(),
-        actions_.end(),
-        [&action_name](const ActionInstance& instance) {
-            return instance.action_name == action_name;
-        });
-    if (action == actions_.end() || !action->endpoint) {
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
         return false;
     }
     return action->endpoint->create_result_buffer(pdu_out);
@@ -253,13 +267,8 @@ bool ActionServicesServer::accept_cancel(
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto action = std::find_if(
-        actions_.begin(),
-        actions_.end(),
-        [&action_name](const ActionInstance& instance) {
-            return instance.action_name == action_name;
-        });
-    if (action == actions_.end() || !action->endpoint) {
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
         std::cerr
             << "WARNING: accept_cancel called for unknown Action '"
             << action_name
@@ -268,13 +277,8 @@ bool ActionServicesServer::accept_cancel(
         return false;
     }
 
-    const auto goal_instance = std::find_if(
-        action->goals.begin(),
-        action->goals.end(),
-        [&goal](const GoalInstance& instance) {
-            return instance.goal.goal_id == goal.goal_id;
-        });
-    if (goal_instance == action->goals.end()) {
+    auto* goal_instance = get_goal_locked(*action, goal.goal_id);
+    if (goal_instance == nullptr) {
         std::cerr
             << "WARNING: accept_cancel called for an unknown accepted Goal "
             << "in Action '"
@@ -346,13 +350,8 @@ bool ActionServicesServer::reject_cancel(
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto action = std::find_if(
-        actions_.begin(),
-        actions_.end(),
-        [&action_name](const ActionInstance& instance) {
-            return instance.action_name == action_name;
-        });
-    if (action == actions_.end() || !action->endpoint) {
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
         std::cerr
             << "WARNING: reject_cancel called for unknown Action '"
             << action_name
@@ -361,13 +360,8 @@ bool ActionServicesServer::reject_cancel(
         return false;
     }
 
-    const auto goal_instance = std::find_if(
-        action->goals.begin(),
-        action->goals.end(),
-        [&goal](const GoalInstance& instance) {
-            return instance.goal.goal_id == goal.goal_id;
-        });
-    if (goal_instance == action->goals.end()) {
+    auto* goal_instance = get_goal_locked(*action, goal.goal_id);
+    if (goal_instance == nullptr) {
         std::cerr
             << "WARNING: reject_cancel called for an unknown accepted Goal "
             << "in Action '"
@@ -438,13 +432,8 @@ bool ActionServicesServer::send_feedback(
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto action = std::find_if(
-        actions_.begin(),
-        actions_.end(),
-        [&action_name](const ActionInstance& instance) {
-            return instance.action_name == action_name;
-        });
-    if (action == actions_.end() || !action->endpoint) {
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
         std::cerr
             << "WARNING: send_feedback called for unknown Action '"
             << action_name
@@ -453,13 +442,8 @@ bool ActionServicesServer::send_feedback(
         return false;
     }
 
-    const auto goal_instance = std::find_if(
-        action->goals.begin(),
-        action->goals.end(),
-        [&goal](const GoalInstance& instance) {
-            return instance.goal.goal_id == goal.goal_id;
-        });
-    if (goal_instance == action->goals.end()) {
+    auto* goal_instance = get_goal_locked(*action, goal.goal_id);
+    if (goal_instance == nullptr) {
         std::cerr
             << "WARNING: send_feedback called for an unknown accepted Goal "
             << "in Action '"
@@ -521,13 +505,8 @@ bool ActionServicesServer::complete(
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto action = std::find_if(
-        actions_.begin(),
-        actions_.end(),
-        [&action_name](const ActionInstance& instance) {
-            return instance.action_name == action_name;
-        });
-    if (action == actions_.end() || !action->endpoint) {
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
         std::cerr
             << "WARNING: complete called for unknown Action '"
             << action_name
@@ -536,13 +515,8 @@ bool ActionServicesServer::complete(
         return false;
     }
 
-    const auto goal_instance = std::find_if(
-        action->goals.begin(),
-        action->goals.end(),
-        [&goal](const GoalInstance& instance) {
-            return instance.goal.goal_id == goal.goal_id;
-        });
-    if (goal_instance == action->goals.end()) {
+    auto* goal_instance = get_goal_locked(*action, goal.goal_id);
+    if (goal_instance == nullptr) {
         std::cerr
             << "WARNING: complete called for an unknown accepted Goal in "
             << "Action '"
@@ -608,7 +582,7 @@ bool ActionServicesServer::complete(
         return false;
 
     case CompleteResult::SENT:
-        action->goals.erase(goal_instance);
+        remove_goal_locked(*action, goal.goal_id);
         return true;
 
     case CompleteResult::SEND_FAILED_AFTER_COMMIT:
