@@ -1,0 +1,24 @@
+[
+  {
+    "nodeId": "fibonacci-client",
+    "endpoints": [
+      {
+        "id": "fibonacci-client-action-tcp",
+        "config_path": "endpoints/fibonacci-client.json",
+        "direction": "inout",
+        "mode": "action-tcp"
+      }
+    ]
+  },
+  {
+    "nodeId": "fibonacci-server",
+    "endpoints": [
+      {
+        "id": "fibonacci-server-action-tcp",
+        "config_path": "endpoints/fibonacci-server.json",
+        "direction": "inout",
+        "mode": "action-tcp"
+      }
+    ]
+  }
+]

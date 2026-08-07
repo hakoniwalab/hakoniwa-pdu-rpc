@@ -38,6 +38,12 @@ public:
                    const GoalId& goal_id,
                    ClientGoalHandle& goal_handle_out,
                    std::uint64_t timeout_usec = 0);
+    GoalSendResult send_goal_with_result(
+        const std::string& action_name,
+        const PduData& goal_pdu,
+        const GoalId& goal_id,
+        ClientGoalHandle& goal_handle_out,
+        std::uint64_t timeout_usec = 0);
     bool send_cancel(const std::string& action_name,
                      const ClientGoalHandle& goal);
     ClientEventType poll(std::string& action_name, ClientEvent& event_out);

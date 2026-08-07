@@ -39,6 +39,11 @@ public:
                    const GoalId& goal_id,
                    ClientGoalHandle& goal_handle_out,
                    std::uint64_t timeout_usec = 0) override;
+    GoalSendResult send_goal_with_result(
+        const PduData& goal_pdu,
+        const GoalId& goal_id,
+        ClientGoalHandle& goal_handle_out,
+        std::uint64_t timeout_usec = 0) override;
     bool send_cancel(const ClientGoalHandle& goal) override;
     ClientEventType poll(ClientEvent& event_out) override;
     bool create_goal_buffer(PduData& pdu_out) override;

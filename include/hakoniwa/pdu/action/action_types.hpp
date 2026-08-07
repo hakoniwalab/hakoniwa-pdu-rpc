@@ -51,6 +51,20 @@ struct ServerGoalHandle {
     }
 };
 
+// Synchronous result of submitting a new Goal. This describes why the Goal
+// was or was not handed to the transport; it is distinct from the later
+// protocol-level GOAL_RESPONSE decision.
+enum class GoalSendResult : std::uint8_t {
+    SUCCESS = 0,
+    INVALID_ARGUMENT,
+    ACTION_NOT_FOUND,
+    NOT_INITIALIZED,
+    DUPLICATE_GOAL,
+    NO_FREE_SLOT,
+    INVALID_PACKET,
+    TRANSPORT_ERROR,
+};
+
 // These values describe logical runtime events. Wire-level values are defined
 // by the generated Action headers from hakoniwa-pdu-registry.
 enum class ClientEventType : std::uint8_t {

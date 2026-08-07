@@ -28,6 +28,20 @@ public:
                            const GoalId& goal_id,
                            ClientGoalHandle& goal_handle_out,
                            std::uint64_t timeout_usec = 0) = 0;
+    // Detailed form used by bindings that must preserve the synchronous
+    // rejection reason. Existing custom endpoints remain source-compatible:
+    // unless overridden, false from send_goal() maps to TRANSPORT_ERROR.
+    virtual GoalSendResult send_goal_with_result(
+        const PduData& goal_pdu,
+        const GoalId& goal_id,
+        ClientGoalHandle& goal_handle_out,
+        std::uint64_t timeout_usec = 0)
+    {
+        return send_goal(
+                   goal_pdu, goal_id, goal_handle_out, timeout_usec)
+            ? GoalSendResult::SUCCESS
+            : GoalSendResult::TRANSPORT_ERROR;
+    }
     virtual bool send_cancel(const ClientGoalHandle& goal) = 0;
     virtual ClientEventType poll(ClientEvent& event_out) = 0;
 

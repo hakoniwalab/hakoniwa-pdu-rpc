@@ -218,6 +218,22 @@ bool ActionServicesClient::send_goal(
     ClientGoalHandle& goal_handle_out,
     std::uint64_t timeout_usec)
 {
+    return send_goal_with_result(
+               action_name,
+               goal_pdu,
+               goal_id,
+               goal_handle_out,
+               timeout_usec)
+        == GoalSendResult::SUCCESS;
+}
+
+GoalSendResult ActionServicesClient::send_goal_with_result(
+    const std::string& action_name,
+    const PduData& goal_pdu,
+    const GoalId& goal_id,
+    ClientGoalHandle& goal_handle_out,
+    std::uint64_t timeout_usec)
+{
     goal_handle_out = ClientGoalHandle{};
     if (action_name.empty() || goal_pdu.empty()
         || !is_valid_goal_id(goal_id)) {
@@ -225,7 +241,7 @@ bool ActionServicesClient::send_goal(
             << "WARNING: send_goal called with an invalid Action name, Goal "
             << "packet, or Goal ID."
             << std::endl;
-        return false;
+        return GoalSendResult::INVALID_ARGUMENT;
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
@@ -236,7 +252,7 @@ bool ActionServicesClient::send_goal(
             << action_name
             << "'."
             << std::endl;
-        return false;
+        return GoalSendResult::ACTION_NOT_FOUND;
     }
 
     if (has_goal_locked(*action, goal_id)) {
@@ -246,12 +262,12 @@ bool ActionServicesClient::send_goal(
             << action_name
             << "'."
             << std::endl;
-        return false;
+        return GoalSendResult::DUPLICATE_GOAL;
     }
 
     // The Endpoint owns the pre-accept Goal Response wait. A semantic
     // GoalInstance is created only when poll() observes ACCEPTED.
-    return action->endpoint->send_goal(
+    return action->endpoint->send_goal_with_result(
         goal_pdu,
         goal_id,
         goal_handle_out,

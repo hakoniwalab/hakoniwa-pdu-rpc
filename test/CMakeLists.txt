@@ -164,6 +164,25 @@ target_compile_definitions(hakoniwa_pdu_action_tcp_e2e_test PRIVATE
 add_test(NAME hakoniwa_pdu_action_tcp_e2e_test COMMAND hakoniwa_pdu_action_tcp_e2e_test)
 set_tests_properties(hakoniwa_pdu_action_tcp_e2e_test PROPERTIES TIMEOUT 30)
 
+add_executable(hakoniwa_pdu_action_c_api_tcp_e2e_test
+  c_action_tcp_e2e_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_c_api_tcp_e2e_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_compile_definitions(hakoniwa_pdu_action_c_api_tcp_e2e_test PRIVATE
+  ACTION_C_TCP_CONFIG_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_resolved.json"
+  ACTION_C_TCP_ENDPOINTS_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_c_tcp_e2e/endpoints.json"
+)
+add_test(NAME hakoniwa_pdu_action_c_api_tcp_e2e_test COMMAND hakoniwa_pdu_action_c_api_tcp_e2e_test)
+set_tests_properties(hakoniwa_pdu_action_c_api_tcp_e2e_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_c_api_header_test
+  c_action_header_contract_test.c
+)
+target_link_libraries(hakoniwa_pdu_action_c_api_header_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY})
+set_target_properties(hakoniwa_pdu_action_c_api_header_test PROPERTIES LINKER_LANGUAGE CXX)
+add_test(NAME hakoniwa_pdu_action_c_api_header_test COMMAND hakoniwa_pdu_action_c_api_header_test)
+set_tests_properties(hakoniwa_pdu_action_c_api_header_test PROPERTIES TIMEOUT 30)
+
 add_executable(hakoniwa_pdu_rpc_basic_test
   rpc_basic_contract_test.cpp
 )

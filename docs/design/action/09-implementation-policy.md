@@ -397,8 +397,8 @@ Use the following Python representations:
 
 ```text
 goal_id       -> bytes of the protocol-defined fixed length
-event_token   -> int
-goal_token    -> int
+Client Goal Handle -> immutable object containing goal_id
+Server Goal Handle -> immutable object containing goal_id
 PDU payload   -> bytes
 Action event  -> enum plus an immutable result object
 ```

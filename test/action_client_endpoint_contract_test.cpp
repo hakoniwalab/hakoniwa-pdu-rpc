@@ -250,6 +250,34 @@ TEST_F(ActionClientFixture, RejectsInvalidDuplicateAndExhaustedGoalsSynchronousl
     EXPECT_FALSE(action_client->send_goal(packet, second_id, handle));
 }
 
+TEST_F(ActionClientFixture, ReportsDetailedGoalSendFailures)
+{
+    ASSERT_TRUE(action_client->initialize(fibonacci_action()));
+    const auto packet = encoded_goal(action_client);
+    const auto first_id = goal_id(0x21);
+    const auto second_id = goal_id(0x41);
+    action::ClientGoalHandle handle;
+
+    EXPECT_EQ(
+        action_client->send_goal_with_result(
+            packet, action::GoalId{}, handle),
+        action::GoalSendResult::INVALID_ARGUMENT);
+    ASSERT_EQ(
+        action_client->send_goal_with_result(packet, first_id, handle),
+        action::GoalSendResult::SUCCESS);
+    EXPECT_EQ(
+        action_client->send_goal_with_result(packet, first_id, handle),
+        action::GoalSendResult::DUPLICATE_GOAL);
+    EXPECT_EQ(
+        action_client->send_goal_with_result(packet, second_id, handle),
+        action::GoalSendResult::NO_FREE_SLOT);
+
+    action_client->reset_contexts();
+    EXPECT_EQ(
+        action_client->send_goal_with_result({0x01}, second_id, handle),
+        action::GoalSendResult::INVALID_PACKET);
+}
+
 TEST_F(ActionClientFixture, RejectedGoalReleasesSlot)
 {
     ASSERT_TRUE(action_client->initialize(fibonacci_action()));

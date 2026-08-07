@@ -436,6 +436,26 @@ TEST(ActionServicesClientGoalInstanceContract, UnknownActionCannotSendGoal)
     EXPECT_FALSE(goal.valid());
 }
 
+TEST(ActionServicesClientGoalInstanceContract, ReportsDetailedGoalSendFailure)
+{
+    auto services = client();
+    action::ClientGoalHandle goal;
+
+    EXPECT_EQ(
+        services.send_goal_with_result(
+            "missing", {0x47}, test_goal_id(), goal),
+        action::GoalSendResult::ACTION_NOT_FOUND);
+
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    endpoint->send_goal_result = false;
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    EXPECT_EQ(
+        services.send_goal_with_result(
+            "demo", {0x47}, test_goal_id(), goal),
+        action::GoalSendResult::TRANSPORT_ERROR);
+}
+
 TEST(ActionServicesClientGoalInstanceContract, CancelSendCommitsPendingAfterSuccess)
 {
     auto services = client();

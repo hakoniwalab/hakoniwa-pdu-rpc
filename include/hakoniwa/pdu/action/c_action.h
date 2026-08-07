@@ -16,9 +16,6 @@ extern "C" {
 typedef struct hako_pdu_action_client_handle hako_pdu_action_client_handle_t;
 typedef struct hako_pdu_action_server_handle hako_pdu_action_server_handle_t;
 
-typedef uint64_t hako_pdu_action_event_token_t;
-typedef uint64_t hako_pdu_action_goal_token_t;
-
 typedef struct {
     uint8_t bytes[HAKO_PDU_ACTION_GOAL_ID_SIZE];
 } hako_pdu_action_goal_id_t;
@@ -27,6 +24,11 @@ typedef struct {
 typedef struct {
     hako_pdu_action_goal_id_t goal_id;
 } hako_pdu_action_client_goal_handle_t;
+
+/* Server and Client handles are distinct C types to prevent accidental use. */
+typedef struct {
+    hako_pdu_action_goal_id_t goal_id;
+} hako_pdu_action_server_goal_handle_t;
 
 typedef enum {
     HAKO_PDU_ACTION_OK = 0,
@@ -39,7 +41,9 @@ typedef enum {
     HAKO_PDU_ACTION_ERROR_NOT_FOUND = 7,
     HAKO_PDU_ACTION_ERROR_INVALID_STATE = 8,
     HAKO_PDU_ACTION_ERROR_DUPLICATE_GOAL = 9,
-    HAKO_PDU_ACTION_ERROR_INTERNAL = 10
+    HAKO_PDU_ACTION_ERROR_NO_FREE_SLOT = 10,
+    HAKO_PDU_ACTION_ERROR_INVALID_PACKET = 11,
+    HAKO_PDU_ACTION_ERROR_INTERNAL = 12
 } hako_pdu_action_error_t;
 
 typedef enum {
@@ -90,11 +94,8 @@ typedef struct {
 } hako_pdu_action_client_event_info_t;
 
 typedef struct {
-    hako_pdu_action_event_token_t event_token;
-    hako_pdu_action_goal_token_t goal_token;
     char action_name[HAKO_PDU_ACTION_NAME_MAX];
-    char client_name[HAKO_PDU_ACTION_NAME_MAX];
-    hako_pdu_action_goal_id_t goal_id;
+    hako_pdu_action_server_goal_handle_t goal;
     hako_pdu_action_runtime_cancel_cause_t runtime_cancel_cause;
     size_t pdu_size;
 } hako_pdu_action_server_event_info_t;
@@ -112,6 +113,9 @@ hako_pdu_action_client_handle_t* hako_pdu_action_client_create(
 void hako_pdu_action_client_destroy(hako_pdu_action_client_handle_t* handle);
 hako_pdu_action_error_t hako_pdu_action_client_start(hako_pdu_action_client_handle_t* handle);
 hako_pdu_action_error_t hako_pdu_action_client_stop(hako_pdu_action_client_handle_t* handle);
+hako_pdu_action_error_t hako_pdu_action_client_is_running(
+    hako_pdu_action_client_handle_t* handle,
+    int* out_running);
 hako_pdu_action_error_t hako_pdu_action_client_create_goal_buffer(
     hako_pdu_action_client_handle_t* handle,
     const char* action_name,
@@ -130,7 +134,9 @@ hako_pdu_action_error_t hako_pdu_action_client_create_goal_buffer_alloc(
  * receives the same Goal identity and is used for cancel requests.
  * timeout_usec applies only while waiting for GOAL_RESPONSE. Zero means no
  * Goal Response timeout. It does not impose a Result or Cancel Response
- * deadline on an accepted Goal.
+ * deadline on an accepted Goal. Synchronous rejection reasons such as an
+ * active Goal ID collision or exhausted communication slots are preserved by
+ * the returned error code.
  */
 hako_pdu_action_error_t hako_pdu_action_client_send_goal(
     hako_pdu_action_client_handle_t* handle,
@@ -167,6 +173,9 @@ hako_pdu_action_server_handle_t* hako_pdu_action_server_create(
 void hako_pdu_action_server_destroy(hako_pdu_action_server_handle_t* handle);
 hako_pdu_action_error_t hako_pdu_action_server_start(hako_pdu_action_server_handle_t* handle);
 hako_pdu_action_error_t hako_pdu_action_server_stop(hako_pdu_action_server_handle_t* handle);
+hako_pdu_action_error_t hako_pdu_action_server_is_running(
+    hako_pdu_action_server_handle_t* handle,
+    int* out_running);
 hako_pdu_action_server_event_t hako_pdu_action_server_poll(
     hako_pdu_action_server_handle_t* handle,
     hako_pdu_action_server_event_info_t* out_info,
@@ -183,25 +192,52 @@ hako_pdu_action_server_event_t hako_pdu_action_server_poll_alloc(
 
 hako_pdu_action_error_t hako_pdu_action_server_accept_goal(
     hako_pdu_action_server_handle_t* handle,
-    hako_pdu_action_event_token_t event_token,
-    hako_pdu_action_goal_token_t* out_goal_token);
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal);
 hako_pdu_action_error_t hako_pdu_action_server_reject_goal(
     hako_pdu_action_server_handle_t* handle,
-    hako_pdu_action_event_token_t event_token);
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal);
 hako_pdu_action_error_t hako_pdu_action_server_accept_cancel(
     hako_pdu_action_server_handle_t* handle,
-    hako_pdu_action_event_token_t event_token);
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal);
 hako_pdu_action_error_t hako_pdu_action_server_reject_cancel(
     hako_pdu_action_server_handle_t* handle,
-    hako_pdu_action_event_token_t event_token);
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal);
+hako_pdu_action_error_t hako_pdu_action_server_create_feedback_buffer(
+    hako_pdu_action_server_handle_t* handle,
+    const char* action_name,
+    uint8_t* buffer,
+    size_t capacity,
+    size_t* out_size);
+hako_pdu_action_error_t hako_pdu_action_server_create_feedback_buffer_alloc(
+    hako_pdu_action_server_handle_t* handle,
+    const char* action_name,
+    uint8_t** out_buffer,
+    size_t* out_size);
+hako_pdu_action_error_t hako_pdu_action_server_create_result_buffer(
+    hako_pdu_action_server_handle_t* handle,
+    const char* action_name,
+    uint8_t* buffer,
+    size_t capacity,
+    size_t* out_size);
+hako_pdu_action_error_t hako_pdu_action_server_create_result_buffer_alloc(
+    hako_pdu_action_server_handle_t* handle,
+    const char* action_name,
+    uint8_t** out_buffer,
+    size_t* out_size);
 hako_pdu_action_error_t hako_pdu_action_server_send_feedback(
     hako_pdu_action_server_handle_t* handle,
-    hako_pdu_action_goal_token_t goal_token,
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal,
     const uint8_t* pdu,
     size_t pdu_size);
 hako_pdu_action_error_t hako_pdu_action_server_complete(
     hako_pdu_action_server_handle_t* handle,
-    hako_pdu_action_goal_token_t goal_token,
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal,
     hako_pdu_action_terminal_status_t status,
     const uint8_t* pdu,
     size_t pdu_size);
@@ -210,10 +246,11 @@ hako_pdu_action_error_t hako_pdu_action_server_complete(
  * TODO(codex): add mux declarations only after Goal ownership across transport
  * sessions is implemented. The static API intentionally lands first.
  *
- * Contract: event_token is one-shot. goal_token is a server-side capability
- * valid from goal acceptance until terminal completion commits. Client users
- * retain a goal handle; they do not manipulate goal_token. Result wins over a
- * pending Cancel by invalidating its event_token and emitting no response.
+ * Contract: poll returns an action_name and typed Server Goal handle. The same
+ * pair is passed to Goal, Cancel, Feedback, and Result operations. Native
+ * Services and the C API therefore share one identity model without an extra
+ * token registry. Result may win over a pending Cancel according to the
+ * Native Goal state contract.
  */
 
 #ifdef __cplusplus

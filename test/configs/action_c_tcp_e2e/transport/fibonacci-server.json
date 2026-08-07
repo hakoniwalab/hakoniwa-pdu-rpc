@@ -1,0 +1,15 @@
+{
+  "protocol": "tcp",
+  "name": "fibonacci-server-action-tcp",
+  "direction": "inout",
+  "role": "server",
+  "comm_raw_version": "v2",
+  "local": {
+    "address": "127.0.0.1",
+    "port": 54112
+  },
+  "options": {
+    "read_timeout_ms": 1000,
+    "write_timeout_ms": 1000
+  }
+}

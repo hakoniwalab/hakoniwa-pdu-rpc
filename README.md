@@ -1,6 +1,6 @@
 # Hakoniwa PDU-RPC
 
-`hakoniwa-pdu-rpc` is a C++ request/response layer built on `hakoniwa-pdu-endpoint`, with Python CFFI bindings for typed synchronous and asynchronous client integration.
+`hakoniwa-pdu-rpc` is a C++ request/response and long-running Action layer built on `hakoniwa-pdu-endpoint`. It provides a point-to-point Action C API and Python CFFI bindings for typed synchronous and asynchronous Service client integration.
 
 It is designed for Hakoniwa-native control-plane communication where explicit lifecycle, endpoint topology, and deterministic/tick-driven integration are more important than general-purpose RPC features.
 
@@ -10,6 +10,7 @@ It is designed for Hakoniwa-native control-plane communication where explicit li
 - Multiple named services and clients.
 - JSON-driven service and endpoint topology.
 - Typed request/response helpers for generated PDU service types.
+- Native C++ and point-to-point C APIs for long-running Action Goal lifecycles.
 - Python CFFI clients with Registry-generated service auto-wiring.
 - ROS-independent synchronous and asynchronous Python APIs.
 - Explicit polling, timeout, and cancellation semantics.
@@ -563,6 +564,36 @@ send_reply(...)
 
 Most native users should work through `RpcServicesClient`, `RpcServicesServer`, and the typed helper. `IRpcClientEndpoint` / `IRpcServerEndpoint` are extension interfaces for custom endpoint behavior.
 
+## Action C API
+
+The point-to-point Action C API is declared in:
+
+```c
+#include <hakoniwa/pdu/action/c_action.h>
+```
+
+It is a thin C boundary over the native Action Services. The C layer owns the
+opaque Client/Server handle, buffer allocation, type conversion, and exception
+containment; it does not duplicate the native Goal state machine. A Goal is
+identified consistently by `action_name` and a typed Client or Server Goal
+handle.
+
+The basic lifecycle is:
+
+```text
+create -> start -> wait for is_running -> send/poll -> stop -> destroy
+```
+
+`start()` starts asynchronous Endpoint processing. It does not guarantee that
+the TCP peer is connected, so a sender must observe `is_running != 0` before
+the first Goal. Buffers returned by a `*_alloc()` function belong to the caller
+and must be released with `hako_pdu_action_buffer_free()`.
+
+The initial C API supports point-to-point Action Client and Server operation.
+Mux ownership and Python CFFI are separate follow-up layers. See
+[`docs/design/action/08-c-api.md`](docs/design/action/08-c-api.md) for the full
+contract.
+
 ## Scheduling Model
 
 The native C++ RPC API intentionally uses `poll()` instead of imposing worker threads or a scheduler. This lets the caller choose simulation tick alignment, sleep/backoff policy, scheduling order, and integration with an existing deterministic main loop.
@@ -591,6 +622,7 @@ A hybrid architecture is also possible, but it intentionally introduces two midd
 
 - Test contract and audit policy: `docs/test-contract.md`
 - RPC tutorial: `docs/tutorials/rpc.md`
+- Action C API contract: `docs/design/action/08-c-api.md`
 - Examples: `examples/README.md`
 - Minimal configuration: `config/sample/minimal/README.md`
 - Service schema: `config/schema/service-schema.json`

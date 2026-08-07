@@ -348,19 +348,35 @@ bool ActionClientEndpointImpl::send_goal(
     ClientGoalHandle& goal_handle_out,
     std::uint64_t timeout_usec)
 {
+    return send_goal_with_result(
+               goal_pdu, goal_id, goal_handle_out, timeout_usec)
+        == GoalSendResult::SUCCESS;
+}
+
+GoalSendResult ActionClientEndpointImpl::send_goal_with_result(
+    const PduData& goal_pdu,
+    const GoalId& goal_id,
+    ClientGoalHandle& goal_handle_out,
+    std::uint64_t timeout_usec)
+{
     goal_handle_out = ClientGoalHandle{};
     if (!is_valid_goal_id(goal_id)) {
         std::cerr << "ERROR: Action Goal ID must be non-zero." << std::endl;
-        return false;
+        return GoalSendResult::INVALID_ARGUMENT;
     }
 
     std::size_t slot_index = 0;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!initialized_ || packet_bindings_.contains(goal_id)) {
-            std::cerr << "ERROR: Action Goal ID is invalid or already active."
+        if (!initialized_) {
+            std::cerr << "ERROR: Action Client Endpoint is not initialized."
                       << std::endl;
-            return false;
+            return GoalSendResult::NOT_INITIALIZED;
+        }
+        if (packet_bindings_.contains(goal_id)) {
+            std::cerr << "ERROR: Action Goal ID is already active."
+                      << std::endl;
+            return GoalSendResult::DUPLICATE_GOAL;
         }
         const auto free_slot = std::find_if(
             slot_owners_.begin(), slot_owners_.end(),
@@ -368,7 +384,7 @@ bool ActionClientEndpointImpl::send_goal(
         if (free_slot == slot_owners_.end()) {
             std::cerr << "ERROR: No free Action communication slot."
                       << std::endl;
-            return false;
+            return GoalSendResult::NO_FREE_SLOT;
         }
         slot_index = static_cast<std::size_t>(
             std::distance(slot_owners_.begin(), free_slot));
@@ -394,21 +410,28 @@ bool ActionClientEndpointImpl::send_goal(
             routing.request_heap_capacity,
             false,
             wire_size)
-        || !write_request_header(packet, goal_id, REQUEST_KIND_GOAL)
-        || endpoint_->send(
-               routing.request,
-               std::as_bytes(std::span(packet.data(), wire_size)))
-            != HAKO_PDU_ERR_OK) {
+        || !write_request_header(packet, goal_id, REQUEST_KIND_GOAL)) {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto binding = packet_bindings_.find(goal_id);
         if (binding != packet_bindings_.end()) {
             release_binding_locked(binding);
         }
-        return false;
+        return GoalSendResult::INVALID_PACKET;
+    }
+    if (endpoint_->send(
+            routing.request,
+            std::as_bytes(std::span(packet.data(), wire_size)))
+        != HAKO_PDU_ERR_OK) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto binding = packet_bindings_.find(goal_id);
+        if (binding != packet_bindings_.end()) {
+            release_binding_locked(binding);
+        }
+        return GoalSendResult::TRANSPORT_ERROR;
     }
 
     goal_handle_out.goal_id = goal_id;
-    return true;
+    return GoalSendResult::SUCCESS;
 }
 
 bool ActionClientEndpointImpl::send_cancel(

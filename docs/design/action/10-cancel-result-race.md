@@ -352,7 +352,7 @@ Initial state
 Input sequence
 Expected Client events
 Expected Server state
-Expected token validity
+Expected Goal Handle／Context validity
 Expected Context release
 Forbidden output
 ```
@@ -369,10 +369,10 @@ GOAL_REQUEST
 検査項目:
 
 - `goal_id`が全イベントで一致する。
-- Goal accept時に`goal_token`が有効になる。
+- Goal accept時に`action_name + Server Goal Handle`へ対応するGoal Contextが有効になる。
 - Feedbackの`sequence_no`がGoal単位で単調増加する。
 - Result commit後はGoalが`FINISHING`へ進む。
-- Result配送完了後にGoal Contextと`goal_token`が解放される。
+- Result配送完了後にGoal Contextが解放され、同じServer Goal Handleで継続操作できなくなる。
 
 禁止出力:
 
@@ -392,8 +392,8 @@ GOAL_REQUEST
 検査項目:
 
 - accept済みGoal Contextを生成しない。
-- `goal_token`を払い出さない。
-- Goal Request用`event_token`はrejectで消費される。
+- Goal Contextを生成しない。
+- 同じGoal Requestへのaccept／reject再実行を許可しない。
 
 禁止出力:
 
@@ -415,8 +415,8 @@ accepted Goal
 検査項目:
 
 - Cancel accept時に`EXECUTING`から`CANCELING`へ遷移する。
-- Cancel判断用`event_token`は一度だけ消費できる。
-- `goal_token`はterminal Resultまで有効である。
+- Cancel判断は一度だけ確定できる。
+- `action_name + Server Goal Handle`はterminal Resultまで継続操作に使用できる。
 - `COMPLETE_CANCELED`後にResultを一度だけ送る。
 
 禁止出力:
@@ -440,7 +440,7 @@ accepted Goal
 検査項目:
 
 - Cancel reject後も状態は`EXECUTING`である。
-- Goal Contextと`goal_token`は有効なままである。
+- Goal ContextとServer Goal Handleは有効なままである。
 - 通常Feedbackと通常完了を継続できる。
 
 禁止出力:
@@ -500,7 +500,7 @@ Result B
 検査項目:
 
 - 一つのClient handleで複数Goalを保持できる。
-- `goal_id`と`goal_token`が混線しない。
+- 異なる`goal_id`のServer Goal HandleとGoal Contextが混線しない。
 - イベント配送順がGoal間で入れ替わっても正しくdispatchされる。
 - 一方のGoal終端が他方のContextを解放しない。
 - GoalごとのFeedback sequenceが独立する。
@@ -510,9 +510,9 @@ Result B
 少なくとも次を成功させてはなりません。
 
 ```text
-unknown event_tokenでaccept / reject
-消費済みevent_tokenの再利用
-unknown goal_tokenでfeedback / complete
+unknown `action_name + Server Goal Handle`でaccept / reject
+判断済みGoal／Cancelへのaccept / reject再実行
+unknown `action_name + Server Goal Handle`でfeedback / complete
 terminal後のfeedback
 terminal後のcomplete再実行
 Goal reject後のcancel / feedback / complete

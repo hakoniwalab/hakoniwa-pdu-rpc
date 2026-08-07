@@ -44,7 +44,7 @@ buffer_free
 | `client_cancel()` | `client_cancel_goal()` |
 | `client_poll()` | `client_poll()` |
 | `server_poll()` | `server_poll()` |
-| `request_token` | `event_token` |
+| `request_token` | `action_name + Server Goal Handle` |
 | 1回のReply | Goal判断、Feedback、Cancel判断、Result |
 
 Actionでは、RPC Serviceの次の制約を引き継ぎません。
@@ -72,87 +72,41 @@ typedef struct {
 - Client／Server間のProtocol相関に使用します。
 - Client poll結果およびServer poll結果へ含めます。
 
-### 3.2 event_token
+### 3.2 Client／Server Goal Handle
 
-Server Applicationが、pollで取得した一つの受信イベントへ判断を返すためのRuntime-local tokenです。
-
-```c
-typedef uint64_t hako_pdu_action_event_token_t;
-```
-
-対象イベント:
-
-```text
-GOAL_REQUEST
-CANCEL_REQUEST
-RUNTIME_CANCEL_REQUEST
-```
-
-性質:
-
-- Server handle内だけで有効です。
-- Protocolへ送信しません。
-- Goal／Cancelのacceptまたはreject時に消費します。
-- 一つのevent tokenを複数回判断に使用できません。
-- `event_token`はGoal lifecycleの継続操作には使用しません。
-
-### 3.3 goal_token
-
-accept済みGoal ContextをServer Applicationが継続操作するためのRuntime-local tokenです。
+C APIはNative APIと同じく、Client側とServer側で型を分けたGoal Handleを使用します。
 
 ```c
-typedef uint64_t hako_pdu_action_goal_token_t;
+typedef struct {
+    hako_pdu_action_goal_id_t goal_id;
+} hako_pdu_action_client_goal_handle_t;
+
+typedef struct {
+    hako_pdu_action_goal_id_t goal_id;
+} hako_pdu_action_server_goal_handle_t;
 ```
 
-用途:
+どちらもWire上の`goal_id`を保持しますが、異なる側のAPIへ誤って渡せないようCの型を分けます。
+
+Server Applicationは`poll()`で得た次の組を、そのままGoal lifecycle APIへ渡します。
 
 ```text
-Feedback送信
-Cancel判断後の処理
-Succeeded完了
-Canceled完了
-Aborted完了
-Goal情報参照
+action_name + Server Goal Handle
 ```
 
-性質:
+Runtime-localな`event_token`／`goal_token` registryは設けません。one-shot判断、accept済みGoalの存在、terminal後の無効化はNative Endpoint／Servicesがすでに管理しており、C APIで同じ状態を二重管理しないためです。
 
-- Goal accept時にRuntimeが払い出します。
-- Server handle内だけで有効です。
-- Protocolへ送信しません。
-- terminal Resultが確定し、Runtime保持責務が完了するまで有効です。
-- terminal完了後の操作は`NOT_FOUND`または`INVALID_STATE`になります。
+## 4. Native Servicesとの境界
 
-## 4. event_tokenとgoal_tokenを分離する理由
-
-RPC Serviceの`request_token`は、次の単純なライフサイクルです。
+C APIは新しいGoal transaction modelを実装しません。
 
 ```text
-Request受信
-  -> Applicationへ通知
-  -> Reply送信
-  -> token破棄
+C opaque handle
+  -> ActionServicesClient / ActionServicesServer
+  -> IActionClientEndpoint / IActionServerEndpoint
 ```
 
-Actionは次の長寿命ライフサイクルです。
-
-```text
-Goal Request受信
-  -> accept / reject
-  -> Feedback 0..n
-  -> Cancel Request 0..n
-  -> terminal Result
-```
-
-したがって、一つのtokenに「受信イベントへの一回限りの判断」と「accept済みGoalの継続操作」の二つの責務を持たせません。
-
-```text
-event_token:
-  受信イベントへの一回限りの判断
-
-goal_token:
-  accept済みGoalの継続操作
-```
+C層が担当するのは、opaque handleの所有、C/C++型変換、buffer所有権、例外境界だけです。Goal状態、slot ownership、送信順序はNative Servicesの契約をそのまま使用します。
 
 ## 5. Client APIの利用モデル
 
@@ -242,6 +196,9 @@ hako_pdu_action_error_t
 hako_pdu_action_client_start(...);
 
 hako_pdu_action_error_t
+hako_pdu_action_client_is_running(...);
+
+hako_pdu_action_error_t
 hako_pdu_action_client_create_goal_buffer(...);
 
 hako_pdu_action_error_t
@@ -273,6 +230,8 @@ hako_pdu_action_client_destroy(...);
 `goal_id`は必須です。Runtimeは指定値を変更せず`out_goal`へ返します。all-zeroまたは同じClient RuntimeでactiveなGoalとの衝突は同期エラーとして拒否します。RuntimeによるUUID自動生成helperはpendingです。
 
 `timeout_usec`はGoal Request送信後、Goal Responseを受信するまでにだけ適用します。`0`はGoal Response timeoutなしを表します。Goalがacceptされた後のResult待ち、およびCancel Response待ちには適用しません。
+
+`start()`はEndpointの非同期通信処理を開始しますが、TCP接続完了を保証しません。Action roleとTCP roleは独立しているため、C APIは`is_running()`を公開します。送信側Applicationは`is_running != 0`を確認してから最初のGoalを送信します。
 
 ### 5.6 Client pollの意味
 
@@ -323,6 +282,10 @@ PDU Header生成
 ```c
 typedef struct hako_pdu_action_server_handle
     hako_pdu_action_server_handle_t;
+
+typedef struct {
+    hako_pdu_action_goal_id_t goal_id;
+} hako_pdu_action_server_goal_handle_t;
 ```
 
 一つのServer handleは、設定に含まれる複数Action Typeを管理します。
@@ -352,47 +315,30 @@ typedef enum {
 
 ```c
 typedef struct {
-    hako_pdu_action_event_token_t event_token;
-    hako_pdu_action_goal_token_t goal_token;
     char action_name[HAKO_PDU_ACTION_NAME_MAX];
-    char client_name[HAKO_PDU_ACTION_NAME_MAX];
-    hako_pdu_action_goal_id_t goal_id;
+    hako_pdu_action_server_goal_handle_t goal;
     hako_pdu_action_runtime_cancel_cause_t runtime_cancel_cause;
     size_t pdu_size;
 } hako_pdu_action_server_event_info_t;
 ```
 
-`client_name`は受信元を診断・配送するためのRuntime metadataです。GoalのProtocol identityには使用しません。Protocol上の相関キーは引き続き`goal_id`です。
-
 `runtime_cancel_cause`は`RUNTIME_CANCEL_REQUEST`で使用し、それ以外のイベントでは`UNSPECIFIED`とします。
 
-`goal_token`の値:
-
-```text
-GOAL_REQUEST:
-  accept前なので0
-
-CANCEL_REQUEST:
-  対象のaccept済みGoalのgoal_token
-
-RUNTIME_CANCEL_REQUEST:
-  対象のaccept済みGoalのgoal_token
-```
+`goal`はGOAL／CANCEL／Runtime Cancelのすべてで同じProtocol Goal identityを表します。`action_name`と組み合わせてNative ServicesのGoalを一意に選択します。
 
 ### 6.5 Goal Request処理
 
 ```text
 server_poll()
   -> GOAL_REQUEST
-  -> event_token + goal_id + Goal PDU
+  -> action_name + Server Goal Handle + Goal PDU
 
 Application判断:
-  accept_goal(event_token)
-    -> out_goal_token
+  accept_goal(action_name, goal)
 
   または
 
-  reject_goal(event_token)
+  reject_goal(action_name, goal)
 ```
 
 概念形:
@@ -401,13 +347,14 @@ Application判断:
 hako_pdu_action_error_t
 hako_pdu_action_server_accept_goal(
     hako_pdu_action_server_handle_t* handle,
-    hako_pdu_action_event_token_t event_token,
-    hako_pdu_action_goal_token_t* out_goal_token);
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal);
 
 hako_pdu_action_error_t
 hako_pdu_action_server_reject_goal(
     hako_pdu_action_server_handle_t* handle,
-    hako_pdu_action_event_token_t event_token);
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal);
 ```
 
 Goal Response PDUのbodyはProtocol既定値をRuntimeが生成します。Applicationは未使用Result bodyを組み立てません。
@@ -417,11 +364,11 @@ Goal Response PDUのbodyはProtocol既定値をRuntimeが生成します。Appli
 ```text
 server_poll()
   -> CANCEL_REQUEST
-  -> event_token + goal_token + goal_id
+  -> action_name + Server Goal Handle
 
 Application判断:
-  accept_cancel(event_token)
-  reject_cancel(event_token)
+  accept_cancel(action_name, goal)
+  reject_cancel(action_name, goal)
 ```
 
 概念形:
@@ -430,12 +377,14 @@ Application判断:
 hako_pdu_action_error_t
 hako_pdu_action_server_accept_cancel(
     hako_pdu_action_server_handle_t* handle,
-    hako_pdu_action_event_token_t event_token);
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal);
 
 hako_pdu_action_error_t
 hako_pdu_action_server_reject_cancel(
     hako_pdu_action_server_handle_t* handle,
-    hako_pdu_action_event_token_t event_token);
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal);
 ```
 
 Cancel Response PDUのbodyはProtocol既定値をRuntimeが生成します。
@@ -446,17 +395,23 @@ Cancel Response PDUのbodyはProtocol既定値をRuntimeが生成します。
 
 ```c
 hako_pdu_action_error_t
-hako_pdu_action_server_create_feedback_buffer(...);
+hako_pdu_action_server_create_feedback_buffer(
+    hako_pdu_action_server_handle_t* handle,
+    const char* action_name,
+    uint8_t* buffer,
+    size_t capacity,
+    size_t* out_size);
 
 hako_pdu_action_error_t
 hako_pdu_action_server_send_feedback(
     hako_pdu_action_server_handle_t* handle,
-    hako_pdu_action_goal_token_t goal_token,
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal,
     const uint8_t* feedback_pdu,
     size_t feedback_pdu_size);
 ```
 
-Runtimeは`goal_token`から`goal_id`、Action Type、sequence number、現在状態を解決します。
+Runtimeは`action_name + goal`からAction Type、sequence number、現在状態を解決します。
 
 ApplicationはFeedback Headerを直接管理しません。
 
@@ -474,12 +429,18 @@ typedef enum {
 } hako_pdu_action_result_status_t;
 
 hako_pdu_action_error_t
-hako_pdu_action_server_create_result_buffer(...);
+hako_pdu_action_server_create_result_buffer(
+    hako_pdu_action_server_handle_t* handle,
+    const char* action_name,
+    uint8_t* buffer,
+    size_t capacity,
+    size_t* out_size);
 
 hako_pdu_action_error_t
 hako_pdu_action_server_complete(
     hako_pdu_action_server_handle_t* handle,
-    hako_pdu_action_goal_token_t goal_token,
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal,
     hako_pdu_action_result_status_t status,
     const uint8_t* result_pdu,
     size_t result_pdu_size);
@@ -489,7 +450,7 @@ hako_pdu_action_server_complete(
 
 `create_result_buffer()`は、Registryのgenerated base sizeとAction設定の`bufferHeap.responseSize`から最大容量の完全なAction Response PDUを確保・初期化します。ApplicationまたはTyped wrapperはResult bodyをencodeします。Runtimeはencode後の`metadata.total_size`をWireサイズとして使用するため、buffer自体の縮小は不要です。`complete()`および内部Response送信処理がbufferを暗黙生成することはありません。
 
-`complete()`成功後、Applicationは同じ`goal_token`へ新規Feedbackや別の完了を送れません。
+`complete()`成功後、Applicationは同じ`action_name + goal`へ新規Feedbackや別の完了を送れません。
 
 初版の`complete()`は、accept済みGoalに対する`SUCCEEDED`または`ABORTED`、Cancel受理後の`CANCELING`に対する`CANCELED`または`ABORTED`を同期送信します。Runtimeは送信開始前にGoalを`FINISHING`へcommitして二重Resultと後続Feedbackを拒否します。Endpoint実装内では、このpacket binding状態を上位Protocol状態と区別して`RESULT_COMMITTED`と表現します。同期送信が成功した時点でServer側Goal Contextとslot ownershipを解放します。
 
@@ -511,6 +472,8 @@ caller-supplied buffer API:
 ```
 
 Language Bindingは、C bufferをnative memoryへコピーした直後に解放します。
+
+caller-supplied bufferが不足した場合、`poll()`は`BUFFER_TOO_SMALL`と必要サイズを返し、そのイベントをC handle内に1件保持します。呼び出し側は十分なbufferまたは`poll_alloc()`で同じイベントを再取得できます。C層が保持するのは未配送bufferイベントだけであり、Goal状態やslot ownershipはNative Servicesが引き続き所有します。
 
 Action APIは、意味論ごとのbuffer作成関数を公開します。
 
@@ -567,13 +530,15 @@ typedef enum {
     HAKO_PDU_ACTION_ERROR_NOT_FOUND,
     HAKO_PDU_ACTION_ERROR_INVALID_STATE,
     HAKO_PDU_ACTION_ERROR_DUPLICATE_GOAL,
+    HAKO_PDU_ACTION_ERROR_NO_FREE_SLOT,
+    HAKO_PDU_ACTION_ERROR_INVALID_PACKET,
     HAKO_PDU_ACTION_ERROR_INTERNAL
 } hako_pdu_action_error_t;
 ```
 
 Protocol上のGoal rejectやCancel rejectはC API呼び出し失敗ではありません。Applicationの正常な判断として相手側へResponseを送ります。
 
-Clientが指定した`goal_id`が、そのClient Runtimeで管理中または保持中のGoalと重複する場合、`send_goal()`は`HAKO_PDU_ACTION_ERROR_DUPLICATE_GOAL`を返します。Serverが受信時に検出したduplicate Goal RequestはProtocol上のGoal rejectとして処理し、Server Applicationへ新規Goalイベントを公開しません。
+Native APIは`GoalSendResult`で同期失敗理由を公開し、C APIはそれを対応するerror codeへlosslessに変換します。管理中のGoal ID重複は`DUPLICATE_GOAL`、通信slot不足は`NO_FREE_SLOT`、packet検証失敗は`INVALID_PACKET`、Transport送信失敗は`SEND`です。これらは送信受理前のC APIエラーであり、Protocol上のGoal Response accept/rejectとは別です。Serverが受信時に検出したduplicate Goal RequestはProtocol上のGoal rejectとして処理し、Server Applicationへ新規Goalイベントを公開しません。
 
 ## 10. Mux Serverとの対称性
 
@@ -584,7 +549,7 @@ hako_pdu_action_server_*
 hako_pdu_action_mux_server_*
 ```
 
-Mux利用時も、Applicationは同じ`event_token`と`goal_token`を使用します。Connection identityはRuntime内部へ保持します。
+Mux利用時も、Applicationは同じ`action_name + Server Goal Handle`を使用します。Connection identityはRuntime内部へ保持します。
 
 ただし、Actionでは次を満たす必要があります。
 
@@ -592,7 +557,7 @@ Mux利用時も、Applicationは同じ`event_token`と`goal_token`を使用し�
 Connection lifetime != Goal lifetime
 ```
 
-Connection切断時にGoal Contextを破棄するか、継続するか、Runtime Cancelへ移行するかは設定および後続アーキテクチャ実装で決定します。公開tokenが生のConnectionSlotアドレスやindexへ依存してはいけません。
+Connection切断時にGoal Contextを破棄するか、継続するか、Runtime Cancelへ移行するかは設定および後続アーキテクチャ実装で決定します。公開Goal Handleが生のConnectionSlotアドレスやindexへ依存してはいけません。
 
 ## 11. 利用シーケンス
 
@@ -621,15 +586,15 @@ destroy
 create
 start
 
-poll GOAL_REQUEST -> event_token
-accept_goal(event_token) -> goal_token
+poll GOAL_REQUEST -> action_name + Server Goal Handle
+accept_goal(action_name, goal)
 
-send_feedback(goal_token) 0..n
+send_feedback(action_name, goal) 0..n
 
-poll CANCEL_REQUEST -> event_token + goal_token
-accept_cancel(event_token) または reject_cancel(event_token)
+poll CANCEL_REQUEST -> action_name + Server Goal Handle
+accept_cancel(action_name, goal) または reject_cancel(action_name, goal)
 
-complete(goal_token, status, Result body)
+complete(action_name, goal, status, Result body)
 
 stop
 destroy
@@ -645,9 +610,8 @@ destroy
 - 通常ClientはClient Goal Handleを保持し、外部Adapterだけが必要に応じてUUIDを明示指定する。
 - `send_goal()`のtimeoutはGoal Response待ちにだけ適用し、accept後のResultおよびCancel Responseには適用しない。
 - `TIMEOUT`と`ERROR`はローカルRuntimeイベントであり、Goalのterminal statusではない。
-- Server Application向けには`event_token`と`goal_token`を分離する。
-- `event_token`は受信イベントへの一回限りの判断に使用する。
-- `goal_token`はaccept済みGoalの継続操作に使用する。
+- Server Applicationは`poll()`で得た`action_name + Server Goal Handle`を継続操作へ使用する。
+- C層に独自token registryを設けず、Native Servicesのone-shot判断とGoal Contextを再利用する。
 - ApplicationへProtocol Header編集を要求しない。
 - Goal／Cancel Responseの未使用bodyはRuntimeが既定値で生成する。
 - Client／Serverともcallbackではなくpollを基準とする。
@@ -655,15 +619,12 @@ destroy
 
 ## 13. 最小レビュー事項
 
-1. `event_token`と`goal_token`を分離するか。
-2. Goal accept時に`goal_token`を払い出すか。
-3. Cancel Request eventに`goal_token`を含めるか。
-4. Client handleで複数同時Goalを許容するか。
-5. Client pollをGoal Response、Feedback、Cancel Response、Resultの共通入口とするか。
-6. Server terminal APIを共通`complete(status, result)`とするか。
-7. Goal／Cancel Response PDUをRuntimeが自動生成するか。
-8. C API利用者へAction Headerを直接公開しない方針でよいか。
-9. Mux serverでも同じtokenモデルを維持するか。
+1. Client handleで複数同時Goalを許容するか。
+2. Client pollをGoal Response、Feedback、Cancel Response、Resultの共通入口とするか。
+3. Server terminal APIを共通`complete(status, result)`とするか。
+4. Goal／Cancel Response PDUをRuntimeが自動生成するか。
+5. C API利用者へAction Headerを直接公開しない方針でよいか。
+6. Mux serverでも同じGoal Handleモデルを維持するか。
 
 ## 14. 対象外
 
