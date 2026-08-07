@@ -1,7 +1,7 @@
 # Hakoniwa Action設定モデル
 
-> **Status: Draft**  
-> 本文書はレビューと議論のための初稿です。現時点では確定仕様ではありません。
+> **Status: Implemented contract**  
+> 本文書は、user-facing Action manifest、resolved設定、生成Endpoint設定の現行契約です。
 
 ## 1. 目的
 
@@ -160,7 +160,7 @@ slot 3
 
 そのため、各論理チャネルは決定的に生成されるチャネル名を持ちます。
 
-初期候補は次のとおりです。
+チャネル名は次の形式です。
 
 ```text
 Slot0Request
@@ -233,7 +233,7 @@ Action定義は、事前に予約する通信スロット数を指定します�
 
 `slotCount`はRuntime／Transportが同時に保持できる通信lane数です。Client接続数でも、Applicationが業務上受理できるGoal数でもありません。共有メモリ実装では1 active Goalが1 slotを占有するため、結果的に通信上のin-flight上限になりますが、Applicationの並列実行Policyとは分離します。
 
-スロットが枯渇した場合のClient API挙動は、後続のエラー契約で定義します。少なくとも、既存Goalのチャネルを再利用して混線させてはなりません。
+スロットが枯渇した場合、Clientの`send_goal_with_result()`は同期的に`GoalSendResult::NO_FREE_SLOT`を返します。既存Goalのチャネルを再利用したり、待機queueへ暗黙に積んだりしません。
 
 ### 6.1 可変長bodyのheap上限
 
@@ -296,11 +296,11 @@ Action定義は、Action Client RuntimeおよびAction Server RuntimeをEndpoint
 
 この対応は論理構成です。各Endpointが共有メモリ、TCP、muxなどのどのTransportを利用するかはEndpointまたはTransport設定側で定義します。
 
-複数Client Endpoint、動的Endpoint、mux上のroutingなどの詳細は初期実装範囲外とし、後続で拡張します。
+Point-to-point設定はgeneratorがClient／Server Endpointを生成します。Mux Serverは明示指定されたMux Endpoint設定から複数接続を受け入れ、routingをRuntime内部で管理します。user-facing point-to-point manifestからMux topologyを暗黙生成しません。
 
 ## 8. 最小Action定義例
 
-初期のstatic Endpoint構成では、Action定義を次のように表現できます。
+point-to-point TCP構成では、Action定義を次のように表現できます。
 
 ```json
 {
@@ -347,39 +347,21 @@ channel names
   ...
   Slot3Feedback
 
-shared memory only
-  generated base sizesをRegistryから解決
-  Action定義の`bufferHeap`を加算
-  metadata sizeを加算
-  PDU definitionsを事前登録
 ```
 
 ## 9. Transport別の解釈
 
-### 9.1 共有メモリ
+### 9.1 TCP Transport
 
-共有メモリTransportは、予約スロットに対応する全論理チャネルを起動時にPDU定義へ登録します。
-
-- チャネルIDはAction Typeごとに0から連番
-- チャネル名は決定的な命名規則から生成
-- base sizeはRegistry生成情報から解決
-- 可変長bodyのheap capacityはAction定義の`bufferHeap`から解決
-- Goal開始時に空きスロットを割り当て
-- terminal完了後にスロットを解放
-
-### 9.2 動的サイズを扱えるTransport
-
-TCPやlength-prefixed transportは、Packetサイズを受信フレームから判断できます。
-
-これらのTransportは、共有メモリと同じAction設定インターフェースを受け取りますが、固定PDUサイズや事前の共有メモリチャネル確保を必要としない場合があります。
+TCP raw transportは、Packetサイズを受信フレームから判断します。固定PDUサイズや共有メモリチャネルの事前確保は行いません。
 
 実装は、論理チャネル名、slot index、packet kind、transport sessionなどを内部routingへマッピングできます。
 
-Action設定インターフェースを共通化する目的は、すべてのTransportへ共有メモリの実装制約を強制することではありません。
+Action v1の設定generatorとRuntimeはTCP transportを対象とします。
 
 ## 10. Runtimeが保持する情報
 
-初期実装のRuntimeは、少なくとも次の情報を保持します。
+Runtimeは、少なくとも次の情報を保持します。
 
 ```text
 ActionDefinition
@@ -408,7 +390,7 @@ ActiveSlot
 
 `goal_id`からActiveSlotを検索でき、slot indexから対応する3チャネルを決定できる必要があります。
 
-## 11. 設計判断
+## 11. 設定の設計判断
 
 1. Action定義ファイルをService定義ファイルに対応する論理構成として追加する。
 2. 固定PDUサイズはAction設定の共通必須項目にしないが、可変長bodyの安全上限`bufferHeap`を省略可能な共通契約とする。
@@ -420,19 +402,11 @@ ActiveSlot
 8. Goal開始時に`goal_id`と空きスロットを動的に対応付ける。
 9. Goal rejectまたはterminal Resultの配送責務が完了した後にスロットを解放する。
 10. スロットとチャネルはTransport routing資源であり、Protocol identityは`goal_id`のままとする。
-11. 初期実装はstatic Endpoint対応を対象とし、dynamic Endpointおよびmux routingは後続で設計する。
+11. point-to-point Endpoint設定はgeneratorで静的に生成し、Mux routingは`ActionServicesMuxServer`内部で所有する。
 
-## 12. 未確定事項
+## 12. TCP v1のuser-facing manifest
 
-- 複数Client Endpointを一つのAction定義へ記載する方式
-- slot枯渇時の同期エラー、待機、timeoutの契約
-- reject時およびResult送信失敗時の正確なslot解放条件
-- mux transport sessionとslot lifetimeの対応
-- Registry size情報の具体的な参照API
-
-## 13. 初期TCP実装のuser-facing manifest
-
-初期TCP実装では、ユーザーが編集する入力を一つのmanifestとして提供します。ただし、論理Action定義とTransport deploymentは別の階層へ置き、責務を混在させません。
+TCP v1では、ユーザーが編集する入力を一つのmanifestとして提供します。ただし、論理Action定義とTransport deploymentは別の階層へ置き、責務を混在させません。
 
 ```json
 {
@@ -471,7 +445,7 @@ ActiveSlot
 
 正式なSchemaは`config/schema/action-schema.json`、実例は`config/sample/action.json`を参照します。
 
-### 13.1 Action roleとTCP role
+### 12.1 Action roleとTCP role
 
 Action Client／ServerはGoal lifecycle上の役割です。TCP client／serverは接続確立上の役割です。両者を固定対応させません。
 
@@ -482,20 +456,20 @@ Action Client = TCP client, Action Server = TCP server
 Action Client = TCP server, Action Server = TCP client
 ```
 
-初期point-to-point構成では、一つのActionが参照する二つのEndpointのTCP roleが相補的であることをgeneratorが検証します。
+point-to-point構成では、一つのActionが参照する二つのEndpointのTCP roleが相補的であることをgeneratorが検証します。
 
-### 13.2 TCP packet size
+### 12.2 TCP packet size
 
-TCP raw transportでは、送信する`PduData`の現在サイズをframeへ記録し、受信時にはdecodeされた実payloadサイズがcallbackへ渡されます。
+TCP raw transportでは、encode済み`PduData`の`metadata.total_size`をframeへ記録し、受信時にはdecodeされた実payloadサイズがcallbackへ渡されます。`PduData.size()`は確保容量であり、そのままWireサイズにはしません。
 
 ```text
-send size    = PduData.size()
+send size    = metadata.total_size
 receive size = received span.size()
 ```
 
-固定PDUサイズはuser-facing TCP設定へ追加しません。TCPは実際の`metadata.total_size`を送信しますが、送受信時に`bufferHeap`の上限を検証します。固定領域を事前確保するSHM対応時には、Registryのgenerated base sizeと同じ`bufferHeap`からresolved packet sizeを生成します。
+固定PDUサイズはuser-facing TCP設定へ追加しません。TCPは実際の`metadata.total_size`を送信し、送受信時に`bufferHeap`の上限を検証します。Action v1のTransport契約はTCPです。
 
-## 14. 自動生成される設定
+## 13. 自動生成される設定
 
 次のコマンドでuser-facing manifestからRuntime設定を生成します。
 
@@ -528,4 +502,4 @@ python tools/generate_action_config.py \
 
 Endpoint IDは`<nodeId>-action-tcp`として決定的に生成します。channel ID、channel名、packet type、Endpoint IDをユーザーへ重複指定させません。
 
-TCP初期実装は`PduResolvedKey`を使用するため、生成Endpoint設定に固定サイズの`pdu_def_path`を含めません。
+TCP v1は`PduResolvedKey`を使用するため、生成Endpoint設定に固定サイズの`pdu_def_path`を含めません。

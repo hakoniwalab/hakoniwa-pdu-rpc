@@ -48,7 +48,9 @@ supported platform and with the alternate manifest on Ubuntu x64. This verifies
 that the reviewed Service RPC and Action contract targets are built with tests
 enabled and pass through CTest. The build driver requests one aggregate CMake
 target, so Make, Ninja, and Visual Studio/MSBuild share the same native build
-boundary.
+boundary. The Windows reviewed-test build limits MSBuild parallelism to two
+jobs because the aggregate Action test graph exceeds the memory available on
+GitHub-hosted Windows runners when built without a limit.
 
 Supported CI platforms:
 

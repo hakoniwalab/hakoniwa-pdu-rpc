@@ -1,13 +1,13 @@
 # Hakoniwa Action Endpoint Transaction契約
 
-> **Status: Draft**  
-> 本文書は、`04-state-model.md`、`05-client-state-model.md`、`06-protocol.md`、`10-cancel-result-race.md`に対する規範的な追補です。
+> **Status: Implemented contract**  
+> 本文書は、`04-state-model.md`、`05-client-state-model.md`、`06-protocol.md`、`11-cancel-result-race.md`に対する規範的な追補です。
 
 ## 1. 目的
 
 Action Packet Endpoint内部で、Goal／Cancel判断、Feedback、terminal Result、slot ownershipとWire送信順序を安全に直列化する契約を定義します。
 
-初版はTCPの同期送信を対象とし、不必要な並行性や配送中専用stateを導入しません。
+v1はTCPの同期送信を対象とし、不必要な並行性や配送中専用stateを導入しません。
 
 ```text
 受信callback:
@@ -180,7 +180,7 @@ state_mutex lock
 state_mutex unlock
 ```
 
-Resultはterminal commitであるため、Goal／Cancel Responseとは異なり、送信失敗後に元状態へ戻しません。再送・保持・破棄は後続Policyで定義します。
+Resultはterminal commitであるため、Goal／Cancel Responseとは異なり、送信失敗後に元状態へ戻しません。`RESULT_COMMITTED`とslot ownershipをstop／resetまたはRuntime破棄まで保持します。
 
 ## 7. inbound Request
 
@@ -245,9 +245,3 @@ Clientは`AWAITING_CANCEL_RESPONSE`中の`CANCELED` Resultを受理しません�
 - 無応答Cancelの理由をWARNINGログへ記録すること。
 
 blocking Endpointを使うテストは、待機assertが失敗した場合も必ずblockを解除しthreadをjoinしなければなりません。
-
-## 11. 将来の拡張
-
-実測された性能要求によって複数slotの同時送信が必要になった場合に限り、global state mutexからslot単位mutexへの分割を検討します。
-
-分割時も、本文書のWire順序、FIFO、binding、slot ownership、送信失敗契約を維持しなければなりません。

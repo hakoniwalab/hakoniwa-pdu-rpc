@@ -1,7 +1,7 @@
 # Action Mux Server契約
 
-> **Status: Implemented MVP contract**
-> 本文書は、初期Action Mux Serverにおける接続所有、Goal所有、切断処理の契約を定義します。
+> **Status: Implemented contract**
+> 本文書は、Action Mux Serverにおける接続所有、Goal所有、切断処理の現行契約を定義します。
 
 ## 1. 目的
 
@@ -43,9 +43,9 @@ connection B: fibonacci / goal X  -> duplicate, protocol reject
 
 接続が異なっても、同じ`action_name + goal_id`を別Goalとして扱いません。connection identityをGoal identityへ加えないというAction Protocol契約を維持します。
 
-## 4. MVPの所有構造
+## 4. 所有構造
 
-初版は、既存クラスをそのまま組み合わせる方式を採用します。
+既存クラスを組み合わせ、接続ごとのGoal Contextを所有します。
 
 ```text
 ActionServicesMuxServer
@@ -112,7 +112,7 @@ complete成功、または切断後のlocal terminal完了
 
 ### 5.1 Mux内の直列化
 
-初版では、Muxの`poll()`、Goal操作、owner更新、切断状態の反映を一つのMux mutexで直列化します。Transportの切断callbackは状態フラグを立てるだけに限定し、Goal ownerや`ActionServicesServer`を直接変更しません。
+Muxの`poll()`、Goal操作、owner更新、切断状態の反映を一つのMux mutexで直列化します。Transportの切断callbackは状態フラグを立てるだけに限定し、Goal ownerや`ActionServicesServer`を直接変更しません。
 
 これにより、`accept_goal()`の成功と同時に切断した場合も、ownerを`ACTIVE`へ変更する処理と切断処理の順序を一意にします。性能要求が確認されるまでは、接続単位mutexや並列pollへ分割しません。
 
@@ -162,11 +162,11 @@ Transportの切断callbackは受信thread上で実行されるため、retireし
 
 ApplicationがRuntime Cancelをrejectした場合、Goalは`EXECUTING`を継続できます。ただしFeedbackは配送できません。Applicationは最終的に`SUCCEEDED`または`ABORTED`でlocal terminal完了させる必要があります。
 
-初版にはwatchdogまたは強制terminal化を導入しません。Applicationが完了しないorphaned Goalは、明示的なMux Server停止まで保持します。
+watchdogまたは強制terminal化は行いません。Applicationが完了しないorphaned Goalは、明示的なMux Server停止まで保持します。
 
 ## 7. 再接続とResult再配送
 
-初版では、次を提供しません。
+現在のMux契約は、次を提供しません。
 
 - 切断したClient Sessionの再開
 - 新しい接続へのGoal Context移管
@@ -174,28 +174,17 @@ ApplicationがRuntime Cancelをrejectした場合、Goalは`EXECUTING`を継続�
 - 切断中Resultの再配送
 - connection identityを使ったGoal identityの拡張
 
-新しい接続は新しいTransport sessionとして扱います。再接続Protocolが必要になった時点で、Result retentionとsession resumeを別仕様として設計します。
+新しい接続は新しいTransport sessionとして扱い、以前のGoal Contextを移管しません。
 
 ## 8. shutdown
 
 Mux Serverの明示的な停止は、切断とは区別します。
 
-初回のMux実装では、`stop()`は新規接続と新規Goalの受付を停止し、最終破棄時に残存Contextを解放します。`stop()`自身はApplicationのpollやGoal完了を待機しません。
+`stop()`は新規接続と新規Goalの受付を停止し、残存Contextを解放します。ApplicationのpollやGoal完了を待機するdrain処理、待機期限、強制terminal化は行いません。
 
-次のgraceful shutdown手順は後続仕様とします。
+## 9. Mux内部の統合経路
 
-```text
-新規接続と新規Goalの受付停止
-  -> active GoalへRUNTIME_CANCEL_REQUEST(SERVER_SHUTDOWN)
-  -> Applicationのpoll／判断／local terminal完了を許可
-  -> 明示的な最終破棄で残存Contextを解放
-```
-
-待機時間や強制終了PolicyはMux Runtimeへ暗黙に埋め込みません。`SERVER_SHUTDOWN` event、drain API、待機期限が必要になった時点で、別のContractとして追加します。
-
-## 9. 実装に必要な最小拡張
-
-現在の`ActionServicesServer`と`IActionServerEndpoint`には、通常通信を前提としたAPIしかありません。Mux実装では、既存の公開契約を広げすぎず、次の内部経路を追加します。
+Muxは、通常通信の公開契約を変えずに次の内部経路を使用します。
 
 - 切断を通知し、accept済みGoalごとのRuntime Cancel eventをqueueへ投入する経路
 - 未受理packet bindingだけを無効化する経路
@@ -206,7 +195,7 @@ Mux Serverの明示的な停止は、切断とは区別します。
 
 ## 10. Contract Test
 
-初版では少なくとも次を固定します。
+Contract Testは次を固定します。
 
 - 2接続から異なるGoalを受け、同じApplication APIで操作できる。
 - 同一Actionの同一Goal IDを別接続から送ると、後着GoalだけをREJECTする。

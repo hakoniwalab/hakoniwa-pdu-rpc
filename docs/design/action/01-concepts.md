@@ -1,7 +1,7 @@
 # Hakoniwa Actionの基本概念
 
-> **Status: Draft**  
-> 本文書はレビューと議論のための初稿です。現時点では確定仕様ではありません。
+> **Status: Implemented contract**  
+> 本文書は、Hakoniwa Actionで使用する基本概念の現行仕様です。
 
 ## 1. 目的
 
@@ -97,7 +97,7 @@ Goalの提示は、実行開始そのものを保証しません。ServerはGoal
 - Goalが受理されたこと
 - Goalの実行が開始されたこと
 
-初期実装でこれらをどこまで個別イベントとして公開するかは、状態モデルおよびAPI設計で決定します。
+現行APIは、Goal Requestの同期送信結果、Goal Responseの`ACCEPTED`／`REJECTED`、その後のFeedback／Cancel Response／Resultを個別イベントとして公開します。Transport内部での到達時刻はProtocolイベントとして公開しません。
 
 ## 5. goal_id
 
@@ -122,7 +122,7 @@ Result(goal_id = X)
 
 ### 5.2 生成と管理の責務
 
-初期APIでは、`goal_id`はGoal送信前に上位Client ApplicationまたはProtocol Adapterが生成します。Runtimeによる自動生成helperはpendingです。
+`goal_id`はGoal送信前に上位Client ApplicationまたはProtocol Adapterが生成します。RuntimeはGoal IDを自動生成しません。
 
 ROS 2 Bridgeなど、外部Actionシステムが既に互換性のあるUUIDを持つAdapterは、その外部UUIDを`goal_id`として指定できます。
 
@@ -139,15 +139,17 @@ Action Server Runtimeは受信した`goal_id`について、以下を担当し�
 - UUID形式などProtocol上の妥当性確認
 - 実行中Goalとの重複検査
 - Goal Execution状態との対応付け
-- 終了済みGoalの保持と重複再送の検出
+- active Goalの保持と重複検出
 
 したがって、`goal_id`の値を作る責務はClient側にあり、一意性を検査しGoal lifecycleを管理する責務はServer Runtime側にあります。
 
-### 5.3 未確定事項
+### 5.3 妥当性と一意性
 
-- 一意性の範囲をAction Endpoint単位、Server単位、システム全体のどこまで要求するか。
-- 終了済み`goal_id`をどれだけ保持し、重複Goalを検出するか。
-- UUIDの特定versionを規定するか。
+- all-zeroの`goal_id`は無効とする。
+- UUID versionは検査しない。
+- Client Runtimeは同一Actionのactive Goalとの衝突を同期エラーとして拒否する。
+- Point-to-point Serverは自身のactive Goal、Mux Serverは同一Actionについて全接続のactive ownerとの衝突を拒否する。
+- terminal完了後にContextを解放した`goal_id`は再利用でき、永続的な重複履歴は保持しない。
 
 ## 6. Goal AcceptanceとGoal Rejection
 
@@ -215,7 +217,6 @@ Terminal Status
 - SUCCEEDED
 - CANCELED
 - ABORTED
-- ERROR
 
 Result bodyがどの終端状態でも有効か、成功時のみ有効かはAction TypeまたはProtocol契約で明確にする必要があります。
 
@@ -223,14 +224,13 @@ Result bodyがどの終端状態でも有効か、成功時のみ有効かはAct
 
 Terminal Statusは、Goal Executionがそれ以上状態遷移しない終端結果を表します。
 
-初期候補は以下です。
+Terminal Statusは以下の3値です。
 
 - `SUCCEEDED`: Goalが正常に完了した。
 - `CANCELED`: Cancel要求に基づいて実行が終了した。
 - `ABORTED`: Goalは受理されたが、Serverまたは利用アプリケーションの判断で正常完了できなかった。
-- `ERROR`: Protocol、Runtime、通信などの異常により正常なAction結果として完了できなかった。
 
-`ABORTED`と`ERROR`の境界は未確定です。Action業務処理の失敗と通信基盤の失敗を分離できる定義が必要です。
+Protocol、Runtime、Transportの異常はterminal statusではありません。Runtime event、同期APIの失敗、または診断ログとして扱い、Applicationの業務上の`ABORTED`と区別します。
 
 ## 10. Cancel
 
@@ -286,16 +286,16 @@ RPC Runtimeそのものが業務処理や同時実行方針を決定するわけ
 | 終了前操作 | Cancelは既存RPC契約に依存 | Goal Executionに対するCancel |
 | ライフサイクル | 1往復を中心とする | Goal Executionセッションを持つ |
 | 複数実行 | RPC実装のsession構造に依存 | 同一Action Typeの複数GoalをProtocol上許容 |
-| 終端状態 | Responseの成否 | Succeeded / Canceled / Aborted / Error |
+| 終端状態 | Responseの成否 | Succeeded / Canceled / Aborted |
 | ROS依存 | なし | なし |
 
 Action対応のために既存Service RPCの意味やPDUレイアウトを変更しません。
 
-## 13. 現時点の概念上の設計判断
+## 13. 概念上の設計判断
 
 1. Actionは「長時間RPC」ではなく、RPC基盤上に構築されるGoal Executionセッションとする。
 2. 1回のGoal Executionは128-bit UUIDの`goal_id`で識別する。
-3. 初期APIでは上位Client Application／Adapterが送信前に`goal_id`を生成し、Client／Server Runtimeが重複検査とlifecycle管理を行う。Runtime自動生成はpendingとする。
+3. 上位Client Application／Adapterが送信前に`goal_id`を生成し、Client／Server Runtimeがactive Goalの重複検査とlifecycle管理を行う。RuntimeはGoal IDを自動生成しない。
 4. 同一Action Typeおよび同一Endpointに複数のGoal Executionが同時に存在することをProtocol上許容する。
 5. 並列実行、直列化、キュー、拒否、排他、優先度、preemptionはAction Server Applicationの実行ポリシーとする。
 6. `maxClients`はTransportの接続収容数であり、Actionの同時実行上限とは定義しない。
@@ -304,14 +304,3 @@ Action対応のために既存Service RPCの意味やPDUレイアウトを変更
 9. Result bodyとTerminal Statusを区別する。
 10. Cancel Request、Cancel Response、Canceled終端を区別する。
 11. ROS 2はHakoniwa Actionの利用先・Adapterであり、概念定義の所有者ではない。
-
-## 14. レビューで問答したい事項
-
-1. Actionを独立したGoal Executionセッションとして捉える定義でよいか。
-2. GoalとGoal Requestという言葉を分ける必要があるか。
-3. Result bodyとTerminal Statusを常に分離すべきか。
-4. Goal Rejectionは終端状態に含めるか、それともGoal Execution成立前として扱うか。
-5. Cancel Responseは「要求を受理した」ことだけを示すのか、「停止可能と判断した」ことまで示すのか。
-6. `ABORTED`と`ERROR`をどの責務境界で分けるか。
-7. Applicationが複数Goalを管理するために、Runtime APIはどの単位でGoalHandleまたはContextを提供すべきか。
-8. ApplicationのキューイングやpreemptionをProtocolで観測可能にする必要があるか。

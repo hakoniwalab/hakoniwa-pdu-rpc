@@ -1,6 +1,6 @@
 # Hakoniwa PDU-RPC
 
-`hakoniwa-pdu-rpc` is a C++ request/response and long-running Action layer built on `hakoniwa-pdu-endpoint`. It provides point-to-point and TCP Mux Action C APIs and Python CFFI bindings for typed synchronous and asynchronous Service client integration.
+`hakoniwa-pdu-rpc` is a C++ request/response and long-running Action layer built on `hakoniwa-pdu-endpoint`. Service RPC supports typed synchronous and asynchronous Python clients. Action supports point-to-point Client/Server and a TCP Mux Server through native C++, C, and Python CFFI APIs.
 
 It is designed for Hakoniwa-native control-plane communication where explicit lifecycle, endpoint topology, and deterministic/tick-driven integration are more important than general-purpose RPC features.
 
@@ -11,8 +11,8 @@ It is designed for Hakoniwa-native control-plane communication where explicit li
 - JSON-driven service and endpoint topology.
 - Typed request/response helpers for generated PDU service types.
 - Native C++ and C APIs for point-to-point and TCP Mux Action Goal lifecycles.
-- Python CFFI clients with Registry-generated service auto-wiring.
-- ROS-independent synchronous and asynchronous Python APIs.
+- Python CFFI APIs for Service clients and Action Client/Server/Mux Server.
+- ROS-independent synchronous/asynchronous Service APIs and explicitly polled Action APIs.
 - Explicit polling, timeout, and cancellation semantics.
 - An installable CMake package for downstream consumers.
 - Cross-platform build and contract-test coverage on Linux x64, Linux ARM64, macOS, and Windows x64.
@@ -23,18 +23,19 @@ This library intentionally does **not** provide dynamic service discovery, authe
 
 ```text
 User application
-    |
-    v
-RpcServicesClient / RpcServicesServer
-    |
-    v
-IRpcClientEndpoint / IRpcServerEndpoint
-    |
-    v
-RpcClientEndpointImpl / RpcServerEndpointImpl
-    |
-    v
-hakoniwa-pdu-endpoint
+    |                                      |
+    v                                      v
+RpcServicesClient / Server        ActionServicesClient / Server
+                                           |
+                                           +-- ActionServicesMuxServer
+    |                                      |
+    v                                      v
+RPC Endpoint contract              Action Endpoint contract
+    |                                      |
+    +------------------+-------------------+
+                       |
+                       v
+              hakoniwa-pdu-endpoint
     |
     v
 configured PDU transport
@@ -93,7 +94,37 @@ Server loss is not treated as a separate RPC recovery protocol here. Application
 
 See `docs/test-contract.md` for the detailed test ownership and lifecycle rationale.
 
-## Python Client API
+## Action Lifecycle Contract
+
+An Action is a Goal lifecycle identified by a caller-supplied, non-zero
+128-bit `goal_id`. It is not modeled as a long Service call.
+
+```text
+Client                         Server
+  |-- Goal Request ------------>|
+  |<-- Goal Response -----------|  ACCEPTED or REJECTED
+  |<-- Feedback (0..n) ---------|
+  |-- Cancel Request ---------->|  optional
+  |<-- Cancel Response ---------|
+  |<-- Result ------------------|  SUCCEEDED, CANCELED, or ABORTED
+```
+
+The Runtime correlates packets, owns Goal state transitions, rejects active
+`goal_id` collisions, and preserves response ordering. The Application owns
+Goal ID generation, whether a Goal is accepted, its execution policy, Feedback
+contents, and terminal Result contents.
+
+The native, C, and Python APIs are explicitly polled. The initial Action
+implementation does not create a Future/callback scheduler. For a TCP Mux
+Server, connection identity remains internal: the Application still addresses
+a Goal with `action_name + ServerGoalHandle`. `is_ready()` becomes true only
+after all expected transport sessions have been adopted as initialized Action
+connection slots.
+
+The complete protocol and state contracts are indexed in
+[`docs/design/action/README.md`](docs/design/action/README.md).
+
+## Python Service Client API
 
 Set the Python package path and shared-library path after building the native library:
 
@@ -378,6 +409,7 @@ The installed package exports:
 
 ```text
 hakoniwa_pdu_rpc::rpc
+hakoniwa_pdu_rpc::rpc_shared
 ```
 
 Downstream CMake:
@@ -394,6 +426,10 @@ The compatibility target below is also provided:
 ```cmake
 hakoniwa_pdu_rpc::hakoniwa_pdu_rpc
 ```
+
+Use `hakoniwa_pdu_rpc::rpc` for the static native contract and
+`hakoniwa_pdu_rpc::rpc_shared` when a shared-library boundary is required,
+including CFFI consumers.
 
 For a non-standard install prefix:
 
@@ -459,7 +495,9 @@ The contract tests are also exercised in CI on:
 
 A test failure is not automatically a production bug. Before changing RPC implementation, verify that the failing test still represents the documented lifecycle contract. See `docs/test-contract.md`.
 
-## Quick Example
+## Quick Examples
+
+### Service RPC
 
 The build driver enables examples during normal builds:
 
@@ -502,7 +540,35 @@ Reference files:
 - `config/sample/endpoints.json`
 - `config/sample/minimal/`
 
-## Configuration Validation
+### Fibonacci Action
+
+Generate the point-to-point TCP runtime configuration from the user-facing
+Action manifest:
+
+```bash
+python tools/generate_action_config.py \
+  --config config/sample/action.json \
+  --output .hako/action
+```
+
+Then run the server and client in separate terminals:
+
+```bash
+build/examples/hakoniwa_pdu_action_fibonacci_server
+```
+
+```bash
+build/examples/hakoniwa_pdu_action_fibonacci_client 10
+```
+
+The expected lifecycle is Goal acceptance, zero or more Feedback packets, and
+a terminal Fibonacci Result. Stop the server with `Ctrl+C`. See
+[`examples/README.md`](examples/README.md) for generated paths, explicit path
+arguments, and troubleshooting.
+
+## Configuration
+
+### Service RPC configuration
 
 Service topology is defined in JSON and can be validated before runtime.
 
@@ -532,6 +598,44 @@ Schema:
 ```text
 config/schema/service-schema.json
 ```
+
+### Action configuration
+
+[`config/sample/action.json`](config/sample/action.json) is the user-facing
+manifest for the initial point-to-point TCP generator. Users specify:
+
+- Action name and generated type in `package/ActionName` form;
+- `slotCount`;
+- Client and Server `nodeId` values;
+- TCP roles and addresses;
+- optional request, response, and Feedback heap capacities.
+
+`bufferHeap.requestSize`, `responseSize`, and `feedbackSize` default to 1 MiB
+when omitted, and the generator emits a warning. They are capacity limits, not
+wire sizes: encoded packets are sent at their actual size, and an encoded body
+that exceeds its configured capacity is rejected.
+
+```bash
+python tools/generate_action_config.py \
+  --config config/sample/action.json \
+  --output .hako/action
+```
+
+The generator validates the manifest and atomically writes:
+
+```text
+.hako/action/resolved-action.json
+.hako/action/endpoints.json
+.hako/action/queue.json
+.hako/action/endpoints/*.json
+.hako/action/transport/*.json
+```
+
+Channel IDs, channel names, packet types, Endpoint IDs, queue configuration,
+and EndpointContainer entries are generated details. Applications should not
+duplicate them manually. This generator currently defines the point-to-point
+TCP deployment. A TCP Mux Server consumes its explicitly supplied Mux Endpoint
+configuration; Mux topology is not silently inferred from this manifest.
 
 ## Core API
 
@@ -569,7 +673,40 @@ send_reply(...)
 
 Most native users should work through `RpcServicesClient`, `RpcServicesServer`, and the typed helper. `IRpcClientEndpoint` / `IRpcServerEndpoint` are extension interfaces for custom endpoint behavior.
 
-## Action C API
+### Native Action API
+
+The primary point-to-point entry points are `ActionServicesClient` and
+`ActionServicesServer`. `ActionServicesMuxServer` owns multiple TCP sessions
+while preserving the same Application-facing Server Goal API.
+
+```text
+ActionServicesClient
+  initialize_services() / start_all_services()
+  create_goal_buffer()
+  send_goal_with_result()
+  poll()
+  send_cancel()
+
+ActionServicesServer
+  initialize_services() / start_all_services()
+  poll()
+  accept_goal() / reject_goal()
+  accept_cancel() / reject_cancel()
+  create_feedback_buffer() / send_feedback()
+  create_result_buffer() / complete()
+
+ActionServicesMuxServer
+  initialize() / start() / stop()
+  poll() and the same Goal response/Feedback/Result operations
+  connected_count() / expected_count() / is_ready()
+```
+
+Buffers are allocated before encoding because generated PDU converters require
+a writable capacity. Applications encode into those buffers; send operations
+validate and transmit the encoded packet rather than allocating a replacement
+packet internally.
+
+## Action C and Python APIs
 
 The point-to-point Action C API is declared in:
 
@@ -628,7 +765,7 @@ Both C and Python Action APIs remain explicitly polled and share the Native
 Goal state machine. `ActionMuxServer` keeps connection identity and routing
 internal; callers continue to use `action_name + ServerGoalHandle`. Higher-level
 Future/callback adapters remain a separate follow-up layer. See
-[`docs/design/action/08-c-api.md`](docs/design/action/08-c-api.md) for the full
+[`docs/design/action/09-c-api.md`](docs/design/action/09-c-api.md) for the full
 contract.
 
 Service RPC, RPC Mux, and Action register their C declarations in one CFFI
@@ -664,7 +801,10 @@ A hybrid architecture is also possible, but it intentionally introduces two midd
 
 - Test contract and audit policy: `docs/test-contract.md`
 - RPC tutorial: `docs/tutorials/rpc.md`
-- Action C API contract: `docs/design/action/08-c-api.md`
+- Action design index: `docs/design/action/README.md`
+- Action configuration contract: `docs/design/action/08-configuration.md`
+- Action C API contract: `docs/design/action/09-c-api.md`
+- Action Mux Server contract: `docs/design/action/13-mux-server.md`
 - Examples: `examples/README.md`
 - Minimal configuration: `config/sample/minimal/README.md`
 - Service schema: `config/schema/service-schema.json`

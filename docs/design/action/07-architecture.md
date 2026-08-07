@@ -1,6 +1,6 @@
 # Hakoniwa Action Runtimeアーキテクチャ
 
-> **Status: Draft**  
+> **Status: Implemented contract**  
 > 本文書は、既存Service RPCの実装構造を基礎に、Hakoniwa Action Runtimeのコンポーネント構成と責務境界を定義します。
 
 ## 1. 目的
@@ -134,7 +134,7 @@ hakoniwa-pdu-endpoint::Endpoint
 
 Action Packet EndpointはHeader、packet queue、slot、channel、connection associationを扱います。PDU EndpointはActionのGoalや状態遷移を解釈しません。
 
-Goal lifecycleの状態機械は、`hakoniwa-pdu-rpc`内の上位Goal Transaction責務として一か所に保持します。初期実装でFacadeが同一クラスに見える場合も、Goal Protocol stateとPacket Binding stateを別のモデルとして実装します。
+Goal lifecycleの状態機械は、`hakoniwa-pdu-rpc`内のServices層で一か所に保持します。Goal Protocol stateとEndpointのPacket Binding stateは別のモデルであり、同じ状態を二重管理しません。
 
 ServiceとActionの対応は次のとおりです。
 
@@ -426,19 +426,11 @@ Service RPCのようにConnectionSlot削除と同時に全Action Goal Contextを
 
 Transport切断時はServer状態モデルに従い、必要に応じてRuntime起因CancelをApplicationへ通知します。ApplicationがGoalを継続、Cancel、Abortのいずれにするかを決定します。
 
-### 12.1 初期Mux実装の選択
+### 12.1 Muxの所有構造
 
-実現方法として次の選択肢を検討しました。
+接続ごとの`ActionServicesServer`がGoal Contextを保持し、active Goalを持つ切断済み`ConnectionSlot`はorphaned slotとしてterminal完了まで保持します。
 
-```text
-A. Goal ContextをConnectionSlot内のActionServer Runtimeが保持し続ける
-B. 接続断時にGoal Contextを接続非依存Registryへ移管する
-C. Muxより上位に共有ActionServer Runtimeを置き、接続AdapterだけをSlotに持つ
-```
-
-初期Mux実装では**方式A**を採用します。接続ごとの`ActionServicesServer`がGoal Contextを保持し、active Goalを持つ切断済み`ConnectionSlot`はorphaned slotとしてterminal完了まで保持します。
-
-Mux自身は`(action_name, goal_id) -> connection_id`のrouting indexだけを持ち、Goal状態を重複管理しません。接続をまたぐGoal IDの一意性、切断時のRuntime Cancel、orphaned slotの回収条件は[Action Mux Server契約](12-mux-server.md)で規定します。
+Mux自身は`(action_name, goal_id) -> connection_id`のrouting indexだけを持ち、Goal状態を重複管理しません。接続をまたぐGoal IDの一意性、切断時のRuntime Cancel、orphaned slotの回収条件は[Action Mux Server契約](13-mux-server.md)で規定します。
 
 ## 13. BindingとAdapter
 
@@ -471,29 +463,17 @@ ROS 2 Action
 - `hakoniwa-pdu-endpoint`を変更せず再利用する。
 - Services層は構成とApplication窓口を担当する。
 - Endpoint Impl層は1 Action Type分のProtocol Runtimeを担当する。
-- Goal Contextは`goal_id`単位でEndpoint Impl層が管理する。
+- Services層は`action_name + goal_id`単位のGoal Contextと状態遷移を管理する。
+- Endpoint Impl層はGoalとslot／packet bindingの対応だけを管理し、上位のGoal状態を重複保持しない。
 - 同一Action Typeで複数Goalを同時管理できる。
 - callbackは受信queueへの格納に限定し、Protocol処理はpoll側で行う。
 - PDU RegistryのAction packet構成を使用する。
 - Connection lifetimeとGoal lifetimeを分離する。
 
-## 15. 最小レビュー事項
+## 15. 文書境界
 
-1. Service RPCと同じレイヤ構造を採用するか。
-2. Serviceクラスを拡張せず、Action専用の並行クラス群を追加するか。
-3. Goal Context RegistryをAction Endpoint Implが所有するか。
-4. 1 Action Typeにつき1 Endpoint Runtimeとするか。
-5. Endpoint callbackをqueue格納のみに限定するか。
-6. Connection lifetimeとGoal lifetimeを分離するか。
-7. MuxでGoal Contextを接続ごとの`ActionServicesServer`に保持し、Muxはrouting indexだけを持つか。
+公開APIはHeader、JSON設定はSchemaを正とします。queueと排他の契約は
+[Endpoint Transaction State](12-endpoint-transaction-state.md)、C APIとPython CFFIは
+[Action C API](09-c-api.md)で規定します。
 
-## 16. 対象外
-
-- 公開APIの具体的な関数シグネチャ
-- JSON設定Schemaの詳細
-- クラスの具体的なメンバー変数
-- queueの物理構成と容量
-- thread safety実装
-- session resumeおよび接続間のGoal Context migration
-- C API、Python APIの具体的な形
-- ROS 2 executor統合の詳細
+session resume、接続間のGoal Context migration、ROS 2 executor統合は本Runtimeの責務に含めません。

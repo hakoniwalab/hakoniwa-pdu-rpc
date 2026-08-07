@@ -341,6 +341,15 @@ class OperationCompatibilityTests(unittest.TestCase):
             HAKO.REVIEWED_TEST_BUILD_TARGET,
             "hakoniwa_pdu_rpc_reviewed_tests",
         )
+        self.assertEqual(HAKO.WINDOWS_REVIEWED_TEST_PARALLELISM, 2)
+        self.assertEqual(
+            HAKO.reviewed_test_parallel_args("windows"),
+            ["--parallel", "2"],
+        )
+        self.assertEqual(
+            HAKO.reviewed_test_parallel_args("macos"),
+            ["--parallel"],
+        )
         for target in expected:
             self.assertRegex(target, HAKO.REVIEWED_TEST_REGEX)
 

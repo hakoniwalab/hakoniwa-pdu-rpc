@@ -1,7 +1,7 @@
 # Hakoniwa Action C API設計
 
-> **Status: Draft**  
-> 本文書は、Hakoniwa Action Runtimeをユーザーアプリケーションおよび`hakoniwa-pdu-ros`から利用するためのC APIの型、ライフサイクル、操作モデルを定義します。厳密なABI、全関数シグネチャ、設定Schemaは後続レビューで確定します。
+> **Status: Implemented contract**  
+> 本文書は、Hakoniwa Action Runtimeをユーザーアプリケーションおよび`hakoniwa-pdu-ros`から利用するためのC APIとPython CFFIの現行契約です。正確な宣言は`include/hakoniwa/pdu/action/c_action.h`を正とします。
 
 ## 1. 目的
 
@@ -67,8 +67,8 @@ typedef struct {
 } hako_pdu_action_goal_id_t;
 ```
 
-- 初期APIでは上位Client ApplicationまたはROS Adapterなどの外部Protocol層が生成し、必須指定します。
-- Runtimeによる自動生成helperはpendingです。
+- 上位Client ApplicationまたはROS Adapterなどの外部Protocol層が生成し、必須指定します。
+- RuntimeはGoal IDを自動生成しません。
 - Client／Server間のProtocol相関に使用します。
 - Client poll結果およびServer poll結果へ含めます。
 
@@ -227,7 +227,7 @@ void
 hako_pdu_action_client_destroy(...);
 ```
 
-`goal_id`は必須です。Runtimeは指定値を変更せず`out_goal`へ返します。all-zeroまたは同じClient RuntimeでactiveなGoalとの衝突は同期エラーとして拒否します。RuntimeによるUUID自動生成helperはpendingです。
+`goal_id`は必須です。Runtimeは指定値を変更せず`out_goal`へ返します。all-zeroまたは同じClient RuntimeでactiveなGoalとの衝突は同期エラーとして拒否します。
 
 `timeout_usec`はGoal Request送信後、Goal Responseを受信するまでにだけ適用します。`0`はGoal Response timeoutなしを表します。Goalがacceptされた後のResult待ち、およびCancel Response待ちには適用しません。
 
@@ -389,7 +389,7 @@ hako_pdu_action_server_reject_cancel(
 
 Cancel Response PDUのbodyはProtocol既定値をRuntimeが生成します。
 
-`accept_cancel()`／`reject_cancel()`はCancel Responseの同期送信成功後に判断を確定します。初版Endpointは判断の検証、同期送信、状態確定を同じstate mutex区間で実行し、同一Goalの`complete()`を直列化します。これによりCancel Responseより先にterminal Resultが送信されることを防ぎます。送信失敗時はpending判断を維持するため、Applicationは同じ判断を再実行できます。
+`accept_cancel()`／`reject_cancel()`はCancel Responseの同期送信成功後に判断を確定します。Endpointは判断の検証、同期送信、状態確定を同じstate mutex区間で実行し、同一Goalの`complete()`を直列化します。これによりCancel Responseより先にterminal Resultが送信されることを防ぎます。送信失敗時はpending判断を維持するため、Applicationは同じ判断を再実行できます。
 
 ### 6.7 Feedback送信
 
@@ -446,17 +446,15 @@ hako_pdu_action_server_complete(
     size_t result_pdu_size);
 ```
 
-個別の`complete_succeeded()`、`complete_canceled()`、`complete_aborted()`へ分ける案は後続レビュー対象です。
-
 `create_result_buffer()`は、Registryのgenerated base sizeとAction設定の`bufferHeap.responseSize`から最大容量の完全なAction Response PDUを確保・初期化します。ApplicationまたはTyped wrapperはResult bodyをencodeします。Runtimeはencode後の`metadata.total_size`をWireサイズとして使用するため、buffer自体の縮小は不要です。`complete()`および内部Response送信処理がbufferを暗黙生成することはありません。
 
 `complete()`成功後、Applicationは同じ`action_name + goal`へ新規Feedbackや別の完了を送れません。
 
-初版の`complete()`は、accept済みGoalに対する`SUCCEEDED`または`ABORTED`、Cancel受理後の`CANCELING`に対する`CANCELED`または`ABORTED`を同期送信します。Runtimeは送信開始前にGoalを`FINISHING`へcommitして二重Resultと後続Feedbackを拒否します。Endpoint実装内では、このpacket binding状態を上位Protocol状態と区別して`RESULT_COMMITTED`と表現します。同期送信が成功した時点でServer側Goal Contextとslot ownershipを解放します。
+`complete()`は、accept済みGoalに対する`SUCCEEDED`または`ABORTED`、Cancel受理後の`CANCELING`に対する`CANCELED`または`ABORTED`を同期送信します。Runtimeは送信開始前にGoalを`FINISHING`へcommitして二重Resultと後続Feedbackを拒否します。Endpoint実装内では、このpacket binding状態を上位Protocol状態と区別して`RESULT_COMMITTED`と表現します。同期送信が成功した時点でServer側Goal Contextとslot ownershipを解放します。
 
 Applicationから渡されたResult packetの形式・容量検証はterminal commitより前に行います。検証失敗はApplication入力エラーとしてGoalを`EXECUTING`に保ち、修正したpacketで再実行できます。
 
-検証通過後のTransport送信失敗ではGoalを`FINISHING`のまま保持し、slotを再利用しません。これにより、送信成否が不明なGoalのlaneへ別Goalを重ねません。再送、Runtime error通知、保持期限による解放は後続Policyで定義します。
+検証通過後のTransport送信失敗ではGoalを`FINISHING`のまま保持し、slotを再利用しません。これにより、送信成否が不明なGoalのlaneへ別Goalを重ねません。Contextとslotは明示的なstop／resetまたはRuntime破棄で解放します。
 
 ## 7. Buffer所有権
 
@@ -581,7 +579,7 @@ hako_pdu_action_mux_server_is_ready
 Connection lifetime != Goal lifetime
 ```
 
-Connection切断時のGoal Context、Runtime Cancel、local terminal完了は[Action Mux Server契約](12-mux-server.md)に従います。公開Goal Handleは生のConnectionSlotアドレスやindexへ依存しません。
+Connection切断時のGoal Context、Runtime Cancel、local terminal完了は[Action Mux Server契約](13-mux-server.md)に従います。公開Goal Handleは生のConnectionSlotアドレスやindexへ依存しません。
 
 ## 11. 利用シーケンス
 
@@ -624,14 +622,14 @@ stop
 destroy
 ```
 
-## 12. 現時点の設計判断
+## 12. C APIの設計判断
 
 - RPC Service C APIと同じhandle、start/stop、poll、buffer ownershipモデルを採用する。
 - Client APIは`hakoniwa-pdu-ros`などのAdapter利用を主対象とする。
 - Server APIはAction Server Application利用を主対象とする。
 - 一つのClient handleで複数Goalを管理する。
 - Protocol相関には`goal_id`を使用する。
-- 通常ClientはClient Goal Handleを保持し、外部Adapterだけが必要に応じてUUIDを明示指定する。
+- Client Applicationまたは外部AdapterがGoal IDを明示指定し、Runtimeは自動採番しない。送信後の操作にはClient Goal Handleを使用する。
 - `send_goal()`のtimeoutはGoal Response待ちにだけ適用し、accept後のResultおよびCancel Responseには適用しない。
 - `TIMEOUT`と`ERROR`はローカルRuntimeイベントであり、Goalのterminal statusではない。
 - Server Applicationは`poll()`で得た`action_name + Server Goal Handle`を継続操作へ使用する。
@@ -643,21 +641,12 @@ destroy
 - Pythonの`*_alloc()`AdapterはNative bufferを`bytes`へcopyし、呼び出し元へ返す前に`hako_pdu_action_buffer_free()`で解放する。
 - Mux APIはstatic server APIと表面的に対称化する。
 
-## 13. 最小レビュー事項
-
-1. Client handleで複数同時Goalを許容するか。
-2. Client pollをGoal Response、Feedback、Cancel Response、Resultの共通入口とするか。
-3. Server terminal APIを共通`complete(status, result)`とするか。
-4. Goal／Cancel Response PDUをRuntimeが自動生成するか。
-5. C API利用者へAction Headerを直接公開しない方針でよいか。
-6. Mux serverでも同じGoal Handleモデルを維持するか。
-
-## 14. 対象外
+## 13. 対象外
 
 - Python ActionのFuture／callback Adapter設計
 - ROS 2 Action GoalHandleへの具体的マッピング
 
-## 15. Python CFFI Adapter契約
+## 14. Python CFFI Adapter契約
 
 Python CFFIは、本C APIを次のPython型へ直接写像します。
 
@@ -683,4 +672,4 @@ Python側のGoal IDは16 byteかつall-zeroでない`bytes`とし、Nativeと同
 
 `ActionMuxServer`は`ActionServer`と同じ`ActionServerPollResult`、`ServerGoalHandle`、Goal／Cancel判断、Feedback／Result APIを使用します。Mux固有に公開するのは`connected_count()`、`expected_count()`、`is_ready()`だけで、connection IDやrouting tokenは公開しません。
 
-Python Action APIも初期版は明示的poll型です。Service側の`RpcFuture`やworker threadをAction側に暗黙に適用しません。Future／callback Adapterは必要性とlifecycle契約を確定してから別layerとして追加します。
+Python Action APIは明示的poll型です。Service側の`RpcFuture`やworker threadをAction側に暗黙に適用しません。

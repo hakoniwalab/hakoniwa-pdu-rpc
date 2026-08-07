@@ -81,6 +81,7 @@ ACTION_CONTRACT_TARGETS = (
 )
 REVIEWED_TEST_TARGETS = SERVICE_CONTRACT_TARGETS + ACTION_CONTRACT_TARGETS
 REVIEWED_TEST_BUILD_TARGET = "hakoniwa_pdu_rpc_reviewed_tests"
+WINDOWS_REVIEWED_TEST_PARALLELISM = 2
 REVIEWED_TEST_REGEX = (
     "^hakoniwa_pdu_(rpc_(basic|infinite_wait|timeout_cancel|cancel_race)"
     "|action_(configuration|server_state_machine|services_server_goal_instance|client_state_machine|services_client_goal_instance|server_initialization|goal_response_transaction"
@@ -844,8 +845,18 @@ def run_test_target(ctx: Context, spec: OperationSpec) -> None:
     )
 
 
+def reviewed_test_parallel_args(platform_name: str) -> list[str]:
+    if platform_name == "windows":
+        return ["--parallel", str(WINDOWS_REVIEWED_TEST_PARALLELISM)]
+    return ["--parallel"]
+
+
 def test(ctx: Context) -> None:
     configure(ctx, tests=True)
+    # The reviewed aggregate target fans out to many MSVC translation units.
+    # GitHub-hosted Windows runners can terminate unconstrained MSBuild without
+    # a compiler diagnostic when this graph exhausts the available memory.
+    parallel_args = reviewed_test_parallel_args(ctx.platform_name)
     run(
         [
             "cmake",
@@ -855,7 +866,7 @@ def test(ctx: Context) -> None:
             ctx.build_type,
             "--target",
             REVIEWED_TEST_BUILD_TARGET,
-            "--parallel",
+            *parallel_args,
         ],
         cwd=ctx.repo_root,
     )

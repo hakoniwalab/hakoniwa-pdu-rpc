@@ -1,7 +1,7 @@
 # Hakoniwa Actionのデータモデル
 
-> **Status: Draft**  
-> 本文書はレビューと議論のための初稿です。現時点では確定仕様ではありません。
+> **Status: Implemented contract**  
+> 本文書は、Hakoniwa ActionのGoal identityとRuntimeデータモデルの現行仕様です。
 
 ## 1. 目的
 
@@ -16,7 +16,7 @@
 - Goal RequestをProtocol側で拒否する条件と、Applicationへ判断を委ねる条件
 - 通信経路や接続方式に依存しないデータモデル
 
-具体的なPDUのバイト配置、状態遷移、送受信順序、公開API、Transport実装は後続文書で定義します。
+PDUのバイト配置、状態遷移、送受信順序、公開API、Transport実装は、本ディレクトリの各契約文書で規定します。
 
 ## 2. 中心となる概念
 
@@ -97,7 +97,7 @@ Result(goal_id = X)
 
 ### 3.2 生成責任
 
-初期APIでは、通常のHakoniwa Action Clientも上位ApplicationがGoal送信前に`goal_id`を生成します。Runtime自動生成はpendingです。
+通常のHakoniwa Action Clientも上位ApplicationがGoal送信前に`goal_id`を生成します。RuntimeはGoal IDを自動生成しません。
 
 ```text
 Client Application
@@ -156,19 +156,10 @@ Server Runtimeは、自身が管理する範囲で重複を検出します。
 最低限、以下の重複を検出できる必要があります。
 
 - 現在処理中または実行中のGoalとの重複
-- Runtimeが保持している終了済みGoalとの重複
 
 同じ`goal_id`を持つGoal Requestは、新しいGoalとして扱いません。
 
-同一`goal_id`の再受信を単純な重複エラーとするか、再送または冪等な再照会として扱うかは後続のProtocol設計で決定します。
-
-以下は未確定です。
-
-- UUID versionを固定するか
-- zero UUIDを禁止するか
-- 終了済み`goal_id`を保持する期間
-- Server再起動をまたいだ重複検出を要求するか
-- システム全体での永続的一意性をProtocol要件とするか
+同一`goal_id`のactive Goal Requestはduplicateとして自動拒否します。all-zeroは禁止し、UUID versionは検査しません。terminal完了後はContextを解放するため、終了済みIDの履歴やServer再起動をまたぐ永続的一意性はProtocol要件に含めません。
 
 ## 5. 複数Goal
 
@@ -271,7 +262,7 @@ Runtimeは、異なる`goal_id`を持つGoalを一律にsingle-goal制約で拒�
 
 ## 9. RuntimeとApplicationの抽象境界
 
-具体的なAPIシグネチャは後続設計で決定しますが、Protocol上は次の双方向経路を必要とします。
+公開APIは次の双方向経路を提供します。
 
 ```text
 Runtime -> Application
@@ -290,7 +281,7 @@ ApplicationがGoalを受理した場合、以後のFeedback、Cancel、Resultも
 
 Clientから見て、Protocol Runtimeによる拒否とApplicationによる拒否は、どちらもGoal Responseの`REJECTED`です。
 
-ただし、少なくとも次の二種類を識別できるデータ契約が必要です。
+Server Runtime内部では次の二種類を区別します。
 
 ```text
 Protocol / Runtime rejection
@@ -300,9 +291,7 @@ Application rejection
   Goal Requestは正常にApplicationへ届いたが、Applicationが受理しなかった
 ```
 
-具体的に`reject_origin`を持たせるか、reject reason codeの名前空間を分けるかは後続のデータ契約で決定します。
-
-少なくとも、duplicate `goal_id`とApplicationのresource busyを同じ理由へ統合しません。
+Wire上のGoal Responseはいずれも`REJECTED`であり、`reject_origin`や共通reason codeは持ちません。Runtimeによる自動拒否は診断ログへ理由を残し、Application拒否はApplicationが明示的に`reject_goal()`を呼び出した結果として区別します。
 
 ## 11. Runtimeの責務
 
@@ -344,10 +333,10 @@ Transportが使用するEndpoint、connection、channel、client IDなどは、�
 
 それらをGoalのProtocol identityへ含めません。
 
-## 13. 今回の設計判断
+## 13. データモデルの設計判断
 
 1. `goal_id`は128-bit UUIDとする。
-2. 初期APIでは通常のClientも上位ApplicationがGoal送信前に生成し、Runtime自動生成はpendingとする。
+2. 通常のClientも上位ApplicationがGoal送信前に生成し、RuntimeはGoal IDを自動生成しない。
 3. Adapterは外部で生成された互換UUIDを指定できる。
 4. `goal_id`はGoal RequestからGoal Responseまで、受理後は終端Resultまで続くライフサイクル全体の相関キーとする。
 5. Server RuntimeはUUIDの検査、重複検査、登録、相関、ライフサイクル管理を行う。
@@ -359,14 +348,3 @@ Transportが使用するEndpoint、connection、channel、client IDなどは、�
 11. Runtime拒否とApplication拒否を識別可能にする。
 12. Protocol上の独立したClient Session概念は導入しない。
 13. Endpoint、connection、channel、mux client IDなどの実現方式をGoalの識別条件に含めない。
-
-## 14. レビューで問答したい事項
-
-1. UUID versionをProtocolで固定する必要があるか。
-2. `goal_id`の一意性をどの範囲まで要求するか。
-3. 終了済み`goal_id`をどの期間保持する必要があるか。
-4. 同じ`goal_id`を持つGoal Requestの再送を、重複エラーとするか冪等な再照会として扱うか。
-5. Protocol Runtimeによる拒否理由をどこまで標準化するか。
-6. Application rejection reasonをProtocol上どの形式で表現するか。
-7. `reject_origin`を明示的に持たせるか、reason codeによって区別するか。
-8. Applicationが応答しない場合のacceptance timeoutを、状態モデルまたはProtocolでどう扱うか。

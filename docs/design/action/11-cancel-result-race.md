@@ -1,6 +1,6 @@
 # Hakoniwa Action Cancel／Result競合契約
 
-> **Status: Draft**  
+> **Status: Implemented contract**  
 > 本文書は、`04-state-model.md`および`06-protocol.md`に対する規範的な追補です。
 >
 > Action Runtime実装およびContract Testでは、本書の競合規則を適用します。
@@ -75,7 +75,7 @@ COMPLETE_CANCELED
 
 ### 3.3 Cancel Response配送と状態公開
 
-初版Endpointは、Cancel判断の検証、Cancel Responseの同期送信、状態確定を同じstate mutex区間で実行します。Response配送中専用の状態は追加しません。
+Endpointは、Cancel判断の検証、Cancel Responseの同期送信、状態確定を同じstate mutex区間で実行します。Response配送中専用の状態は追加しません。
 
 ```text
 accept:
@@ -101,7 +101,7 @@ reject:
 
 同じstate mutexを使う`complete()`はCancel Response送信完了まで待つため、Cancel accept時は必ず`CANCEL_RESPONSE(ACCEPTED)`が`RESULT(CANCELED / ABORTED)`より先にWireへ送信されます。
 
-Cancel Response送信に失敗した場合は、`GOAL_ACCEPTED`と`cancel_decision_pending=true`を維持します。Applicationは同じaccept／reject判断を再実行できます。通信異常をGoalのterminal statusへ変換しません。初期対象のTCPでは、非OKの同期送信は完全なProtocol packetを配送できていないものとして扱います。接続断後の再接続手順は後続Policyで定義します。
+Cancel Response送信に失敗した場合は、`GOAL_ACCEPTED`と`cancel_decision_pending=true`を維持します。Applicationは同じaccept／reject判断を再実行できます。通信異常をGoalのterminal statusへ変換しません。TCPの非OK同期送信は完全なProtocol packetを配送できていないものとして扱います。
 
 ### 3.4 後着する通常成功
 
@@ -204,9 +204,9 @@ Server Applicationイベントについては、次を正とします。
 | `ACCEPT_CANCEL` | pending Contextが有効なら`ALLOW`して`CANCELING`へ | `APPLICATION_API_ERROR` | `APPLICATION_API_ERROR`: Result確定済み |
 | `REJECT_CANCEL` | pending Contextが有効なら`ALLOW`して`EXECUTING`を維持 | `APPLICATION_API_ERROR` | `APPLICATION_API_ERROR`: Result確定済み |
 
-Result commitとCancel acceptは、同一Goal Contextに対する排他的な状態更新として実装します。初版Endpointでは、判断、同期送信、状態確定を同じstate mutex区間で直列化します。
+Result commitとCancel acceptは、同一Goal Contextに対する排他的な状態更新として実装します。Endpointでは、判断、同期送信、状態確定を同じstate mutex区間で直列化します。
 
-初版TransportはTCPを前提とし、Cancel Request単位の`request_id`を持ちません。このため同一Goalの判断待ち中またはCancel受理後に届く追加Cancel Requestは、再送か新規要求かを区別せず無応答で破棄します。Cancelを`REJECTED`と判断した後はGoalが`EXECUTING`へ戻るため、Clientは改めてCancel Requestを送信できます。
+v1はTCPを前提とし、Cancel Request単位の`request_id`を持ちません。このため同一Goalの判断待ち中またはCancel受理後に届く追加Cancel Requestは、再送か新規要求かを区別せず無応答で破棄します。Cancelを`REJECTED`と判断した後はGoalが`EXECUTING`へ戻るため、Clientは改めてCancel Requestを送信できます。
 
 ## 6. Protocolシーケンス
 
@@ -343,7 +343,7 @@ If ACCEPT_CANCEL commits:
 
 ## 9. Action v1必須Contract Test集合
 
-Action Runtimeの初版実装は、少なくとも以下のContract Testを通過しなければなりません。
+Action Runtimeは、以下のContract Testを通過しなければなりません。
 
 各テストでは、次を明示的に検査します。
 
@@ -556,11 +556,11 @@ v1は終了済みGoal履歴とCancel Request単位の独立した`request_id`を
 - v1の`goal_id`＋pending Context相関を単純に保つ。
 - 終端後の第二応答を発生させない。
 
-Client Runtimeは、unknown GoalへのCancelについてCancel Responseの到着を保証として期待してはなりません。必要な待ち時間、ローカルtimeout、Future完了規則は高位Client APIで定義します。
+Client Runtimeは、unknown GoalへのCancelについてCancel Responseの到着を保証として期待してはなりません。呼び出し側が必要なローカル待ち時間を管理します。
 
 ## 11. テスト階層
 
-初版のテストは、次の順に分けます。
+テストは、次の層に分けます。
 
 ```text
 1. Runtime Contract Test
@@ -572,33 +572,13 @@ Client Runtimeは、unknown GoalへのCancelについてCancel Responseの到着
 3. Registry generated Action E2E
    FibonacciAction等の生成型を使い、Goal / Result / Feedback変換を検証
 
-4. hakoniwa-pdu-ros E2E
-   ROS 2 ActionとHakoniwa Action Runtimeの相互変換を検証
+4. Installed package consumer
+   公開C++／C Header、CMake target、Python CFFIの配布契約を検証
 ```
 
-FibonacciAction E2EだけをRuntime Contract Testの代替にしてはなりません。まずAction型に依存しないRuntime契約を固定し、その後にRegistry生成型とROS Adapterを検証します。
+FibonacciAction E2EだけをRuntime Contract Testの代替にしてはなりません。Action型に依存しないRuntime契約と、Registry生成型を使うE2Eを分離します。
 
-## 12. 初版で保留するContract Test
-
-以下は重要ですが、初版の実装開始を止めないDeferred項目です。
-
-```text
-CANCELING中の重複Cancel Requestへの再応答方式
-Result保持時間と再取得
-Result送信失敗時のretry / retain / release
-Transport切断中のactive Goal
-Server shutdown時のGoal処理
-再接続後のResult再配送
-Application response timeout policy
-```
-
-Mux connection消滅後のGoal Context所有と初期切断Policyは、
-`12-mux-server.md`でMVP契約を確定しました。Result retention、再接続、
-再配送、およびwatchdogは引き続きDeferredです。
-
-実装エージェントは、これらを暗黙に決定または追加実装してはなりません。初版では既存文書で確定済みの範囲だけを実装し、必要な場合は別Issueまたは設計PRへ切り出します。
-
-## 13. 設計判断
+## 12. 設計判断
 
 - Cancel acceptとterminal Result commitは、同一Goal Context上で排他的に確定する。
 - Cancel acceptが先ならCancelが勝ち、Client起因CancelではCancel Responseを返す。
@@ -610,7 +590,6 @@ Mux connection消滅後のGoal Context所有と初期切断Policyは、
 - 後着するCancel判断はApplication API Errorとする。
 - 後着イベントは、先にcommitされた状態とterminal statusを変更しない。
 - Response配送中はstate mutexで共通排他し、配送中専用の意味状態を増やさない。
-- 初版必須Contract Testは正常Goal、Goal reject、Cancel accept／reject、Cancel／Result race、複数Goal、token誤用を含む。
-- Runtime Contract TestをRegistry生成型およびROS E2Eから分離する。
-- Deferred項目を実装エージェントが独自判断で補完しない。
+- Contract Testは正常Goal、Goal reject、Cancel accept／reject、Cancel／Result race、複数Goal、Goal Handle誤用を含む。
+- Runtime Contract TestをRegistry生成型E2Eから分離する。
 - この規則をC++ Runtime、C API、Python/CFFI、およびContract Testで共通適用する。
