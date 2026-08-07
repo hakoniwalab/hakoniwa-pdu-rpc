@@ -36,6 +36,13 @@ def _add_windows_runtime_search_dirs() -> None:
 _add_windows_runtime_search_dirs()
 
 from .auto_wire import ServiceWire, TypedRpcClient, load_service_wire, make_typed_client
+from .action_auto_wire import (
+    ActionWire,
+    TypedActionClient,
+    TypedActionClientPollResult,
+    load_action_wire,
+    make_typed_action_client,
+)
 from .action_cffi import (
     ActionClient,
     ActionClientEvent,
@@ -77,6 +84,7 @@ __all__ = [
     "ActionServerEvent",
     "ActionServerPollResult",
     "ActionTerminalStatus",
+    "ActionWire",
     "CffiRpcClient",
     "ClientEvent",
     "ClientGoalHandle",
@@ -93,8 +101,12 @@ __all__ = [
     "ServerPollResult",
     "ServiceWire",
     "TypedRpcClient",
+    "TypedActionClient",
+    "TypedActionClientPollResult",
+    "load_action_wire",
     "load_service_wire",
     "make_typed_client",
+    "make_typed_action_client",
     "RuntimeCancelCause",
     "validate_configs",
 ]
