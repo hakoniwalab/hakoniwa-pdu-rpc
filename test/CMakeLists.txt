@@ -306,3 +306,29 @@ set(HAKO_PDU_RPC_NATIVE_CONTRACT_TARGETS
 foreach(target IN LISTS HAKO_PDU_RPC_NATIVE_CONTRACT_TARGETS)
   hako_pdu_rpc_stage_windows_test_dlls(${target})
 endforeach()
+
+# Give the cross-platform build driver one stable CMake target instead of
+# forwarding a long list of project targets to the native generator.  In
+# particular, Visual Studio/MSBuild does not provide the same reliable
+# multi-target command-line boundary as Make and Ninja.
+add_custom_target(hakoniwa_pdu_rpc_reviewed_tests DEPENDS
+  hakoniwa_pdu_rpc_basic_test
+  hakoniwa_pdu_rpc_infinite_wait_test
+  hakoniwa_pdu_rpc_timeout_cancel_test
+  hakoniwa_pdu_rpc_cancel_race_test
+  hakoniwa_pdu_action_configuration_test
+  hakoniwa_pdu_action_server_state_machine_test
+  hakoniwa_pdu_action_services_server_goal_instance_test
+  hakoniwa_pdu_action_client_state_machine_test
+  hakoniwa_pdu_action_services_client_goal_instance_test
+  hakoniwa_pdu_action_server_initialization_test
+  hakoniwa_pdu_action_goal_response_transaction_test
+  hakoniwa_pdu_action_cancel_response_serialization_test
+  hakoniwa_pdu_action_client_endpoint_test
+  hakoniwa_pdu_action_packet_codec_test
+  hakoniwa_pdu_action_tcp_e2e_test
+  hakoniwa_pdu_action_mux_server_test
+  hakoniwa_pdu_action_c_api_mux_server_test
+  hakoniwa_pdu_action_c_api_header_test
+  hakoniwa_pdu_action_c_api_tcp_e2e_test
+)

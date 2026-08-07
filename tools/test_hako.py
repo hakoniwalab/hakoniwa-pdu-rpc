@@ -337,6 +337,10 @@ class OperationCompatibilityTests(unittest.TestCase):
         }
         self.assertEqual(set(HAKO.ACTION_CONTRACT_TARGETS), expected)
         self.assertTrue(expected.issubset(set(HAKO.REVIEWED_TEST_TARGETS)))
+        self.assertEqual(
+            HAKO.REVIEWED_TEST_BUILD_TARGET,
+            "hakoniwa_pdu_rpc_reviewed_tests",
+        )
         for target in expected:
             self.assertRegex(target, HAKO.REVIEWED_TEST_REGEX)
 

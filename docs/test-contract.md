@@ -34,10 +34,21 @@ The package/build contract is executed with both the repository default
 resolver tests additionally fix CLI/manifest/environment precedence and the
 operation-specific tests ON/OFF behavior.
 
+The out-of-tree package consumer fixes the following installed surfaces:
+
+- Service RPC C++ API;
+- Action Mux C++ API through the static and shared exported CMake targets;
+- Action Mux C API through the same static and shared targets;
+- Registry-generated Action headers installed with the package;
+- installed Python `ActionMuxServer`, imported in isolated mode from the
+  explicitly selected Foundation venv.
+
 The actual `hako.py test` operation runs with the default manifest on every
 supported platform and with the alternate manifest on Ubuntu x64. This verifies
-that the four reviewed RPC test targets are built with tests enabled and pass
-through CTest.
+that the reviewed Service RPC and Action contract targets are built with tests
+enabled and pass through CTest. The build driver requests one aggregate CMake
+target, so Make, Ninja, and Visual Studio/MSBuild share the same native build
+boundary.
 
 Supported CI platforms:
 

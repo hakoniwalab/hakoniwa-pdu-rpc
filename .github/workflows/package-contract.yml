@@ -35,34 +35,42 @@ jobs:
             os: ubuntu-latest
             config: hakoniwa-build.yaml
             build_type: Release
+            python_venv: .hako/install/python
           - name: Ubuntu x64 / alternate
             os: ubuntu-latest
             config: test/fixtures/alternate-build.yaml
             build_type: Debug
+            python_venv: .hako/install-alternate/python
           - name: Ubuntu ARM64 / default
             os: ubuntu-24.04-arm
             config: hakoniwa-build.yaml
             build_type: Release
+            python_venv: .hako/install/python
           - name: Ubuntu ARM64 / alternate
             os: ubuntu-24.04-arm
             config: test/fixtures/alternate-build.yaml
             build_type: Debug
+            python_venv: .hako/install-alternate/python
           - name: macOS / default
             os: macos-15
             config: hakoniwa-build.yaml
             build_type: Release
+            python_venv: .hako/install/python
           - name: macOS / alternate
             os: macos-15
             config: test/fixtures/alternate-build.yaml
             build_type: Debug
+            python_venv: .hako/install-alternate/python
           - name: Windows x64 / default
             os: windows-2025
             config: hakoniwa-build.yaml
             build_type: Release
+            python_venv: .hako/install/python
           - name: Windows x64 / alternate
             os: windows-2025
             config: test/fixtures/alternate-build.yaml
             build_type: Debug
+            python_venv: .hako/install-alternate/python
 
     steps:
       - name: Checkout with Registry submodule
@@ -153,8 +161,11 @@ jobs:
       - name: Install
         run: python tools/hako.py install --config "${{ matrix.config }}"
 
+      - name: Create package-contract Python venv
+        run: python -m venv "${{ matrix.python_venv }}"
+
       - name: Installed package consumer
-        run: python tools/hako.py package-test --config "${{ matrix.config }}"
+        run: python tools/hako.py package-test --config "${{ matrix.config }}" --python-venv "${{ matrix.python_venv }}"
 
       # Windows native contracts run in the dedicated RPC workflows against the
       # historical static Endpoint + static RPC combination. This package job

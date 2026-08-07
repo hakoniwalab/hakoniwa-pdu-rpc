@@ -151,7 +151,7 @@ public:
             std::string ignored_name;
             action::ServerEvent ignored_event;
             (void)server_.poll(ignored_name, ignored_event);
-            if (server_.connected_count() == 2) {
+            if (server_.is_ready()) {
                 return true;
             }
             std::this_thread::sleep_for(1ms);
@@ -267,6 +267,9 @@ TEST(ActionMuxServerContract, RoutesTwoGoalsWithoutExposingConnectionIdentity)
     EXPECT_EQ(runtime.server().expected_count(), 2U);
     EXPECT_EQ(runtime.server().connected_count(), 2U);
     EXPECT_TRUE(runtime.server().is_ready());
+    EXPECT_GE(
+        runtime.server().connected_count(),
+        runtime.server().expected_count());
 
     const auto goal0 = send_and_accept_goal(
         runtime, runtime.client0(), goal_id(0x10), 7);

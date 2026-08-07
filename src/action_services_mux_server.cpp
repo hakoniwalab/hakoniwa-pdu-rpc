@@ -324,7 +324,12 @@ public:
     bool is_ready() const
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        return started_ && mux_ && mux_->is_ready();
+        // Transport readiness can become true before poll() adopts the newly
+        // accepted sessions and initializes their ActionServicesServer.
+        // Application readiness begins only after every expected connection
+        // is represented by a live Action ConnectionSlot.
+        return started_ && mux_
+            && connected_slot_count_() >= mux_->expected_count();
     }
 
 private:

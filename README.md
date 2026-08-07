@@ -410,7 +410,12 @@ cmake -S . -B build \
 python tools/hako.py package-test
 ```
 
-This checks the exported CMake package and downstream link contract.
+This checks the exported CMake package from an out-of-tree consumer. The
+consumer compiles and links the Service RPC and Action Mux C++ APIs against
+both `hakoniwa_pdu_rpc::rpc` and `hakoniwa_pdu_rpc::rpc_shared`, compiles the
+Action Mux C API against both targets, and includes a Registry-generated Action
+header from the install tree. When `--python-venv` is supplied, it also imports
+the installed `ActionMuxServer` from an isolated Python process.
 
 ## Contract Tests
 

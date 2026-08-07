@@ -116,6 +116,13 @@ complete成功、または切断後のlocal terminal完了
 
 これにより、`accept_goal()`の成功と同時に切断した場合も、ownerを`ACTIVE`へ変更する処理と切断処理の順序を一意にします。性能要求が確認されるまでは、接続単位mutexや並列pollへ分割しません。
 
+`is_ready()`はTransportがsocketをacceptした時点ではなく、期待する全接続を`ConnectionSlot`へ取り込み、各`ActionServicesServer`の初期化と開始が完了した時点でtrueになります。したがって、同じ排他区間で観測した場合は次を満たします。
+
+```text
+is_ready() == true
+  -> connected_count() >= expected_count()
+```
+
 ## 6. Transport切断
 
 ### 6.1 未受理Goal

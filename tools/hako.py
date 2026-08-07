@@ -80,6 +80,7 @@ ACTION_CONTRACT_TARGETS = (
     "hakoniwa_pdu_action_c_api_tcp_e2e_test",
 )
 REVIEWED_TEST_TARGETS = SERVICE_CONTRACT_TARGETS + ACTION_CONTRACT_TARGETS
+REVIEWED_TEST_BUILD_TARGET = "hakoniwa_pdu_rpc_reviewed_tests"
 REVIEWED_TEST_REGEX = (
     "^hakoniwa_pdu_(rpc_(basic|infinite_wait|timeout_cancel|cancel_race)"
     "|action_(configuration|server_state_machine|services_server_goal_instance|client_state_machine|services_client_goal_instance|server_initialization|goal_response_transaction"
@@ -853,7 +854,7 @@ def test(ctx: Context) -> None:
             "--config",
             ctx.build_type,
             "--target",
-            *REVIEWED_TEST_TARGETS,
+            REVIEWED_TEST_BUILD_TARGET,
             "--parallel",
         ],
         cwd=ctx.repo_root,
@@ -914,6 +915,18 @@ def package_test(ctx: Context) -> None:
         ],
         cwd=ctx.repo_root,
     )
+    if ctx.venv_python is not None:
+        run(
+            [
+                str(ctx.venv_python),
+                "-I",
+                "-c",
+                "from hakoniwa_pdu_rpc import ActionMuxServer; "
+                "assert ActionMuxServer.__module__ == "
+                "'hakoniwa_pdu_rpc.action_cffi'",
+            ],
+            cwd=ctx.install_dir,
+        )
 
 
 def create_parser() -> argparse.ArgumentParser:
