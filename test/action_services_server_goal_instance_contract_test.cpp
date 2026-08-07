@@ -159,8 +159,16 @@ public:
         last_complete_status = status;
         return complete_result;
     }
-    void clear_pending_events() override {}
-    void reset_contexts() override {}
+    void clear_pending_events() override
+    {
+        ++clear_pending_events_calls;
+        events.clear();
+    }
+    void reset_contexts() override
+    {
+        ++reset_contexts_calls;
+        events.clear();
+    }
 
     void push_event(action::ServerEvent event)
     {
@@ -183,6 +191,8 @@ public:
     int reject_cancel_calls{0};
     int send_feedback_calls{0};
     int complete_calls{0};
+    int clear_pending_events_calls{0};
+    int reset_contexts_calls{0};
     action::TerminalStatus last_complete_status{
         action::TerminalStatus::UNSPECIFIED};
     std::deque<action::ServerEvent> events;
@@ -210,6 +220,105 @@ TEST(ActionServicesServerGoalInstanceContract, UnknownActionIsRejected)
 {
     auto services = server();
     EXPECT_FALSE(services.accept_goal("missing", test_goal()));
+}
+
+TEST(ActionServicesServerGoalInstanceContract, StopClearsPendingEndpointEvents)
+{
+    auto services = server();
+    auto endpoint = std::make_shared<FakeActionServerEndpoint>("demo");
+    action::ActionServicesServerTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(server_event(
+        action::ServerEventType::GOAL_REQUEST, test_goal()));
+
+    services.stop_all_services();
+    EXPECT_EQ(endpoint->clear_pending_events_calls, 1);
+    std::string action_name;
+    action::ServerEvent event;
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ServerEventType::NONE);
+}
+
+TEST(ActionServicesServerGoalInstanceContract, ClearResetsGoalsAndEndpointContexts)
+{
+    auto services = server();
+    auto endpoint = std::make_shared<FakeActionServerEndpoint>("demo");
+    const auto goal = test_goal();
+    action::ActionServicesServerTestPeer::add_action(
+        services, "demo", endpoint);
+    ASSERT_TRUE(services.accept_goal("demo", goal));
+
+    services.clear_all_instances();
+    EXPECT_EQ(
+        action::ActionServicesServerTestPeer::goal_count(services, "demo"),
+        0U);
+    EXPECT_EQ(endpoint->reset_contexts_calls, 1);
+}
+
+TEST(ActionServicesServerGoalInstanceContract, InitializesConfiguredServerEndpoint)
+{
+    auto container = std::make_shared<hakoniwa::pdu::EndpointContainer>(
+        "fibonacci-server", ACTION_SERVER_CONTAINER_FIXTURE_PATH);
+    ASSERT_EQ(container->initialize(), HAKO_PDU_ERR_OK);
+    action::ActionServicesServer services(
+        "fibonacci-server",
+        ACTION_CONFIG_FIXTURE_PATH,
+        "ActionServerEndpointImpl",
+        1000,
+        "virtual");
+
+    ASSERT_TRUE(services.initialize_services(container));
+    EXPECT_TRUE(services.start_all_services());
+    action::PduData feedback;
+    action::PduData result;
+    EXPECT_TRUE(services.create_feedback_buffer("fibonacci", feedback));
+    EXPECT_TRUE(services.create_result_buffer("fibonacci", result));
+    EXPECT_FALSE(feedback.empty());
+    EXPECT_FALSE(result.empty());
+    EXPECT_FALSE(services.initialize_services(container));
+
+    services.stop_all_services();
+    services.clear_all_instances();
+}
+
+TEST(ActionServicesServerGoalInstanceContract, InitializesDirectMuxEndpoint)
+{
+    auto endpoint = std::make_shared<hakoniwa::pdu::Endpoint>(
+        "accepted-connection", HAKO_PDU_ENDPOINT_DIRECTION_INOUT);
+    ASSERT_EQ(
+        endpoint->open(ACTION_SERVER_ENDPOINT_FIXTURE_PATH),
+        HAKO_PDU_ERR_OK);
+    action::ActionServicesServer services(
+        "fibonacci-server",
+        ACTION_CONFIG_FIXTURE_PATH,
+        "ActionServerEndpointImpl",
+        1000,
+        "virtual");
+
+    ASSERT_TRUE(services.initialize_services(endpoint));
+    action::PduData result;
+    EXPECT_TRUE(services.create_result_buffer("fibonacci", result));
+    EXPECT_FALSE(result.empty());
+
+    services.stop_all_services();
+    services.clear_all_instances();
+    EXPECT_EQ(endpoint->close(), HAKO_PDU_ERR_OK);
+}
+
+TEST(ActionServicesServerGoalInstanceContract, InitializationRequiresTransportOwner)
+{
+    action::ActionServicesServer services(
+        "fibonacci-server",
+        ACTION_CONFIG_FIXTURE_PATH,
+        "ActionServerEndpointImpl",
+        1000,
+        "virtual");
+
+    EXPECT_FALSE(services.initialize_services(
+        std::shared_ptr<hakoniwa::pdu::EndpointContainer>{}));
+    EXPECT_FALSE(services.initialize_services(
+        std::shared_ptr<hakoniwa::pdu::Endpoint>{}));
 }
 
 TEST(ActionServicesServerGoalInstanceContract, EndpointFailureDoesNotAddGoal)

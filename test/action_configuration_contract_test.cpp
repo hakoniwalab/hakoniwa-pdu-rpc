@@ -60,6 +60,30 @@ TEST(ActionConfigurationContract, RejectsInvalidSlotCount)
     EXPECT_NE(error.find("slotCount"), std::string::npos);
 }
 
+TEST(ActionConfigurationContract, ReadsGeneratedEndpointIds)
+{
+    const auto action_json = nlohmann::json::parse(R"({
+        "name": "fibonacci",
+        "type": "sample_action_msgs/Fibonacci",
+        "slotCount": 1,
+        "clientEndpoint": {
+            "nodeId": "client",
+            "endpointId": "client-action-tcp"
+        },
+        "serverEndpoint": {
+            "nodeId": "server",
+            "endpointId": "server-action-tcp"
+        }
+    })");
+    action::ActionDefinition definition;
+    std::string error;
+
+    ASSERT_TRUE(action::ActionConfigurationLoader::parse_action(
+        action_json, definition, error)) << error;
+    EXPECT_EQ(definition.client_endpoint.endpoint_id, "client-action-tcp");
+    EXPECT_EQ(definition.server_endpoint.endpoint_id, "server-action-tcp");
+}
+
 TEST(ActionConfigurationContract, RejectsMalformedActionType)
 {
     const auto action_json = nlohmann::json::parse(R"({

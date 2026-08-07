@@ -4,6 +4,7 @@
 #include "action_server_state_machine.hpp"
 #include "action_types.hpp"
 #include "hakoniwa/pdu/endpoint_container.hpp"
+#include "hakoniwa/pdu/endpoint.hpp"
 #include "hakoniwa/time_source/time_source.hpp"
 
 #include <memory>
@@ -26,6 +27,10 @@ public:
 
     bool initialize_services(
         std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container);
+    // Used by transport owners such as EndpointCommMultiplexer, which hand
+    // over an already-opened connection Endpoint.
+    bool initialize_services(
+        std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint);
     bool start_all_services();
     void stop_all_services();
     void clear_all_instances();
@@ -88,6 +93,9 @@ private:
         ServerEventType event_type,
         ServerEvent& event,
         ServerEvent& event_out);
+    bool initialize_services_impl(
+        std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container,
+        std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_override);
 
     std::string node_id_;
     std::string config_path_;

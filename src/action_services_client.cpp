@@ -1,9 +1,14 @@
 #include "hakoniwa/pdu/action/action_services_client.hpp"
 
+#include "action_client_endpoint_impl.hpp"
+#include "action_configuration.hpp"
 #include "hakoniwa/time_source/time_source_factory.hpp"
 
+#include <fstream>
 #include <iostream>
 #include <utility>
+
+#include <nlohmann/json.hpp>
 
 namespace hakoniwa::pdu::action {
 
@@ -24,7 +29,10 @@ ActionServicesClient::ActionServicesClient(
 {
 }
 
-ActionServicesClient::~ActionServicesClient() = default;
+ActionServicesClient::~ActionServicesClient()
+{
+    stop_all_services();
+}
 
 ActionServicesClient::ActionInstance* ActionServicesClient::get_action_locked(
     const std::string& action_name)
@@ -67,6 +75,140 @@ bool ActionServicesClient::remove_goal_locked(
         }
     }
     return false;
+}
+
+bool ActionServicesClient::initialize_services(
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container)
+{
+    if (!endpoint_container) {
+        std::cerr << "ERROR: Action Client EndpointContainer is required."
+                  << std::endl;
+        return false;
+    }
+
+    std::ifstream stream(config_path_);
+    if (!stream.is_open()) {
+        std::cerr
+            << "ERROR: Failed to open Action configuration: "
+            << config_path_
+            << std::endl;
+        return false;
+    }
+
+    nlohmann::json root;
+    try {
+        stream >> root;
+    } catch (const nlohmann::json::exception& error) {
+        std::cerr
+            << "ERROR: Failed to parse Action configuration JSON: "
+            << error.what()
+            << std::endl;
+        return false;
+    }
+
+    ActionConfiguration configuration;
+    std::string configuration_error;
+    if (!ActionConfigurationLoader::parse(
+            root, configuration, configuration_error)) {
+        std::cerr
+            << "ERROR: Invalid Action configuration: "
+            << configuration_error
+            << std::endl;
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!actions_.empty()) {
+        std::cerr
+            << "ERROR: Action Client Services are already initialized."
+            << std::endl;
+        return false;
+    }
+
+    std::vector<ActionInstance> initialized_actions;
+    const auto& action_entries = root.at("actions");
+    for (std::size_t index = 0; index < configuration.actions.size(); ++index) {
+        const auto& definition = configuration.actions[index];
+        if (definition.client_endpoint.node_id != node_id_) {
+            continue;
+        }
+
+        const auto& endpoint_id =
+            definition.client_endpoint.endpoint_id.empty()
+            ? definition.client_endpoint.node_id
+            : definition.client_endpoint.endpoint_id;
+        auto pdu_endpoint = endpoint_container->ref(endpoint_id);
+        if (!pdu_endpoint) {
+            std::cerr
+                << "ERROR: Client Endpoint '"
+                << endpoint_id
+                << "' was not found for Action '"
+                << definition.name
+                << "'."
+                << std::endl;
+            return false;
+        }
+
+        if (impl_type_ != "ActionClientEndpointImpl") {
+            std::cerr
+                << "ERROR: Unsupported Action Client Endpoint implementation: "
+                << impl_type_
+                << std::endl;
+            return false;
+        }
+
+        auto action_endpoint = std::make_shared<ActionClientEndpointImpl>(
+            definition.name,
+            client_name_,
+            delta_time_usec_,
+            std::move(pdu_endpoint),
+            time_source_);
+        if (!action_endpoint->initialize(action_entries.at(index))) {
+            std::cerr
+                << "ERROR: Failed to initialize Action Client Endpoint for '"
+                << definition.name
+                << "'."
+                << std::endl;
+            return false;
+        }
+        initialized_actions.push_back(ActionInstance{
+            definition.name,
+            std::move(action_endpoint),
+            {},
+        });
+    }
+
+    endpoint_container_ = std::move(endpoint_container);
+    actions_ = std::move(initialized_actions);
+    return true;
+}
+
+bool ActionServicesClient::start_all_services()
+{
+    // EndpointContainer lifecycle is owned by the caller. Action Services
+    // have no additional worker to start in the initial implementation.
+    return true;
+}
+
+void ActionServicesClient::stop_all_services()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& action : actions_) {
+        if (action.endpoint) {
+            action.endpoint->clear_pending_events();
+        }
+    }
+}
+
+void ActionServicesClient::clear_all_instances()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& action : actions_) {
+        action.goals.clear();
+        if (action.endpoint) {
+            action.endpoint->reset_contexts();
+        }
+    }
 }
 
 bool ActionServicesClient::send_goal(
@@ -188,6 +330,40 @@ bool ActionServicesClient::send_cancel(
     }
 
     goal_instance->context = transition.next;
+    return true;
+}
+
+bool ActionServicesClient::create_goal_buffer(
+    const std::string& action_name,
+    PduData& pdu_out)
+{
+    pdu_out.clear();
+    if (action_name.empty()) {
+        std::cerr
+            << "WARNING: create_goal_buffer called with an empty Action name."
+            << std::endl;
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
+        std::cerr
+            << "WARNING: create_goal_buffer called for unknown Action '"
+            << action_name
+            << "'."
+            << std::endl;
+        return false;
+    }
+    if (!action->endpoint->create_goal_buffer(pdu_out)) {
+        pdu_out.clear();
+        std::cerr
+            << "ERROR: Failed to create Goal buffer for Action '"
+            << action_name
+            << "'."
+            << std::endl;
+        return false;
+    }
     return true;
 }
 

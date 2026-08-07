@@ -17,6 +17,9 @@ enum class ActionChannelKind : std::uint8_t {
 
 struct ActionEndpointReference {
     std::string node_id;
+    // Present in generated runtime configuration. User-facing manifests only
+    // require nodeId; the generator derives endpointId deterministically.
+    std::string endpoint_id;
 };
 
 struct ActionChannelDefinition {

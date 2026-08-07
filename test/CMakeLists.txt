@@ -68,6 +68,11 @@ add_executable(hakoniwa_pdu_action_services_server_goal_instance_test
   action_services_server_goal_instance_contract_test.cpp
 )
 target_link_libraries(hakoniwa_pdu_action_services_server_goal_instance_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_compile_definitions(hakoniwa_pdu_action_services_server_goal_instance_test PRIVATE
+  ACTION_CONFIG_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_resolved.json"
+  ACTION_SERVER_CONTAINER_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_server_container.json"
+  ACTION_SERVER_ENDPOINT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_server_endpoint.json"
+)
 add_test(NAME hakoniwa_pdu_action_services_server_goal_instance_test COMMAND hakoniwa_pdu_action_services_server_goal_instance_test)
 set_tests_properties(hakoniwa_pdu_action_services_server_goal_instance_test PROPERTIES TIMEOUT 30)
 
@@ -82,6 +87,10 @@ add_executable(hakoniwa_pdu_action_services_client_goal_instance_test
   action_services_client_goal_instance_contract_test.cpp
 )
 target_link_libraries(hakoniwa_pdu_action_services_client_goal_instance_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_compile_definitions(hakoniwa_pdu_action_services_client_goal_instance_test PRIVATE
+  ACTION_CONFIG_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_resolved.json"
+  ACTION_CLIENT_CONTAINER_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_client_container.json"
+)
 add_test(NAME hakoniwa_pdu_action_services_client_goal_instance_test COMMAND hakoniwa_pdu_action_services_client_goal_instance_test)
 set_tests_properties(hakoniwa_pdu_action_services_client_goal_instance_test PROPERTIES TIMEOUT 30)
 
@@ -143,6 +152,17 @@ add_executable(hakoniwa_pdu_action_packet_codec_test
 target_link_libraries(hakoniwa_pdu_action_packet_codec_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
 add_test(NAME hakoniwa_pdu_action_packet_codec_test COMMAND hakoniwa_pdu_action_packet_codec_test)
 set_tests_properties(hakoniwa_pdu_action_packet_codec_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_tcp_e2e_test
+  action_tcp_e2e_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_tcp_e2e_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_compile_definitions(hakoniwa_pdu_action_tcp_e2e_test PRIVATE
+  ACTION_TCP_CONFIG_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_resolved.json"
+  ACTION_TCP_ENDPOINTS_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_tcp_e2e/endpoints.json"
+)
+add_test(NAME hakoniwa_pdu_action_tcp_e2e_test COMMAND hakoniwa_pdu_action_tcp_e2e_test)
+set_tests_properties(hakoniwa_pdu_action_tcp_e2e_test PROPERTIES TIMEOUT 30)
 
 add_executable(hakoniwa_pdu_rpc_basic_test
   rpc_basic_contract_test.cpp

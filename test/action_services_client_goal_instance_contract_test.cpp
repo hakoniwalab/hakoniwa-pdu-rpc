@@ -1,5 +1,7 @@
 #include "hakoniwa/pdu/action/action_services_client.hpp"
 
+#include "hakoniwa/pdu/endpoint.hpp"
+
 #include <gtest/gtest.h>
 
 #include <deque>
@@ -107,9 +109,25 @@ public:
         events.pop_front();
         return event_out.type;
     }
-    bool create_goal_buffer(action::PduData&) override { return true; }
-    void clear_pending_events() override {}
-    void reset_contexts() override {}
+    bool create_goal_buffer(action::PduData& pdu_out) override
+    {
+        ++create_goal_buffer_calls;
+        if (!create_goal_buffer_result) {
+            return false;
+        }
+        pdu_out = {0x47};
+        return true;
+    }
+    void clear_pending_events() override
+    {
+        ++clear_pending_events_calls;
+        events.clear();
+    }
+    void reset_contexts() override
+    {
+        ++reset_contexts_calls;
+        events.clear();
+    }
 
     void push_event(action::ClientEvent event)
     {
@@ -118,8 +136,12 @@ public:
 
     bool send_goal_result{true};
     bool send_cancel_result{true};
+    bool create_goal_buffer_result{true};
     int send_goal_calls{0};
     int send_cancel_calls{0};
+    int create_goal_buffer_calls{0};
+    int clear_pending_events_calls{0};
+    int reset_contexts_calls{0};
     std::uint64_t last_timeout_usec{0};
     std::deque<action::ClientEvent> events;
 };
@@ -198,6 +220,122 @@ TEST(ActionServicesClientGoalInstanceContract, SendGoalDoesNotCreateAcceptedInst
     EXPECT_EQ(
         action::ActionServicesClientTestPeer::goal_count(services, "demo"),
         0U);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, CreatesGoalBufferThroughNamedEndpoint)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    action::PduData packet;
+
+    EXPECT_TRUE(services.create_goal_buffer("demo", packet));
+    EXPECT_EQ(packet, action::PduData({0x47}));
+    EXPECT_EQ(endpoint->create_goal_buffer_calls, 1);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, GoalBufferFailureClearsOutput)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    endpoint->create_goal_buffer_result = false;
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    action::PduData packet{0xff};
+
+    EXPECT_FALSE(services.create_goal_buffer("demo", packet));
+    EXPECT_TRUE(packet.empty());
+    EXPECT_EQ(endpoint->create_goal_buffer_calls, 1);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, UnknownActionDoesNotCreateGoalBuffer)
+{
+    auto services = client();
+    action::PduData packet{0xff};
+
+    EXPECT_FALSE(services.create_goal_buffer("missing", packet));
+    EXPECT_TRUE(packet.empty());
+}
+
+TEST(ActionServicesClientGoalInstanceContract, StopClearsPendingEndpointEvents)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        goal_response(test_goal_id(), action::Decision::ACCEPTED));
+
+    services.stop_all_services();
+    EXPECT_EQ(endpoint->clear_pending_events_calls, 1);
+    std::string action_name;
+    action::ClientEvent event;
+    EXPECT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::NONE);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, ClearResetsGoalsAndEndpointContexts)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    const auto goal_id = test_goal_id();
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        goal_response(goal_id, action::Decision::ACCEPTED));
+    std::string action_name;
+    action::ClientEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::GOAL_RESPONSE);
+    ASSERT_EQ(
+        action::ActionServicesClientTestPeer::goal_count(services, "demo"),
+        1U);
+
+    services.clear_all_instances();
+    EXPECT_EQ(
+        action::ActionServicesClientTestPeer::goal_count(services, "demo"),
+        0U);
+    EXPECT_EQ(endpoint->reset_contexts_calls, 1);
+}
+
+TEST(ActionServicesClientGoalInstanceContract, InitializesConfiguredClientEndpoint)
+{
+    auto container = std::make_shared<hakoniwa::pdu::EndpointContainer>(
+        "fibonacci-client", ACTION_CLIENT_CONTAINER_FIXTURE_PATH);
+    ASSERT_EQ(container->initialize(), HAKO_PDU_ERR_OK);
+    action::ActionServicesClient services(
+        "fibonacci-client",
+        "test-client",
+        ACTION_CONFIG_FIXTURE_PATH,
+        "ActionClientEndpointImpl",
+        1000,
+        "virtual");
+
+    ASSERT_TRUE(services.initialize_services(container));
+    EXPECT_TRUE(services.start_all_services());
+    action::PduData packet;
+    EXPECT_TRUE(services.create_goal_buffer("fibonacci", packet));
+    EXPECT_FALSE(packet.empty());
+    EXPECT_FALSE(services.initialize_services(container));
+
+    services.stop_all_services();
+    services.clear_all_instances();
+}
+
+TEST(ActionServicesClientGoalInstanceContract, InitializationRequiresContainer)
+{
+    action::ActionServicesClient services(
+        "fibonacci-client",
+        "test-client",
+        ACTION_CONFIG_FIXTURE_PATH,
+        "ActionClientEndpointImpl",
+        1000,
+        "virtual");
+
+    EXPECT_FALSE(services.initialize_services(nullptr));
 }
 
 TEST(ActionServicesClientGoalInstanceContract, AcceptedResponseCreatesExecutingInstance)

@@ -33,7 +33,21 @@ bool read_endpoint(const nlohmann::json& action,
         error_out = std::string("'") + key + "' must be an object";
         return false;
     }
-    return read_required_text(*it, "nodeId", endpoint_out.node_id, error_out);
+    if (!read_required_text(*it, "nodeId", endpoint_out.node_id, error_out)) {
+        return false;
+    }
+    const auto endpoint_id = it->find("endpointId");
+    if (endpoint_id == it->end()) {
+        endpoint_out.endpoint_id.clear();
+        return true;
+    }
+    if (!endpoint_id->is_string()
+        || endpoint_id->get_ref<const std::string&>().empty()) {
+        error_out = "'endpointId' must be a non-empty string when present";
+        return false;
+    }
+    endpoint_out.endpoint_id = endpoint_id->get<std::string>();
+    return true;
 }
 
 bool read_buffer_heap_size(const nlohmann::json& object,
