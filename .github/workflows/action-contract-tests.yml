@@ -106,6 +106,10 @@ jobs:
           cmake --build endpoint/build --config Release --target hakoniwa_pdu_endpoint --parallel
           cmake --install endpoint/build --config Release --prefix "$env:GITHUB_WORKSPACE/endpoint-install"
           "HAKO_PDU_ENDPOINT_ROOT=$env:GITHUB_WORKSPACE/endpoint-install" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # Some reviewed Action targets are linked to the static RPC library but
+          # still need the shared Endpoint runtime DLL. Make the installed runtime
+          # visible to CTest on Windows instead of relying on per-target staging.
+          "$env:GITHUB_WORKSPACE\endpoint-install\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Doctor
         run: python tools/hako.py doctor
