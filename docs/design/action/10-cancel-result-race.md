@@ -588,10 +588,13 @@ Result保持時間と再取得
 Result送信失敗時のretry / retain / release
 Transport切断中のactive Goal
 Server shutdown時のGoal処理
-Mux connection消滅後のGoal Context所有
 再接続後のResult再配送
 Application response timeout policy
 ```
+
+Mux connection消滅後のGoal Context所有と初期切断Policyは、
+`12-mux-server.md`でMVP契約を確定しました。Result retention、再接続、
+再配送、およびwatchdogは引き続きDeferredです。
 
 実装エージェントは、これらを暗黙に決定または追加実装してはなりません。初版では既存文書で確定済みの範囲だけを実装し、必要な場合は別Issueまたは設計PRへ切り出します。
 

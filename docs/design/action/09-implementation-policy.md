@@ -337,10 +337,8 @@ Expected package layout:
 python/hakoniwa_pdu_rpc/
 ├── cffi_api.py
 ├── client.py
-├── server.py
 ├── future.py
-├── action_client.py
-├── action_server.py
+├── action_cffi.py
 └── ... existing modules
 ```
 
@@ -348,15 +346,22 @@ Additional small Action-specific support modules may be introduced where they cl
 
 ## 9. CFFI integration policy
 
-The low-level Action CFFI wrapper is integrated into the existing:
+The low-level Action CFFI wrapper reuses the shared-library loader and base
+FFI initialization from:
 
 ```text
 python/hakoniwa_pdu_rpc/cffi_api.py
 ```
 
-It should not introduce a separate shared-library loader or parallel FFI initialization path.
+Service RPC、Mux、ActionのC declarationsはすべて`cffi_api.py`が一つの
+`FFI`へ登録します。library pathを正規化した共有`_Binding`をcacheし、
+同じprocessとlibrary pathに対する`ffi`と`dlopen()`結果は一つだけです。
 
-`cffi_api.py` should expose low-level wrappers corresponding to the C ABI:
+Action固有のPython型と操作は`action_cffi.py`に分離しますが、そこに
+`cdef()`、`FFI()`、`dlopen()`は置きません。Muxも同じ共有Bindingを
+使用します。
+
+The package import root exposes wrappers corresponding to the C ABI:
 
 ```text
 RpcClient

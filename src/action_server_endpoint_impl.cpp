@@ -895,6 +895,27 @@ bool ActionServerEndpointImpl::reject_cancel(
     return sent;
 }
 
+bool ActionServerEndpointImpl::accept_cancel_locally(
+    const ServerGoalHandle& goal)
+{
+    if (!goal.valid()) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!initialized_) {
+        return false;
+    }
+    const auto binding = packet_bindings_.find(goal.goal_id);
+    if (binding == packet_bindings_.end()
+        || binding->second.state != PacketBindingState::GOAL_ACCEPTED) {
+        return false;
+    }
+    binding->second.state = PacketBindingState::CANCEL_ACCEPTED;
+    binding->second.cancel_decision_pending = false;
+    return true;
+}
+
 bool ActionServerEndpointImpl::send_feedback(
     const ServerGoalHandle& goal,
     const PduData& feedback_pdu)
@@ -966,29 +987,9 @@ CompleteResult ActionServerEndpointImpl::complete(
     if (binding == packet_bindings_.end()) {
         return CompleteResult::NOT_COMMITTED;
     }
-    const bool executing_completion =
-        binding->second.state == PacketBindingState::GOAL_ACCEPTED
-        && (status == TerminalStatus::SUCCEEDED
-            || status == TerminalStatus::ABORTED);
-    const bool canceling_completion =
-        binding->second.state == PacketBindingState::CANCEL_ACCEPTED
-        && (status == TerminalStatus::CANCELED
-            || status == TerminalStatus::ABORTED);
-    if (!executing_completion && !canceling_completion) {
-        return CompleteResult::NOT_COMMITTED;
-    }
-    if (binding->second.slot_index >= slot_routing_.size()) {
-        return CompleteResult::NOT_COMMITTED;
-    }
-    const auto& routing = slot_routing_[binding->second.slot_index];
     std::size_t wire_size = 0;
-    if (!validate_packet_capacity(
-            result_pdu,
-            routing.response_packet_type,
-            routing.response_packet_base_size,
-            routing.response_heap_capacity,
-            false,
-            wire_size)) {
+    if (!validate_terminal_packet_locked(
+            binding, status, result_pdu, wire_size)) {
         // Invalid Application input must not commit the Goal. The caller may
         // correct the encoded Result and call complete() again.
         return CompleteResult::NOT_COMMITTED;
@@ -1006,6 +1007,82 @@ CompleteResult ActionServerEndpointImpl::complete(
         return CompleteResult::SENT;
     }
     return CompleteResult::SEND_FAILED_AFTER_COMMIT;
+}
+
+bool ActionServerEndpointImpl::complete_locally(
+    const ServerGoalHandle& goal,
+    TerminalStatus status,
+    const PduData& result_pdu)
+{
+    if (!goal.valid()) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!initialized_) {
+        return false;
+    }
+    const auto binding = packet_bindings_.find(goal.goal_id);
+    if (binding == packet_bindings_.end()) {
+        return false;
+    }
+    std::size_t wire_size = 0;
+    if (!validate_terminal_packet_locked(
+            binding, status, result_pdu, wire_size)) {
+        return false;
+    }
+
+    binding->second.state = PacketBindingState::RESULT_COMMITTED;
+    binding->second.cancel_decision_pending = false;
+    release_binding_locked(binding);
+    return true;
+}
+
+bool ActionServerEndpointImpl::discard_pending_goal(
+    const ServerGoalHandle& goal)
+{
+    if (!goal.valid()) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto binding = packet_bindings_.find(goal.goal_id);
+    if (binding == packet_bindings_.end()
+        || binding->second.state
+            != PacketBindingState::AWAITING_GOAL_DECISION) {
+        return false;
+    }
+    release_binding_locked(binding);
+    return true;
+}
+
+bool ActionServerEndpointImpl::validate_terminal_packet_locked(
+    std::map<GoalId, ActionPacketBinding>::iterator binding,
+    TerminalStatus status,
+    const PduData& result_pdu,
+    std::size_t& wire_size_out)
+{
+    const bool executing_completion =
+        binding->second.state == PacketBindingState::GOAL_ACCEPTED
+        && (status == TerminalStatus::SUCCEEDED
+            || status == TerminalStatus::ABORTED);
+    const bool canceling_completion =
+        binding->second.state == PacketBindingState::CANCEL_ACCEPTED
+        && (status == TerminalStatus::CANCELED
+            || status == TerminalStatus::ABORTED);
+    if ((!executing_completion && !canceling_completion)
+        || binding->second.slot_index >= slot_routing_.size()) {
+        return false;
+    }
+
+    const auto& routing = slot_routing_[binding->second.slot_index];
+    return validate_packet_capacity(
+        result_pdu,
+        routing.response_packet_type,
+        routing.response_packet_base_size,
+        routing.response_heap_capacity,
+        false,
+        wire_size_out);
 }
 
 void ActionServerEndpointImpl::clear_pending_events()

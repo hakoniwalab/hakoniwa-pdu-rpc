@@ -36,6 +36,22 @@ def _add_windows_runtime_search_dirs() -> None:
 _add_windows_runtime_search_dirs()
 
 from .auto_wire import ServiceWire, TypedRpcClient, load_service_wire, make_typed_client
+from .action_cffi import (
+    ActionClient,
+    ActionClientEvent,
+    ActionClientPollResult,
+    ActionDecision,
+    ActionError,
+    ActionErrorCode,
+    ActionMuxServer,
+    ActionServer,
+    ActionServerEvent,
+    ActionServerPollResult,
+    ActionTerminalStatus,
+    ClientGoalHandle,
+    RuntimeCancelCause,
+    ServerGoalHandle,
+)
 from .cffi_api import (
     ClientEvent,
     ClientPollResult,
@@ -50,8 +66,20 @@ from .future import RpcFuture
 from .mux_server import RpcMuxServer
 
 __all__ = [
+    "ActionClient",
+    "ActionClientEvent",
+    "ActionClientPollResult",
+    "ActionDecision",
+    "ActionError",
+    "ActionErrorCode",
+    "ActionMuxServer",
+    "ActionServer",
+    "ActionServerEvent",
+    "ActionServerPollResult",
+    "ActionTerminalStatus",
     "CffiRpcClient",
     "ClientEvent",
+    "ClientGoalHandle",
     "ClientPollResult",
     "RpcCanceledError",
     "RpcClient",
@@ -61,10 +89,12 @@ __all__ = [
     "RpcServer",
     "RpcTimeoutError",
     "ServerEvent",
+    "ServerGoalHandle",
     "ServerPollResult",
     "ServiceWire",
     "TypedRpcClient",
     "load_service_wire",
     "make_typed_client",
+    "RuntimeCancelCause",
     "validate_configs",
 ]

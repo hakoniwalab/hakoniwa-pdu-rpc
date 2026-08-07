@@ -426,9 +426,9 @@ Service RPCのようにConnectionSlot削除と同時に全Action Goal Contextを
 
 Transport切断時はServer状態モデルに従い、必要に応じてRuntime起因CancelをApplicationへ通知します。ApplicationがGoalを継続、Cancel、Abortのいずれにするかを決定します。
 
-### 12.1 Mux実装上の設計余地
+### 12.1 初期Mux実装の選択
 
-次の実現方法は後続の実装設計で選択します。
+実現方法として次の選択肢を検討しました。
 
 ```text
 A. Goal ContextをConnectionSlot内のActionServer Runtimeが保持し続ける
@@ -436,7 +436,9 @@ B. 接続断時にGoal Contextを接続非依存Registryへ移管する
 C. Muxより上位に共有ActionServer Runtimeを置き、接続AdapterだけをSlotに持つ
 ```
 
-本アーキテクチャでは方式を確定しませんが、Goal Contextを接続寿命へ従属させないことを要求します。
+初期Mux実装では**方式A**を採用します。接続ごとの`ActionServicesServer`がGoal Contextを保持し、active Goalを持つ切断済み`ConnectionSlot`はorphaned slotとしてterminal完了まで保持します。
+
+Mux自身は`(action_name, goal_id) -> connection_id`のrouting indexだけを持ち、Goal状態を重複管理しません。接続をまたぐGoal IDの一意性、切断時のRuntime Cancel、orphaned slotの回収条件は[Action Mux Server契約](12-mux-server.md)で規定します。
 
 ## 13. BindingとAdapter
 
@@ -483,7 +485,7 @@ ROS 2 Action
 4. 1 Action Typeにつき1 Endpoint Runtimeとするか。
 5. Endpoint callbackをqueue格納のみに限定するか。
 6. Connection lifetimeとGoal lifetimeを分離するか。
-7. MuxでGoal Contextをどの層に保持するかを後続実装設計へ残すか。
+7. MuxでGoal Contextを接続ごとの`ActionServicesServer`に保持し、Muxはrouting indexだけを持つか。
 
 ## 16. 対象外
 
@@ -492,6 +494,6 @@ ROS 2 Action
 - クラスの具体的なメンバー変数
 - queueの物理構成と容量
 - thread safety実装
-- MuxでのGoal Context所有方式の最終決定
+- session resumeおよび接続間のGoal Context migration
 - C API、Python APIの具体的な形
 - ROS 2 executor統合の詳細

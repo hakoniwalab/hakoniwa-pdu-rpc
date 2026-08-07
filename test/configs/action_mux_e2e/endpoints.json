@@ -1,0 +1,13 @@
+[
+  {
+    "nodeId": "fibonacci-client",
+    "endpoints": [
+      {
+        "id": "fibonacci-client-action-tcp",
+        "config_path": "client_endpoint.json",
+        "direction": "inout",
+        "mode": "action-tcp-mux-client"
+      }
+    ]
+  }
+]

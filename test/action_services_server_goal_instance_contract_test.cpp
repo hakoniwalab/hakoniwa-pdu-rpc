@@ -127,6 +127,11 @@ public:
         ++reject_cancel_calls;
         return reject_cancel_result;
     }
+    bool accept_cancel_locally(const action::ServerGoalHandle&) override
+    {
+        ++accept_cancel_locally_calls;
+        return accept_cancel_locally_result;
+    }
     bool create_result_buffer(action::PduData& pdu_out) override
     {
         ++create_result_calls;
@@ -159,6 +164,21 @@ public:
         last_complete_status = status;
         return complete_result;
     }
+    bool complete_locally(
+        const action::ServerGoalHandle&,
+        action::TerminalStatus status,
+        const action::PduData&) override
+    {
+        ++complete_locally_calls;
+        last_complete_status = status;
+        return complete_locally_result;
+    }
+    bool discard_pending_goal(
+        const action::ServerGoalHandle&) override
+    {
+        ++discard_pending_goal_calls;
+        return discard_pending_goal_result;
+    }
     void clear_pending_events() override
     {
         ++clear_pending_events_calls;
@@ -181,7 +201,10 @@ public:
     bool create_result_result{true};
     bool accept_cancel_result{true};
     bool reject_cancel_result{true};
+    bool accept_cancel_locally_result{true};
     bool send_feedback_result{true};
+    bool complete_locally_result{true};
+    bool discard_pending_goal_result{true};
     action::CompleteResult complete_result{action::CompleteResult::SENT};
     int accept_calls{0};
     int reject_calls{0};
@@ -189,8 +212,11 @@ public:
     int create_result_calls{0};
     int accept_cancel_calls{0};
     int reject_cancel_calls{0};
+    int accept_cancel_locally_calls{0};
     int send_feedback_calls{0};
     int complete_calls{0};
+    int complete_locally_calls{0};
+    int discard_pending_goal_calls{0};
     int clear_pending_events_calls{0};
     int reset_contexts_calls{0};
     action::TerminalStatus last_complete_status{

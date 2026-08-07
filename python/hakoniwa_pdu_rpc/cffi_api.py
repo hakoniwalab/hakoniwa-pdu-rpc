@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 
 from cffi import FFI
@@ -41,7 +42,7 @@ class ServerPollResult:
     pdu: bytes
 
 
-_CDEF = r"""
+_RPC_CDEF = r"""
 typedef struct hako_pdu_rpc_client_handle hako_pdu_rpc_client_handle_t;
 typedef struct hako_pdu_rpc_server_handle hako_pdu_rpc_server_handle_t;
 
@@ -95,11 +96,170 @@ hako_pdu_rpc_error_t hako_pdu_rpc_server_send_cancel_reply(
     hako_pdu_rpc_server_handle_t*, uint64_t, const uint8_t*, size_t);
 """
 
+_MUX_CDEF = r"""
+typedef struct hako_pdu_rpc_mux_server_handle hako_pdu_rpc_mux_server_handle_t;
+hako_pdu_rpc_mux_server_handle_t* hako_pdu_rpc_mux_server_create(
+    const char*, const char*, const char*, uint64_t, const char*);
+void hako_pdu_rpc_mux_server_destroy(hako_pdu_rpc_mux_server_handle_t*);
+hako_pdu_rpc_error_t hako_pdu_rpc_mux_server_start(
+    hako_pdu_rpc_mux_server_handle_t*);
+hako_pdu_rpc_error_t hako_pdu_rpc_mux_server_stop(
+    hako_pdu_rpc_mux_server_handle_t*);
+hako_pdu_rpc_server_event_t hako_pdu_rpc_mux_server_poll_alloc(
+    hako_pdu_rpc_mux_server_handle_t*, hako_pdu_rpc_request_info_t*,
+    uint8_t**, size_t*, hako_pdu_rpc_error_t*);
+hako_pdu_rpc_error_t hako_pdu_rpc_mux_server_create_reply_buffer_alloc(
+    hako_pdu_rpc_mux_server_handle_t*, uint64_t, uint8_t, int32_t,
+    uint8_t**, size_t*);
+hako_pdu_rpc_error_t hako_pdu_rpc_mux_server_send_reply(
+    hako_pdu_rpc_mux_server_handle_t*, uint64_t, const uint8_t*, size_t);
+hako_pdu_rpc_error_t hako_pdu_rpc_mux_server_send_cancel_reply(
+    hako_pdu_rpc_mux_server_handle_t*, uint64_t, const uint8_t*, size_t);
+size_t hako_pdu_rpc_mux_server_connected_count(
+    const hako_pdu_rpc_mux_server_handle_t*);
+size_t hako_pdu_rpc_mux_server_expected_count(
+    const hako_pdu_rpc_mux_server_handle_t*);
+int hako_pdu_rpc_mux_server_is_ready(
+    const hako_pdu_rpc_mux_server_handle_t*);
+"""
+
+_ACTION_CDEF = r"""
+typedef struct hako_pdu_action_client_handle hako_pdu_action_client_handle_t;
+typedef struct hako_pdu_action_server_handle hako_pdu_action_server_handle_t;
+typedef struct hako_pdu_action_mux_server_handle hako_pdu_action_mux_server_handle_t;
+typedef int hako_pdu_action_error_t;
+typedef int hako_pdu_action_client_event_t;
+typedef int hako_pdu_action_server_event_t;
+typedef int hako_pdu_action_decision_t;
+typedef int hako_pdu_action_terminal_status_t;
+typedef int hako_pdu_action_runtime_cancel_cause_t;
+typedef struct { uint8_t bytes[16]; } hako_pdu_action_goal_id_t;
+typedef struct { hako_pdu_action_goal_id_t goal_id; }
+    hako_pdu_action_client_goal_handle_t;
+typedef struct { hako_pdu_action_goal_id_t goal_id; }
+    hako_pdu_action_server_goal_handle_t;
+typedef struct {
+    char action_name[128];
+    hako_pdu_action_client_goal_handle_t goal;
+    hako_pdu_action_decision_t decision;
+    hako_pdu_action_terminal_status_t terminal_status;
+    uint32_t feedback_sequence;
+    size_t pdu_size;
+} hako_pdu_action_client_event_info_t;
+typedef struct {
+    char action_name[128];
+    hako_pdu_action_server_goal_handle_t goal;
+    hako_pdu_action_runtime_cancel_cause_t runtime_cancel_cause;
+    size_t pdu_size;
+} hako_pdu_action_server_event_info_t;
+void hako_pdu_action_buffer_free(uint8_t*);
+hako_pdu_action_client_handle_t* hako_pdu_action_client_create(
+    const char*, const char*, const char*, const char*, uint64_t, const char*);
+void hako_pdu_action_client_destroy(hako_pdu_action_client_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_client_start(
+    hako_pdu_action_client_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_client_stop(
+    hako_pdu_action_client_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_client_is_running(
+    hako_pdu_action_client_handle_t*, int*);
+hako_pdu_action_error_t hako_pdu_action_client_create_goal_buffer_alloc(
+    hako_pdu_action_client_handle_t*, const char*, uint8_t**, size_t*);
+hako_pdu_action_error_t hako_pdu_action_client_send_goal(
+    hako_pdu_action_client_handle_t*, const char*, const uint8_t*, size_t,
+    const hako_pdu_action_goal_id_t*, hako_pdu_action_client_goal_handle_t*,
+    uint64_t);
+hako_pdu_action_error_t hako_pdu_action_client_cancel_goal(
+    hako_pdu_action_client_handle_t*, const char*,
+    const hako_pdu_action_client_goal_handle_t*);
+hako_pdu_action_client_event_t hako_pdu_action_client_poll_alloc(
+    hako_pdu_action_client_handle_t*, hako_pdu_action_client_event_info_t*,
+    uint8_t**, size_t*, hako_pdu_action_error_t*);
+hako_pdu_action_server_handle_t* hako_pdu_action_server_create(
+    const char*, const char*, const char*, uint64_t, const char*);
+void hako_pdu_action_server_destroy(hako_pdu_action_server_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_server_start(
+    hako_pdu_action_server_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_server_stop(
+    hako_pdu_action_server_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_server_is_running(
+    hako_pdu_action_server_handle_t*, int*);
+hako_pdu_action_server_event_t hako_pdu_action_server_poll_alloc(
+    hako_pdu_action_server_handle_t*, hako_pdu_action_server_event_info_t*,
+    uint8_t**, size_t*, hako_pdu_action_error_t*);
+hako_pdu_action_error_t hako_pdu_action_server_accept_goal(
+    hako_pdu_action_server_handle_t*, const char*,
+    const hako_pdu_action_server_goal_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_server_reject_goal(
+    hako_pdu_action_server_handle_t*, const char*,
+    const hako_pdu_action_server_goal_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_server_accept_cancel(
+    hako_pdu_action_server_handle_t*, const char*,
+    const hako_pdu_action_server_goal_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_server_reject_cancel(
+    hako_pdu_action_server_handle_t*, const char*,
+    const hako_pdu_action_server_goal_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_server_create_feedback_buffer_alloc(
+    hako_pdu_action_server_handle_t*, const char*, uint8_t**, size_t*);
+hako_pdu_action_error_t hako_pdu_action_server_create_result_buffer_alloc(
+    hako_pdu_action_server_handle_t*, const char*, uint8_t**, size_t*);
+hako_pdu_action_error_t hako_pdu_action_server_send_feedback(
+    hako_pdu_action_server_handle_t*, const char*,
+    const hako_pdu_action_server_goal_handle_t*, const uint8_t*, size_t);
+hako_pdu_action_error_t hako_pdu_action_server_complete(
+    hako_pdu_action_server_handle_t*, const char*,
+    const hako_pdu_action_server_goal_handle_t*,
+    hako_pdu_action_terminal_status_t, const uint8_t*, size_t);
+hako_pdu_action_mux_server_handle_t* hako_pdu_action_mux_server_create(
+    const char*, const char*, const char*, uint64_t, const char*);
+void hako_pdu_action_mux_server_destroy(
+    hako_pdu_action_mux_server_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_mux_server_start(
+    hako_pdu_action_mux_server_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_mux_server_stop(
+    hako_pdu_action_mux_server_handle_t*);
+hako_pdu_action_server_event_t hako_pdu_action_mux_server_poll_alloc(
+    hako_pdu_action_mux_server_handle_t*,
+    hako_pdu_action_server_event_info_t*, uint8_t**, size_t*,
+    hako_pdu_action_error_t*);
+hako_pdu_action_error_t hako_pdu_action_mux_server_accept_goal(
+    hako_pdu_action_mux_server_handle_t*, const char*,
+    const hako_pdu_action_server_goal_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_mux_server_reject_goal(
+    hako_pdu_action_mux_server_handle_t*, const char*,
+    const hako_pdu_action_server_goal_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_mux_server_accept_cancel(
+    hako_pdu_action_mux_server_handle_t*, const char*,
+    const hako_pdu_action_server_goal_handle_t*);
+hako_pdu_action_error_t hako_pdu_action_mux_server_reject_cancel(
+    hako_pdu_action_mux_server_handle_t*, const char*,
+    const hako_pdu_action_server_goal_handle_t*);
+hako_pdu_action_error_t
+hako_pdu_action_mux_server_create_feedback_buffer_alloc(
+    hako_pdu_action_mux_server_handle_t*, const char*, uint8_t**, size_t*);
+hako_pdu_action_error_t hako_pdu_action_mux_server_create_result_buffer_alloc(
+    hako_pdu_action_mux_server_handle_t*, const char*, uint8_t**, size_t*);
+hako_pdu_action_error_t hako_pdu_action_mux_server_send_feedback(
+    hako_pdu_action_mux_server_handle_t*, const char*,
+    const hako_pdu_action_server_goal_handle_t*, const uint8_t*, size_t);
+hako_pdu_action_error_t hako_pdu_action_mux_server_complete(
+    hako_pdu_action_mux_server_handle_t*, const char*,
+    const hako_pdu_action_server_goal_handle_t*,
+    hako_pdu_action_terminal_status_t, const uint8_t*, size_t);
+size_t hako_pdu_action_mux_server_connected_count(
+    const hako_pdu_action_mux_server_handle_t*);
+size_t hako_pdu_action_mux_server_expected_count(
+    const hako_pdu_action_mux_server_handle_t*);
+int hako_pdu_action_mux_server_is_ready(
+    const hako_pdu_action_mux_server_handle_t*);
+"""
+
 
 class _Binding:
     def __init__(self, library_path: str | Path):
         self.ffi = FFI()
-        self.ffi.cdef(_CDEF)
+        self.ffi.cdef(_RPC_CDEF)
+        self.ffi.cdef(_MUX_CDEF)
+        self.ffi.cdef(_ACTION_CDEF)
         self.lib = self.ffi.dlopen(str(library_path))
 
     def encode(self, value: str | Path):
@@ -128,6 +288,30 @@ class _Binding:
             self.lib.hako_pdu_rpc_buffer_free(pointer)
 
 
+_BINDINGS: dict[str, _Binding] = {}
+_BINDINGS_LOCK = Lock()
+
+
+def _get_binding(library_path: str | Path) -> _Binding:
+    requested = Path(library_path).expanduser()
+    if (
+        requested.is_absolute()
+        or requested.exists()
+        or requested.parent != Path(".")
+    ):
+        key = str(requested.resolve())
+    else:
+        # Preserve dlopen-by-soname for callers that rely on the platform
+        # library search path rather than an explicit filesystem path.
+        key = str(library_path)
+    with _BINDINGS_LOCK:
+        binding = _BINDINGS.get(key)
+        if binding is None:
+            binding = _Binding(key)
+            _BINDINGS[key] = binding
+        return binding
+
+
 def _borrow_bytes(binding: _Binding, data: bytes):
     if not data:
         return binding.ffi.NULL
@@ -145,7 +329,7 @@ class RpcClient:
         delta_time_usec: int = 1000,
         time_source_type: str = "real",
     ):
-        self._binding = _Binding(library_path)
+        self._binding = _get_binding(library_path)
         b = self._binding
         self._handle = b.lib.hako_pdu_rpc_client_create(
             b.encode(node_id),
@@ -245,7 +429,7 @@ class RpcServer:
         delta_time_usec: int = 1000,
         time_source_type: str = "real",
     ):
-        self._binding = _Binding(library_path)
+        self._binding = _get_binding(library_path)
         b = self._binding
         self._handle = b.lib.hako_pdu_rpc_server_create(
             b.encode(node_id),

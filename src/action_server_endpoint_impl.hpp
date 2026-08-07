@@ -52,6 +52,7 @@ public:
 
     bool accept_cancel(const ServerGoalHandle& goal) override;
     bool reject_cancel(const ServerGoalHandle& goal) override;
+    bool accept_cancel_locally(const ServerGoalHandle& goal) override;
 
     bool create_result_buffer(PduData& pdu_out) override;
     bool create_feedback_buffer(PduData& pdu_out) override;
@@ -64,6 +65,11 @@ public:
         const ServerGoalHandle& goal,
         TerminalStatus status,
         const PduData& result_pdu) override;
+    bool complete_locally(
+        const ServerGoalHandle& goal,
+        TerminalStatus status,
+        const PduData& result_pdu) override;
+    bool discard_pending_goal(const ServerGoalHandle& goal) override;
 
     void clear_pending_events() override;
     void reset_contexts() override;
@@ -193,6 +199,12 @@ private:
 
     void release_binding_locked(
         std::map<GoalId, ActionPacketBinding>::iterator binding);
+
+    bool validate_terminal_packet_locked(
+        std::map<GoalId, ActionPacketBinding>::iterator binding,
+        TerminalStatus status,
+        const PduData& result_pdu,
+        std::size_t& wire_size_out);
 
     // TODO(binding): retain the ingress Endpoint/connection association when
     // mux or other multi-session transports are connected.

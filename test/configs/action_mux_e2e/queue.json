@@ -1,0 +1,8 @@
+{
+  "type": "buffer",
+  "name": "action_mux_e2e_queue",
+  "store": {
+    "mode": "queue",
+    "depth": 16
+  }
+}

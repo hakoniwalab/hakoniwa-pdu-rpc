@@ -330,6 +330,8 @@ class OperationCompatibilityTests(unittest.TestCase):
             "hakoniwa_pdu_action_client_endpoint_test",
             "hakoniwa_pdu_action_packet_codec_test",
             "hakoniwa_pdu_action_tcp_e2e_test",
+            "hakoniwa_pdu_action_mux_server_test",
+            "hakoniwa_pdu_action_c_api_mux_server_test",
             "hakoniwa_pdu_action_c_api_header_test",
             "hakoniwa_pdu_action_c_api_tcp_e2e_test",
         }

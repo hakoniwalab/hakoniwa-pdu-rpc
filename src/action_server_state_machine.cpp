@@ -205,9 +205,20 @@ ServerTransition transition_server_goal(
                 ServerTransitionKind::NOP);
         }
         if (current.cancel_decision_pending) {
-            return server_result(
+            if (current.cancel_origin == CancelOrigin::RUNTIME) {
+                return server_result(
+                    current,
+                    ServerTransitionKind::NOP);
+            }
+            // A transport disconnect makes the pending Client Cancel wire
+            // response impossible. Preserve the Application decision, but
+            // reclassify it as Runtime-origin so accept/reject does not try
+            // to send on the dead connection.
+            auto result = server_result(
                 current,
-                ServerTransitionKind::NOP);
+                ServerTransitionKind::TRANSITIONED);
+            result.next.cancel_origin = CancelOrigin::RUNTIME;
+            return result;
         } else {
             auto result = server_result(
                 current,

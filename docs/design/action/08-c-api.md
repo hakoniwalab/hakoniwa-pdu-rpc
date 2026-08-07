@@ -551,13 +551,37 @@ hako_pdu_action_mux_server_*
 
 Mux利用時も、Applicationは同じ`action_name + Server Goal Handle`を使用します。Connection identityはRuntime内部へ保持します。
 
+Mux C APIは、point-to-point Serverと同じ操作を次のprefixで提供します。
+
+```text
+hako_pdu_action_mux_server_create / destroy
+hako_pdu_action_mux_server_start / stop
+hako_pdu_action_mux_server_poll / poll_alloc
+hako_pdu_action_mux_server_accept_goal / reject_goal
+hako_pdu_action_mux_server_accept_cancel / reject_cancel
+hako_pdu_action_mux_server_create_feedback_buffer[_alloc]
+hako_pdu_action_mux_server_create_result_buffer[_alloc]
+hako_pdu_action_mux_server_send_feedback
+hako_pdu_action_mux_server_complete
+```
+
+接続状態の観測に限り、Mux固有の次のAPIを追加します。
+
+```text
+hako_pdu_action_mux_server_connected_count
+hako_pdu_action_mux_server_expected_count
+hako_pdu_action_mux_server_is_ready
+```
+
+これらは接続数とready状態だけを返し、Goal操作へconnection IDを要求しません。C層にGoal routing用の独自token registryも作りません。
+
 ただし、Actionでは次を満たす必要があります。
 
 ```text
 Connection lifetime != Goal lifetime
 ```
 
-Connection切断時にGoal Contextを破棄するか、継続するか、Runtime Cancelへ移行するかは設定および後続アーキテクチャ実装で決定します。公開Goal Handleが生のConnectionSlotアドレスやindexへ依存してはいけません。
+Connection切断時のGoal Context、Runtime Cancel、local terminal完了は[Action Mux Server契約](12-mux-server.md)に従います。公開Goal Handleは生のConnectionSlotアドレスやindexへ依存しません。
 
 ## 11. 利用シーケンス
 
@@ -615,6 +639,8 @@ destroy
 - ApplicationへProtocol Header編集を要求しない。
 - Goal／Cancel Responseの未使用bodyはRuntimeが既定値で生成する。
 - Client／Serverともcallbackではなくpollを基準とする。
+- Python CFFIは本C APIのhandle、Goal Handle、poll、error codeを薄く写像し、Python側にGoal状態機械を二重実装しない。
+- Pythonの`*_alloc()`AdapterはNative bufferを`bytes`へcopyし、呼び出し元へ返す前に`hako_pdu_action_buffer_free()`で解放する。
 - Mux APIはstatic server APIと表面的に対称化する。
 
 ## 13. 最小レビュー事項
@@ -628,10 +654,33 @@ destroy
 
 ## 14. 対象外
 
-- 正式なHeader fileのABI確定
-- 全関数の厳密な引数順序
-- Python Action APIおよびFuture設計
+- Python ActionのFuture／callback Adapter設計
 - ROS 2 Action GoalHandleへの具体的マッピング
-- JSON設定Schema
-- Mux切断時のGoal継続ポリシー
-- 実装ファイル配置とCMake追加
+
+## 15. Python CFFI Adapter契約
+
+Python CFFIは、本C APIを次のPython型へ直接写像します。
+
+```text
+hako_pdu_action_client_handle_t -> ActionClient
+hako_pdu_action_server_handle_t -> ActionServer
+hako_pdu_action_mux_server_handle_t -> ActionMuxServer
+Client Goal Handle              -> ClientGoalHandle
+Server Goal Handle              -> ServerGoalHandle
+C error code                    -> ActionErrorCode / ActionError
+Client/Server poll              -> immutable dataclass result
+```
+
+Service RPC、Mux、Actionは一つの`FFI`定義と一つの
+`libhakoniwa_pdu_rpc` loaderを共有します。Action固有の別shared libraryや
+別`dlopen()`経路は作成しません。
+
+Python側のGoal IDは16 byteかつall-zeroでない`bytes`とし、Nativeと同じidentityを保持します。CFFI AdapterはGoal状態機械、slot ownership、timeout policyを再実装しません。
+
+`poll()`とbuffer生成はC APIの`*_alloc()`を使用します。Native bufferはPython `bytes`へcopyし、Python Applicationへ制御を返す前に必ず`hako_pdu_action_buffer_free()`で解放します。Native pointerはPython APIから公開しません。
+
+`ActionError` は`code` に`ActionErrorCode`を保持します。Goal ID重複、slot不足、packet不正、Transport送信失敗などの同期失敗理由は、C APIのerror codeを変更せずPythonへ公開します。
+
+`ActionMuxServer`は`ActionServer`と同じ`ActionServerPollResult`、`ServerGoalHandle`、Goal／Cancel判断、Feedback／Result APIを使用します。Mux固有に公開するのは`connected_count()`、`expected_count()`、`is_ready()`だけで、connection IDやrouting tokenは公開しません。
+
+Python Action APIも初期版は明示的poll型です。Service側の`RpcFuture`やworker threadをAction側に暗黙に適用しません。Future／callback Adapterは必要性とlifecycle契約を確定してから別layerとして追加します。

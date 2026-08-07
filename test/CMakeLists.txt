@@ -164,6 +164,30 @@ target_compile_definitions(hakoniwa_pdu_action_tcp_e2e_test PRIVATE
 add_test(NAME hakoniwa_pdu_action_tcp_e2e_test COMMAND hakoniwa_pdu_action_tcp_e2e_test)
 set_tests_properties(hakoniwa_pdu_action_tcp_e2e_test PROPERTIES TIMEOUT 30)
 
+add_executable(hakoniwa_pdu_action_mux_server_test
+  action_mux_server_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_mux_server_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_compile_definitions(hakoniwa_pdu_action_mux_server_test PRIVATE
+  ACTION_MUX_CONFIG_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_resolved.json"
+  ACTION_MUX_CLIENT_ENDPOINTS_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_mux_e2e/endpoints.json"
+  ACTION_MUX_SERVER_ENDPOINT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_mux_e2e/server_endpoint.json"
+)
+add_test(NAME hakoniwa_pdu_action_mux_server_test COMMAND hakoniwa_pdu_action_mux_server_test)
+set_tests_properties(hakoniwa_pdu_action_mux_server_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_c_api_mux_server_test
+  c_action_mux_server_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_c_api_mux_server_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_compile_definitions(hakoniwa_pdu_action_c_api_mux_server_test PRIVATE
+  ACTION_C_MUX_CONFIG_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_resolved.json"
+  ACTION_C_MUX_CLIENT_ENDPOINTS_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_mux_e2e/endpoints.json"
+  ACTION_C_MUX_SERVER_ENDPOINT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_mux_e2e/server_endpoint.json"
+)
+add_test(NAME hakoniwa_pdu_action_c_api_mux_server_test COMMAND hakoniwa_pdu_action_c_api_mux_server_test)
+set_tests_properties(hakoniwa_pdu_action_c_api_mux_server_test PROPERTIES TIMEOUT 30)
+
 add_executable(hakoniwa_pdu_action_c_api_tcp_e2e_test
   c_action_tcp_e2e_contract_test.cpp
 )
@@ -265,6 +289,8 @@ set(HAKO_PDU_RPC_NATIVE_CONTRACT_TARGETS
   hakoniwa_pdu_action_cancel_response_serialization_test
   hakoniwa_pdu_action_client_endpoint_test
   hakoniwa_pdu_action_packet_codec_test
+  hakoniwa_pdu_action_mux_server_test
+  hakoniwa_pdu_action_c_api_mux_server_test
   hakoniwa_pdu_rpc_basic_test
   hakoniwa_pdu_rpc_mux_server_test
   hakoniwa_pdu_rpc_c_api_mux_server_test

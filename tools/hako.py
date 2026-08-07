@@ -74,6 +74,8 @@ ACTION_CONTRACT_TARGETS = (
     "hakoniwa_pdu_action_client_endpoint_test",
     "hakoniwa_pdu_action_packet_codec_test",
     "hakoniwa_pdu_action_tcp_e2e_test",
+    "hakoniwa_pdu_action_mux_server_test",
+    "hakoniwa_pdu_action_c_api_mux_server_test",
     "hakoniwa_pdu_action_c_api_header_test",
     "hakoniwa_pdu_action_c_api_tcp_e2e_test",
 )
@@ -81,8 +83,8 @@ REVIEWED_TEST_TARGETS = SERVICE_CONTRACT_TARGETS + ACTION_CONTRACT_TARGETS
 REVIEWED_TEST_REGEX = (
     "^hakoniwa_pdu_(rpc_(basic|infinite_wait|timeout_cancel|cancel_race)"
     "|action_(configuration|server_state_machine|services_server_goal_instance|client_state_machine|services_client_goal_instance|server_initialization|goal_response_transaction"
-    "|cancel_response_serialization|client_endpoint|packet_codec|tcp_e2e"
-    "|c_api_(header|tcp_e2e)))_test$"
+    "|cancel_response_serialization|client_endpoint|packet_codec|tcp_e2e|mux_server"
+    "|c_api_(header|tcp_e2e|mux_server)))_test$"
 )
 
 

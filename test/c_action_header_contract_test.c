@@ -26,5 +26,11 @@ _Static_assert(
 int main(void)
 {
     hako_pdu_action_buffer_free(NULL);
+    hako_pdu_action_mux_server_destroy(NULL);
+    if (hako_pdu_action_mux_server_connected_count(NULL) != 0
+        || hako_pdu_action_mux_server_expected_count(NULL) != 0
+        || hako_pdu_action_mux_server_is_ready(NULL) != 0) {
+        return 1;
+    }
     return HAKO_PDU_ACTION_OK == 0 ? 0 : 1;
 }

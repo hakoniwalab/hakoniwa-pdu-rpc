@@ -7,6 +7,7 @@
 #include "hakoniwa/pdu/endpoint.hpp"
 #include "hakoniwa/time_source/time_source.hpp"
 
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -34,6 +35,18 @@ public:
     bool start_all_services();
     void stop_all_services();
     void clear_all_instances();
+
+    // Transport owners use these lifecycle hooks without exposing transport
+    // identity to the Application-facing Goal API.
+    void notify_transport_disconnected();
+    bool discard_pending_goal(
+        const std::string& action_name,
+        const ServerGoalHandle& goal);
+    bool complete_locally(
+        const std::string& action_name,
+        const ServerGoalHandle& goal,
+        TerminalStatus status,
+        const PduData& result_pdu);
 
     ServerEventType poll(std::string& action_name, ServerEvent& event_out);
 
@@ -93,6 +106,12 @@ private:
         ServerEventType event_type,
         ServerEvent& event,
         ServerEvent& event_out);
+    bool complete_goal_locked(
+        ActionInstance& action,
+        GoalInstance& goal_instance,
+        TerminalStatus status,
+        const PduData& result_pdu,
+        bool local_only);
     bool initialize_services_impl(
         std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container,
         std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_override);
@@ -103,6 +122,7 @@ private:
     std::uint64_t delta_time_usec_;
 
     std::vector<ActionInstance> actions_;
+    std::deque<ServerEvent> pending_runtime_events_;
     mutable std::mutex mutex_;
     std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
     std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container_;

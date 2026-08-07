@@ -159,6 +159,27 @@ TEST(ActionServerStateMachineContract, RuntimeCancelUsesSameStateTransition)
     EXPECT_EQ(accepted.next.state, action::GoalState::CANCELING);
 }
 
+TEST(ActionServerStateMachineContract, DisconnectReclassifiesPendingClientCancel)
+{
+    const auto client_requested = action::transition_server_goal(
+        server_context(action::GoalState::EXECUTING),
+        action::ServerGoalEvent::CANCEL_REQUEST_RECEIVED);
+    ASSERT_TRUE(client_requested.transitioned());
+    ASSERT_EQ(
+        client_requested.next.cancel_origin,
+        action::CancelOrigin::CLIENT);
+
+    const auto disconnected = action::transition_server_goal(
+        client_requested.next,
+        action::ServerGoalEvent::RUNTIME_CANCEL_REQUESTED);
+    ASSERT_TRUE(disconnected.transitioned());
+    EXPECT_TRUE(disconnected.next.cancel_decision_pending);
+    EXPECT_EQ(
+        disconnected.next.cancel_origin,
+        action::CancelOrigin::RUNTIME);
+    EXPECT_EQ(disconnected.next.state, action::GoalState::EXECUTING);
+}
+
 TEST(ActionServerStateMachineContract, DuplicateAndLateEventsAreNop)
 {
     for (const auto state : {action::GoalState::EXECUTING,

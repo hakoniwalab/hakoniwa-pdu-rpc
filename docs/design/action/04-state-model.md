@@ -232,6 +232,8 @@ cancel_cause = CLIENT_REQUEST / TRANSPORT_DISCONNECTED / SERVER_SHUTDOWN / ...
 
 Client起因の場合は判断結果をCancel Responseとして配送します。Runtime起因の場合はApplicationへ同じ正規Cancel経路を提供しますが、Cancel Responseの配送先は存在しないためClient応答を生成しません。
 
+Client起因Cancelの判断待ち中にTransportが切断した場合、Wire Responseは不可能になるため、Runtimeは同じ判断待ちを`cancel_origin=RUNTIME`へ変更し、`RUNTIME_CANCEL_REQUESTED(cause=TRANSPORT_DISCONNECTED)`としてApplicationへ再通知します。これにより、その後のaccept／rejectは切断済みTransportへ応答を試みません。
+
 ## 12. Runtime / Transportイベント × 状態マトリクス
 
 | Event | EXECUTING | CANCELING | FINISHING |

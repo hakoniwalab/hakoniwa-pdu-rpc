@@ -32,6 +32,9 @@ public:
     virtual bool reject_goal(const ServerGoalHandle& goal) = 0;
     virtual bool accept_cancel(const ServerGoalHandle& goal) = 0;
     virtual bool reject_cancel(const ServerGoalHandle& goal) = 0;
+    // Runtime-origin Cancel has no wire requester, but the packet binding must
+    // still permit a later CANCELED Result.
+    virtual bool accept_cancel_locally(const ServerGoalHandle& goal) = 0;
 
     // Allocate and initialize a complete generated Action packet using the
     // configured heap capacity. The upper typed layer encodes the body into
@@ -45,6 +48,16 @@ public:
     virtual CompleteResult complete(const ServerGoalHandle& goal,
                                     TerminalStatus status,
                                     const PduData& result_pdu) = 0;
+
+    // Validate and release a terminal Goal after its transport connection is
+    // known to be unavailable. No wire Result is attempted.
+    virtual bool complete_locally(const ServerGoalHandle& goal,
+                                  TerminalStatus status,
+                                  const PduData& result_pdu) = 0;
+
+    // Invalidate one Goal Request that was exposed to the Application but was
+    // never accepted. Active Goal bindings are intentionally not affected.
+    virtual bool discard_pending_goal(const ServerGoalHandle& goal) = 0;
 
     virtual void clear_pending_events() = 0;
 

@@ -1,6 +1,7 @@
 #include "hakoniwa/pdu/action/c_action.h"
 
 #include "hakoniwa/pdu/action/action_services_client.hpp"
+#include "hakoniwa/pdu/action/action_services_mux_server.hpp"
 #include "hakoniwa/pdu/action/action_services_server.hpp"
 #include "hakoniwa/pdu/endpoint_container.hpp"
 
@@ -206,6 +207,13 @@ struct hako_pdu_action_server_handle {
     bool started{false};
 };
 
+struct hako_pdu_action_mux_server_handle {
+    std::unique_ptr<action::ActionServicesMuxServer> services;
+    std::mutex poll_mutex;
+    std::optional<std::pair<std::string, action::ServerEvent>> pending_event;
+    bool started{false};
+};
+
 namespace {
 
 bool stop_client(hako_pdu_action_client_handle_t* handle) noexcept
@@ -258,6 +266,29 @@ bool stop_server(hako_pdu_action_server_handle_t* handle) noexcept
         if (handle->services) {
             handle->services->stop_all_services();
             handle->services->clear_all_instances();
+        }
+    } catch (...) {
+        success = false;
+    }
+    try {
+        std::lock_guard<std::mutex> lock(handle->poll_mutex);
+        handle->pending_event.reset();
+    } catch (...) {
+        success = false;
+    }
+    handle->started = false;
+    return success;
+}
+
+bool stop_mux_server(hako_pdu_action_mux_server_handle_t* handle) noexcept
+{
+    if (handle == nullptr) {
+        return true;
+    }
+    bool success = true;
+    try {
+        if (handle->services) {
+            handle->services->stop();
         }
     } catch (...) {
         success = false;
@@ -1163,6 +1194,506 @@ hako_pdu_action_error_t hako_pdu_action_server_complete(
     } catch (...) {
         return HAKO_PDU_ACTION_ERROR_INTERNAL;
     }
+}
+
+hako_pdu_action_mux_server_handle_t* hako_pdu_action_mux_server_create(
+    const char* node_id,
+    const char* action_config_path,
+    const char* endpoint_mux_config_path,
+    std::uint64_t delta_time_usec,
+    const char* time_source_type)
+{
+    if (!valid_text(node_id) || !valid_text(action_config_path)
+        || !valid_text(endpoint_mux_config_path) || delta_time_usec == 0) {
+        return nullptr;
+    }
+    try {
+        auto handle = std::make_unique<hako_pdu_action_mux_server_handle_t>();
+        handle->services = std::make_unique<action::ActionServicesMuxServer>(
+            node_id,
+            action_config_path,
+            endpoint_mux_config_path,
+            kServerImpl,
+            delta_time_usec,
+            valid_text(time_source_type) ? time_source_type : kDefaultTimeSource);
+        if (!handle->services->initialize()) {
+            return nullptr;
+        }
+        return handle.release();
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void hako_pdu_action_mux_server_destroy(
+    hako_pdu_action_mux_server_handle_t* handle)
+{
+    if (handle == nullptr) {
+        return;
+    }
+    (void)stop_mux_server(handle);
+    delete handle;
+}
+
+hako_pdu_action_error_t hako_pdu_action_mux_server_start(
+    hako_pdu_action_mux_server_handle_t* handle)
+{
+    if (handle == nullptr) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    if (handle->started) {
+        return HAKO_PDU_ACTION_OK;
+    }
+    if (!handle->services) {
+        return HAKO_PDU_ACTION_ERROR_INITIALIZE;
+    }
+    try {
+        if (!handle->services->start()) {
+            return HAKO_PDU_ACTION_ERROR_START;
+        }
+        handle->started = true;
+        return HAKO_PDU_ACTION_OK;
+    } catch (...) {
+        return HAKO_PDU_ACTION_ERROR_INTERNAL;
+    }
+}
+
+hako_pdu_action_error_t hako_pdu_action_mux_server_stop(
+    hako_pdu_action_mux_server_handle_t* handle)
+{
+    if (handle == nullptr) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    return stop_mux_server(handle)
+        ? HAKO_PDU_ACTION_OK
+        : HAKO_PDU_ACTION_ERROR_INTERNAL;
+}
+
+hako_pdu_action_server_event_t hako_pdu_action_mux_server_poll(
+    hako_pdu_action_mux_server_handle_t* handle,
+    hako_pdu_action_server_event_info_t* out_info,
+    std::uint8_t* buffer,
+    std::size_t capacity,
+    std::size_t* out_size,
+    hako_pdu_action_error_t* out_error)
+{
+    if (out_error != nullptr) {
+        *out_error = HAKO_PDU_ACTION_OK;
+    }
+    if (out_size != nullptr) {
+        *out_size = 0;
+    }
+    if (out_info != nullptr) {
+        std::memset(out_info, 0, sizeof(*out_info));
+    }
+    if (handle == nullptr || out_info == nullptr || out_size == nullptr) {
+        if (out_error != nullptr) {
+            *out_error = HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+        }
+        return HAKO_PDU_ACTION_SERVER_EVENT_NONE;
+    }
+    if (!handle->started || !handle->services) {
+        if (out_error != nullptr) {
+            *out_error = HAKO_PDU_ACTION_ERROR_NOT_RUNNING;
+        }
+        return HAKO_PDU_ACTION_SERVER_EVENT_NONE;
+    }
+    try {
+        std::lock_guard<std::mutex> lock(handle->poll_mutex);
+        if (!handle->pending_event.has_value()) {
+            std::string action_name;
+            action::ServerEvent event;
+            const auto type = handle->services->poll(action_name, event);
+            if (type == action::ServerEventType::NONE) {
+                return HAKO_PDU_ACTION_SERVER_EVENT_NONE;
+            }
+            event.type = type;
+            handle->pending_event.emplace(
+                std::move(action_name), std::move(event));
+        }
+        const auto& action_name = handle->pending_event->first;
+        const auto& event = handle->pending_event->second;
+        const auto type = event.type;
+        fill_server_info(action_name, event, *out_info);
+        const auto result = copy_pdu(event.pdu, buffer, capacity, out_size);
+        if (result != HAKO_PDU_ACTION_OK) {
+            if (out_error != nullptr) {
+                *out_error = result;
+            }
+            return HAKO_PDU_ACTION_SERVER_EVENT_NONE;
+        }
+        if (type == action::ServerEventType::ERROR && out_error != nullptr) {
+            *out_error = HAKO_PDU_ACTION_ERROR_INTERNAL;
+        }
+        handle->pending_event.reset();
+        return map_server_event(type);
+    } catch (...) {
+        if (out_error != nullptr) {
+            *out_error = HAKO_PDU_ACTION_ERROR_INTERNAL;
+        }
+        return HAKO_PDU_ACTION_SERVER_EVENT_NONE;
+    }
+}
+
+hako_pdu_action_server_event_t hako_pdu_action_mux_server_poll_alloc(
+    hako_pdu_action_mux_server_handle_t* handle,
+    hako_pdu_action_server_event_info_t* out_info,
+    std::uint8_t** out_buffer,
+    std::size_t* out_size,
+    hako_pdu_action_error_t* out_error)
+{
+    if (out_buffer != nullptr) {
+        *out_buffer = nullptr;
+    }
+    if (out_size != nullptr) {
+        *out_size = 0;
+    }
+    if (out_error != nullptr) {
+        *out_error = HAKO_PDU_ACTION_OK;
+    }
+    if (out_info != nullptr) {
+        std::memset(out_info, 0, sizeof(*out_info));
+    }
+    if (handle == nullptr || out_info == nullptr
+        || out_buffer == nullptr || out_size == nullptr) {
+        if (out_error != nullptr) {
+            *out_error = HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+        }
+        return HAKO_PDU_ACTION_SERVER_EVENT_NONE;
+    }
+    if (!handle->started || !handle->services) {
+        if (out_error != nullptr) {
+            *out_error = HAKO_PDU_ACTION_ERROR_NOT_RUNNING;
+        }
+        return HAKO_PDU_ACTION_SERVER_EVENT_NONE;
+    }
+    try {
+        std::lock_guard<std::mutex> lock(handle->poll_mutex);
+        if (!handle->pending_event.has_value()) {
+            std::string action_name;
+            action::ServerEvent event;
+            const auto type = handle->services->poll(action_name, event);
+            if (type == action::ServerEventType::NONE) {
+                return HAKO_PDU_ACTION_SERVER_EVENT_NONE;
+            }
+            event.type = type;
+            handle->pending_event.emplace(
+                std::move(action_name), std::move(event));
+        }
+        const auto& action_name = handle->pending_event->first;
+        const auto& event = handle->pending_event->second;
+        const auto type = event.type;
+        fill_server_info(action_name, event, *out_info);
+        const auto result = allocate_pdu(event.pdu, out_buffer, out_size);
+        if (result != HAKO_PDU_ACTION_OK) {
+            if (out_error != nullptr) {
+                *out_error = result;
+            }
+            return HAKO_PDU_ACTION_SERVER_EVENT_NONE;
+        }
+        if (type == action::ServerEventType::ERROR && out_error != nullptr) {
+            *out_error = HAKO_PDU_ACTION_ERROR_INTERNAL;
+        }
+        handle->pending_event.reset();
+        return map_server_event(type);
+    } catch (...) {
+        if (out_error != nullptr) {
+            *out_error = HAKO_PDU_ACTION_ERROR_INTERNAL;
+        }
+        return HAKO_PDU_ACTION_SERVER_EVENT_NONE;
+    }
+}
+
+hako_pdu_action_error_t hako_pdu_action_mux_server_accept_goal(
+    hako_pdu_action_mux_server_handle_t* handle,
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal)
+{
+    if (handle == nullptr || !valid_text(action_name) || goal == nullptr) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    if (!handle->started || !handle->services) {
+        return HAKO_PDU_ACTION_ERROR_NOT_RUNNING;
+    }
+    const auto native_goal = to_cpp_goal(*goal);
+    if (!native_goal.valid()) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    try {
+        return handle->services->accept_goal(action_name, native_goal)
+            ? HAKO_PDU_ACTION_OK
+            : HAKO_PDU_ACTION_ERROR_INVALID_STATE;
+    } catch (...) {
+        return HAKO_PDU_ACTION_ERROR_INTERNAL;
+    }
+}
+
+hako_pdu_action_error_t hako_pdu_action_mux_server_reject_goal(
+    hako_pdu_action_mux_server_handle_t* handle,
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal)
+{
+    if (handle == nullptr || !valid_text(action_name) || goal == nullptr) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    if (!handle->started || !handle->services) {
+        return HAKO_PDU_ACTION_ERROR_NOT_RUNNING;
+    }
+    const auto native_goal = to_cpp_goal(*goal);
+    if (!native_goal.valid()) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    try {
+        return handle->services->reject_goal(action_name, native_goal)
+            ? HAKO_PDU_ACTION_OK
+            : HAKO_PDU_ACTION_ERROR_INVALID_STATE;
+    } catch (...) {
+        return HAKO_PDU_ACTION_ERROR_INTERNAL;
+    }
+}
+
+hako_pdu_action_error_t hako_pdu_action_mux_server_accept_cancel(
+    hako_pdu_action_mux_server_handle_t* handle,
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal)
+{
+    if (handle == nullptr || !valid_text(action_name) || goal == nullptr) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    if (!handle->started || !handle->services) {
+        return HAKO_PDU_ACTION_ERROR_NOT_RUNNING;
+    }
+    const auto native_goal = to_cpp_goal(*goal);
+    if (!native_goal.valid()) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    try {
+        return handle->services->accept_cancel(action_name, native_goal)
+            ? HAKO_PDU_ACTION_OK
+            : HAKO_PDU_ACTION_ERROR_INVALID_STATE;
+    } catch (...) {
+        return HAKO_PDU_ACTION_ERROR_INTERNAL;
+    }
+}
+
+hako_pdu_action_error_t hako_pdu_action_mux_server_reject_cancel(
+    hako_pdu_action_mux_server_handle_t* handle,
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal)
+{
+    if (handle == nullptr || !valid_text(action_name) || goal == nullptr) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    if (!handle->started || !handle->services) {
+        return HAKO_PDU_ACTION_ERROR_NOT_RUNNING;
+    }
+    const auto native_goal = to_cpp_goal(*goal);
+    if (!native_goal.valid()) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    try {
+        return handle->services->reject_cancel(action_name, native_goal)
+            ? HAKO_PDU_ACTION_OK
+            : HAKO_PDU_ACTION_ERROR_INVALID_STATE;
+    } catch (...) {
+        return HAKO_PDU_ACTION_ERROR_INTERNAL;
+    }
+}
+
+hako_pdu_action_error_t hako_pdu_action_mux_server_create_feedback_buffer(
+    hako_pdu_action_mux_server_handle_t* handle,
+    const char* action_name,
+    std::uint8_t* buffer,
+    std::size_t capacity,
+    std::size_t* out_size)
+{
+    if (handle == nullptr || !valid_text(action_name) || out_size == nullptr) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    if (!handle->started || !handle->services) {
+        return HAKO_PDU_ACTION_ERROR_NOT_RUNNING;
+    }
+    try {
+        action::PduData pdu;
+        if (!handle->services->create_feedback_buffer(action_name, pdu)) {
+            return HAKO_PDU_ACTION_ERROR_NOT_FOUND;
+        }
+        return copy_pdu(pdu, buffer, capacity, out_size);
+    } catch (...) {
+        return HAKO_PDU_ACTION_ERROR_INTERNAL;
+    }
+}
+
+hako_pdu_action_error_t hako_pdu_action_mux_server_create_feedback_buffer_alloc(
+    hako_pdu_action_mux_server_handle_t* handle,
+    const char* action_name,
+    std::uint8_t** out_buffer,
+    std::size_t* out_size)
+{
+    if (out_buffer != nullptr) {
+        *out_buffer = nullptr;
+    }
+    if (out_size != nullptr) {
+        *out_size = 0;
+    }
+    if (handle == nullptr || !valid_text(action_name)
+        || out_buffer == nullptr || out_size == nullptr) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    if (!handle->started || !handle->services) {
+        return HAKO_PDU_ACTION_ERROR_NOT_RUNNING;
+    }
+    try {
+        action::PduData pdu;
+        if (!handle->services->create_feedback_buffer(action_name, pdu)) {
+            return HAKO_PDU_ACTION_ERROR_NOT_FOUND;
+        }
+        return allocate_pdu(pdu, out_buffer, out_size);
+    } catch (...) {
+        return HAKO_PDU_ACTION_ERROR_INTERNAL;
+    }
+}
+
+hako_pdu_action_error_t hako_pdu_action_mux_server_create_result_buffer(
+    hako_pdu_action_mux_server_handle_t* handle,
+    const char* action_name,
+    std::uint8_t* buffer,
+    std::size_t capacity,
+    std::size_t* out_size)
+{
+    if (handle == nullptr || !valid_text(action_name) || out_size == nullptr) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    if (!handle->started || !handle->services) {
+        return HAKO_PDU_ACTION_ERROR_NOT_RUNNING;
+    }
+    try {
+        action::PduData pdu;
+        if (!handle->services->create_result_buffer(action_name, pdu)) {
+            return HAKO_PDU_ACTION_ERROR_NOT_FOUND;
+        }
+        return copy_pdu(pdu, buffer, capacity, out_size);
+    } catch (...) {
+        return HAKO_PDU_ACTION_ERROR_INTERNAL;
+    }
+}
+
+hako_pdu_action_error_t hako_pdu_action_mux_server_create_result_buffer_alloc(
+    hako_pdu_action_mux_server_handle_t* handle,
+    const char* action_name,
+    std::uint8_t** out_buffer,
+    std::size_t* out_size)
+{
+    if (out_buffer != nullptr) {
+        *out_buffer = nullptr;
+    }
+    if (out_size != nullptr) {
+        *out_size = 0;
+    }
+    if (handle == nullptr || !valid_text(action_name)
+        || out_buffer == nullptr || out_size == nullptr) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    if (!handle->started || !handle->services) {
+        return HAKO_PDU_ACTION_ERROR_NOT_RUNNING;
+    }
+    try {
+        action::PduData pdu;
+        if (!handle->services->create_result_buffer(action_name, pdu)) {
+            return HAKO_PDU_ACTION_ERROR_NOT_FOUND;
+        }
+        return allocate_pdu(pdu, out_buffer, out_size);
+    } catch (...) {
+        return HAKO_PDU_ACTION_ERROR_INTERNAL;
+    }
+}
+
+hako_pdu_action_error_t hako_pdu_action_mux_server_send_feedback(
+    hako_pdu_action_mux_server_handle_t* handle,
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal,
+    const std::uint8_t* pdu,
+    std::size_t pdu_size)
+{
+    if (handle == nullptr || !valid_text(action_name) || goal == nullptr
+        || pdu == nullptr || pdu_size == 0) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    if (!handle->started || !handle->services) {
+        return HAKO_PDU_ACTION_ERROR_NOT_RUNNING;
+    }
+    const auto native_goal = to_cpp_goal(*goal);
+    if (!native_goal.valid()) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    try {
+        return handle->services->send_feedback(
+                   action_name, native_goal, make_pdu(pdu, pdu_size))
+            ? HAKO_PDU_ACTION_OK
+            : HAKO_PDU_ACTION_ERROR_INVALID_STATE;
+    } catch (...) {
+        return HAKO_PDU_ACTION_ERROR_INTERNAL;
+    }
+}
+
+hako_pdu_action_error_t hako_pdu_action_mux_server_complete(
+    hako_pdu_action_mux_server_handle_t* handle,
+    const char* action_name,
+    const hako_pdu_action_server_goal_handle_t* goal,
+    hako_pdu_action_terminal_status_t status,
+    const std::uint8_t* pdu,
+    std::size_t pdu_size)
+{
+    const bool valid_status = status == HAKO_PDU_ACTION_TERMINAL_SUCCEEDED
+        || status == HAKO_PDU_ACTION_TERMINAL_CANCELED
+        || status == HAKO_PDU_ACTION_TERMINAL_ABORTED;
+    if (handle == nullptr || !valid_text(action_name) || goal == nullptr
+        || pdu == nullptr || pdu_size == 0 || !valid_status) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    if (!handle->started || !handle->services) {
+        return HAKO_PDU_ACTION_ERROR_NOT_RUNNING;
+    }
+    const auto native_goal = to_cpp_goal(*goal);
+    if (!native_goal.valid()) {
+        return HAKO_PDU_ACTION_ERROR_INVALID_ARGUMENT;
+    }
+    try {
+        return handle->services->complete(
+                   action_name,
+                   native_goal,
+                   to_cpp_status(status),
+                   make_pdu(pdu, pdu_size))
+            ? HAKO_PDU_ACTION_OK
+            : HAKO_PDU_ACTION_ERROR_INVALID_STATE;
+    } catch (...) {
+        return HAKO_PDU_ACTION_ERROR_INTERNAL;
+    }
+}
+
+std::size_t hako_pdu_action_mux_server_connected_count(
+    const hako_pdu_action_mux_server_handle_t* handle)
+{
+    return handle != nullptr && handle->services
+        ? handle->services->connected_count()
+        : 0;
+}
+
+std::size_t hako_pdu_action_mux_server_expected_count(
+    const hako_pdu_action_mux_server_handle_t* handle)
+{
+    return handle != nullptr && handle->services
+        ? handle->services->expected_count()
+        : 0;
+}
+
+int hako_pdu_action_mux_server_is_ready(
+    const hako_pdu_action_mux_server_handle_t* handle)
+{
+    return handle != nullptr && handle->services
+        && handle->services->is_ready()
+        ? 1
+        : 0;
 }
 
 } // extern "C"

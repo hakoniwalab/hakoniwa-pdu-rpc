@@ -53,6 +53,7 @@ Action対応を実装から逆算して定義するのではなく、先に以�
 10. [実装方針](09-implementation-policy.md)
 11. [Cancel／Result競合契約](10-cancel-result-race.md)
 12. [Endpoint Transaction契約](11-endpoint-transaction-state.md)
+13. [Action Mux Server契約](12-mux-server.md)
 
 推奨する読み順は、概念、責務境界、データモデル、状態モデル、通信プロトコル、競合規約、実装契約の順です。
 

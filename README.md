@@ -1,6 +1,6 @@
 # Hakoniwa PDU-RPC
 
-`hakoniwa-pdu-rpc` is a C++ request/response and long-running Action layer built on `hakoniwa-pdu-endpoint`. It provides a point-to-point Action C API and Python CFFI bindings for typed synchronous and asynchronous Service client integration.
+`hakoniwa-pdu-rpc` is a C++ request/response and long-running Action layer built on `hakoniwa-pdu-endpoint`. It provides point-to-point and TCP Mux Action C APIs and Python CFFI bindings for typed synchronous and asynchronous Service client integration.
 
 It is designed for Hakoniwa-native control-plane communication where explicit lifecycle, endpoint topology, and deterministic/tick-driven integration are more important than general-purpose RPC features.
 
@@ -10,7 +10,7 @@ It is designed for Hakoniwa-native control-plane communication where explicit li
 - Multiple named services and clients.
 - JSON-driven service and endpoint topology.
 - Typed request/response helpers for generated PDU service types.
-- Native C++ and point-to-point C APIs for long-running Action Goal lifecycles.
+- Native C++ and C APIs for point-to-point and TCP Mux Action Goal lifecycles.
 - Python CFFI clients with Registry-generated service auto-wiring.
 - ROS-independent synchronous and asynchronous Python APIs.
 - Explicit polling, timeout, and cancellation semantics.
@@ -589,16 +589,53 @@ the TCP peer is connected, so a sender must observe `is_running != 0` before
 the first Goal. Buffers returned by a `*_alloc()` function belong to the caller
 and must be released with `hako_pdu_action_buffer_free()`.
 
-The initial C API supports point-to-point Action Client and Server operation.
-Mux ownership and Python CFFI are separate follow-up layers. See
+The C API supports point-to-point Action Client/Server operation and a TCP Mux
+Action Server. The Python package exposes the same contract through
+`ActionClient`, `ActionServer`, and `ActionMuxServer`:
+
+```python
+import time
+
+from hakoniwa_pdu_rpc import ActionClient, ActionClientEvent
+
+client = ActionClient(
+    library_path,
+    "fibonacci-client",
+    "my-action-client",
+    action_config_path,
+    endpoint_config_path,
+)
+client.start()
+while not client.is_running():
+    time.sleep(0.001)
+
+goal_pdu = client.create_goal_buffer("fibonacci")
+goal = client.send_goal("fibonacci", goal_pdu, goal_id_bytes)
+event = client.poll()
+```
+
+Python Goal IDs are exactly 16 bytes and must not be all-zero. Native error numbers are exposed
+as `ActionErrorCode`, and `ActionError.code` preserves the precise synchronous
+failure reason. The Python layer copies allocated native buffers into `bytes`
+and releases the native allocation before returning.
+
+Both C and Python Action APIs remain explicitly polled and share the Native
+Goal state machine. `ActionMuxServer` keeps connection identity and routing
+internal; callers continue to use `action_name + ServerGoalHandle`. Higher-level
+Future/callback adapters remain a separate follow-up layer. See
 [`docs/design/action/08-c-api.md`](docs/design/action/08-c-api.md) for the full
 contract.
+
+Service RPC, RPC Mux, and Action register their C declarations in one CFFI
+binding and load the same `libhakoniwa_pdu_rpc` shared library. The binding is
+cached by normalized library path, so they share one `FFI` and one `dlopen()`
+result within a process. No Action-specific shared library is introduced.
 
 ## Scheduling Model
 
 The native C++ RPC API intentionally uses `poll()` instead of imposing worker threads or a scheduler. This lets the caller choose simulation tick alignment, sleep/backoff policy, scheduling order, and integration with an existing deterministic main loop.
 
-The Python high-level `call_async()` adapter makes a different tradeoff: it drives the same RPC lifecycle state machine in a daemon worker and exposes completion through `RpcFuture`. This is suitable for ROS executors, GUIs, and other callback-oriented applications, while the C++ layer remains explicitly scheduled.
+The Python high-level Service `call_async()` adapter makes a different tradeoff: it drives the same RPC lifecycle state machine in a daemon worker and exposes completion through `RpcFuture`. This is suitable for ROS executors, GUIs, and other callback-oriented applications. The initial Python Action CFFI API remains explicitly polled; a Future/callback Action adapter is not implied by the Service implementation.
 
 In both cases, the RPC implementation owns state transitions. The selected application adapter owns how completion is integrated into its execution model.
 
