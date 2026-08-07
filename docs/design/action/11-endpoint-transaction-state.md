@@ -239,6 +239,7 @@ Clientは`AWAITING_CANCEL_RESPONSE`中の`CANCELED` Resultを受理しません�
 - Cancel accept／reject Response失敗後にpending判断を維持すること。
 - Cancel ResponseよりCANCELED Resultが先に送信されないこと。
 - Result送信失敗時に`RESULT_COMMITTED`とslot ownershipを保持すること。
+- `complete()`は送信前拒否を`NOT_COMMITTED`、送信成功を`SENT`、terminal commit後の送信失敗を`SEND_FAILED_AFTER_COMMIT`として区別すること。
 - duplicate Goal／slot collisionへREJECTを返すこと。
 - 自動REJECT送信失敗をERRORログへ記録すること。
 - 無応答Cancelの理由をWARNINGログへ記録すること。

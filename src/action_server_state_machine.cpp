@@ -5,11 +5,10 @@ namespace {
 
 ServerTransition server_result(
     const ServerGoalContext& current,
-    TransitionDecision decision,
-    TransitionEffect effects = TransitionEffect::NONE,
-    TransitionCommit commit = TransitionCommit::IMMEDIATE) noexcept
+    ServerTransitionKind kind,
+    ServerTransitionError error = ServerTransitionError::NONE) noexcept
 {
-    return ServerTransition{decision, current, effects, commit};
+    return ServerTransition{kind, current, error};
 }
 
 bool is_goal_state(GoalState state) noexcept
@@ -54,14 +53,15 @@ ServerTransition complete_server_goal(
     if (!allowed) {
         return server_result(
             current,
-            TransitionDecision::APPLICATION_API_ERROR,
-            TransitionEffect::RECORD_DIAGNOSTIC);
+            ServerTransitionKind::ERROR,
+            status == TerminalStatus::UNSPECIFIED
+                ? ServerTransitionError::INVALID_TERMINAL_STATUS
+                : ServerTransitionError::EVENT_NOT_ALLOWED);
     }
 
     auto result = server_result(
         current,
-        TransitionDecision::ALLOW,
-        TransitionEffect::COMMIT_RESULT);
+        ServerTransitionKind::TRANSITIONED);
     result.next.state = GoalState::FINISHING;
     result.next.cancel_decision_pending = false;
     result.next.cancel_origin = CancelOrigin::NONE;
@@ -71,15 +71,15 @@ ServerTransition complete_server_goal(
 
 } // namespace
 
-ServerTransition reduce_server_goal(
+ServerTransition transition_server_goal(
     const ServerGoalContext& current,
     ServerGoalEvent event) noexcept
 {
     if (!is_valid_server_context(current)) {
         return server_result(
             current,
-            TransitionDecision::INVARIANT_VIOLATION,
-            TransitionEffect::RECORD_DIAGNOSTIC);
+            ServerTransitionKind::ERROR,
+            ServerTransitionError::INVALID_CONTEXT);
     }
 
     switch (event) {
@@ -88,13 +88,12 @@ ServerTransition reduce_server_goal(
             || current.state == GoalState::CANCELING) {
             return server_result(
                 current,
-                TransitionDecision::ALLOW,
-                TransitionEffect::PUBLISH_FEEDBACK);
+                ServerTransitionKind::NOP);
         }
         return server_result(
             current,
-            TransitionDecision::APPLICATION_API_ERROR,
-            TransitionEffect::RECORD_DIAGNOSTIC);
+            ServerTransitionKind::ERROR,
+            ServerTransitionError::EVENT_NOT_ALLOWED);
 
     case ServerGoalEvent::COMPLETE_SUCCEEDED:
         return complete_server_goal(current, TerminalStatus::SUCCEEDED);
@@ -105,33 +104,28 @@ ServerTransition reduce_server_goal(
     case ServerGoalEvent::COMPLETE_UNSPECIFIED:
         return server_result(
             current,
-            TransitionDecision::APPLICATION_API_ERROR,
-            TransitionEffect::RECORD_DIAGNOSTIC);
+            ServerTransitionKind::ERROR,
+            ServerTransitionError::INVALID_TERMINAL_STATUS);
 
     case ServerGoalEvent::ACCEPT_CANCEL:
     case ServerGoalEvent::REJECT_CANCEL: {
-        if (current.state != GoalState::EXECUTING
-            || !current.cancel_decision_pending
+        if (current.state != GoalState::EXECUTING) {
+            return server_result(
+                current,
+                ServerTransitionKind::ERROR,
+                ServerTransitionError::EVENT_NOT_ALLOWED);
+        }
+        if (!current.cancel_decision_pending
             || current.cancel_origin == CancelOrigin::NONE) {
             return server_result(
                 current,
-                TransitionDecision::APPLICATION_API_ERROR,
-                TransitionEffect::RECORD_DIAGNOSTIC);
+                ServerTransitionKind::ERROR,
+                ServerTransitionError::CANCEL_DECISION_NOT_PENDING);
         }
         const bool accepted = event == ServerGoalEvent::ACCEPT_CANCEL;
-        auto effects = TransitionEffect::NONE;
-        if (current.cancel_origin == CancelOrigin::CLIENT) {
-            effects = accepted
-                ? TransitionEffect::SEND_CANCEL_RESPONSE_ACCEPTED
-                : TransitionEffect::SEND_CANCEL_RESPONSE_REJECTED;
-        }
         auto result = server_result(
             current,
-            TransitionDecision::ALLOW,
-            effects,
-            current.cancel_origin == CancelOrigin::CLIENT
-                ? TransitionCommit::AFTER_EFFECT_SUCCESS
-                : TransitionCommit::IMMEDIATE);
+            ServerTransitionKind::TRANSITIONED);
         result.next.state = accepted
             ? GoalState::CANCELING
             : GoalState::EXECUTING;
@@ -145,13 +139,11 @@ ServerTransition reduce_server_goal(
             || current.cancel_decision_pending) {
             return server_result(
                 current,
-                TransitionDecision::IGNORE,
-                TransitionEffect::RECORD_DIAGNOSTIC);
+                ServerTransitionKind::NOP);
         } else {
             auto result = server_result(
                 current,
-                TransitionDecision::DEFER,
-                TransitionEffect::NOTIFY_CANCEL_REQUEST);
+                ServerTransitionKind::TRANSITIONED);
             result.next.cancel_decision_pending = true;
             result.next.cancel_origin = CancelOrigin::CLIENT;
             return result;
@@ -160,77 +152,66 @@ ServerTransition reduce_server_goal(
     case ServerGoalEvent::DUPLICATE_CANCEL_REQUEST_RECEIVED:
         return server_result(
             current,
-            TransitionDecision::IGNORE,
-            TransitionEffect::RECORD_DIAGNOSTIC);
+            ServerTransitionKind::NOP);
 
     case ServerGoalEvent::DUPLICATE_GOAL_REQUEST_RECEIVED:
         return server_result(
             current,
-            TransitionDecision::PROTOCOL_REJECT,
-            TransitionEffect::SEND_PROTOCOL_REJECT);
+            ServerTransitionKind::NOP);
 
     case ServerGoalEvent::FEEDBACK_SEND_COMPLETED:
-        return server_result(current, TransitionDecision::ALLOW);
+        return server_result(current, ServerTransitionKind::NOP);
     case ServerGoalEvent::FEEDBACK_SEND_FAILED:
         return server_result(
             current,
-            TransitionDecision::DEFER,
-            TransitionEffect::NOTIFY_RUNTIME_ERROR
-                | TransitionEffect::DEFER_TO_POLICY);
+            ServerTransitionKind::NOP);
 
     case ServerGoalEvent::RESULT_SEND_COMPLETED:
         if (current.state == GoalState::FINISHING) {
             return server_result(
                 current,
-                TransitionDecision::ALLOW,
-                TransitionEffect::RELEASE_GOAL);
+                ServerTransitionKind::NOP);
         }
         return server_result(
             current,
-            TransitionDecision::INVARIANT_VIOLATION,
-            TransitionEffect::RECORD_DIAGNOSTIC);
+            ServerTransitionKind::ERROR,
+            ServerTransitionError::EVENT_NOT_ALLOWED);
 
     case ServerGoalEvent::RESULT_SEND_FAILED:
         if (current.state == GoalState::FINISHING) {
             return server_result(
                 current,
-                TransitionDecision::DEFER,
-                TransitionEffect::NOTIFY_RUNTIME_ERROR
-                    | TransitionEffect::DEFER_TO_POLICY);
+                ServerTransitionKind::NOP);
         }
         return server_result(
             current,
-            TransitionDecision::INVARIANT_VIOLATION,
-            TransitionEffect::RECORD_DIAGNOSTIC);
+            ServerTransitionKind::ERROR,
+            ServerTransitionError::EVENT_NOT_ALLOWED);
 
     case ServerGoalEvent::TRANSPORT_DISCONNECTED:
     case ServerGoalEvent::APPLICATION_RESPONSE_TIMEOUT:
     case ServerGoalEvent::SERVER_SHUTDOWN_REQUESTED:
         return server_result(
             current,
-            TransitionDecision::DEFER,
-            TransitionEffect::DEFER_TO_POLICY);
+            ServerTransitionKind::NOP);
 
     case ServerGoalEvent::RUNTIME_CANCEL_REQUESTED:
         if (current.state == GoalState::CANCELING) {
-            return server_result(current, TransitionDecision::IDEMPOTENT);
+            return server_result(current, ServerTransitionKind::NOP);
         }
         if (current.state == GoalState::FINISHING) {
             return server_result(
                 current,
-                TransitionDecision::IGNORE,
-                TransitionEffect::RECORD_DIAGNOSTIC);
+                ServerTransitionKind::NOP);
         }
         if (current.cancel_decision_pending) {
             return server_result(
                 current,
-                TransitionDecision::IGNORE,
-                TransitionEffect::RECORD_DIAGNOSTIC);
+                ServerTransitionKind::NOP);
         } else {
             auto result = server_result(
                 current,
-                TransitionDecision::DEFER,
-                TransitionEffect::NOTIFY_CANCEL_REQUEST);
+                ServerTransitionKind::TRANSITIONED);
             result.next.cancel_decision_pending = true;
             result.next.cancel_origin = CancelOrigin::RUNTIME;
             return result;
@@ -239,8 +220,28 @@ ServerTransition reduce_server_goal(
 
     return server_result(
         current,
-        TransitionDecision::INVARIANT_VIOLATION,
-        TransitionEffect::RECORD_DIAGNOSTIC);
+        ServerTransitionKind::ERROR,
+        ServerTransitionError::UNKNOWN_EVENT);
+}
+
+std::string_view server_transition_error_name(
+    ServerTransitionError error) noexcept
+{
+    switch (error) {
+    case ServerTransitionError::NONE:
+        return "none";
+    case ServerTransitionError::INVALID_CONTEXT:
+        return "invalid_context";
+    case ServerTransitionError::EVENT_NOT_ALLOWED:
+        return "event_not_allowed";
+    case ServerTransitionError::CANCEL_DECISION_NOT_PENDING:
+        return "cancel_decision_not_pending";
+    case ServerTransitionError::INVALID_TERMINAL_STATUS:
+        return "invalid_terminal_status";
+    case ServerTransitionError::UNKNOWN_EVENT:
+        return "unknown_event";
+    }
+    return "unknown_error";
 }
 
 } // namespace hakoniwa::pdu::action

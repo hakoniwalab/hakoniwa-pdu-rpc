@@ -8,6 +8,15 @@
 
 namespace hakoniwa::pdu::action {
 
+// Terminal completion has a commit point before the Result wire send. This
+// outcome distinguishes retryable validation rejection from an indeterminate
+// delivery failure after that commit.
+enum class CompleteResult : std::uint8_t {
+    NOT_COMMITTED,
+    SENT,
+    SEND_FAILED_AFTER_COMMIT,
+};
+
 class IActionServerEndpoint {
 public:
     virtual ~IActionServerEndpoint() = default;
@@ -33,9 +42,9 @@ public:
 
     virtual bool send_feedback(const ServerGoalHandle& goal,
                                const PduData& feedback_pdu) = 0;
-    virtual bool complete(const ServerGoalHandle& goal,
-                          TerminalStatus status,
-                          const PduData& result_pdu) = 0;
+    virtual CompleteResult complete(const ServerGoalHandle& goal,
+                                    TerminalStatus status,
+                                    const PduData& result_pdu) = 0;
 
     virtual void clear_pending_events() = 0;
 

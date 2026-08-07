@@ -1,9 +1,9 @@
 #pragma once
 
-#include "action_state_machine.hpp"
 #include "action_types.hpp"
 
 #include <cstdint>
+#include <string_view>
 
 namespace hakoniwa::pdu::action {
 
@@ -36,20 +36,61 @@ enum class ServerGoalEvent : std::uint8_t {
 
 struct ServerGoalContext {
     GoalState state{GoalState::EXECUTING};
+
+    // true after a Client- or Runtime-origin Cancel Request has been exposed
+    // to the Application, and until the Application decides whether to accept
+    // or reject that cancellation. This is an Application decision state; it
+    // does not mean that the Goal has already entered CANCELING.
     bool cancel_decision_pending{false};
+
+    // Identifies which side requested the cancellation while the Application
+    // decision above is pending. A Client-origin decision requires a wire
+    // response; a Runtime-origin decision does not.
     CancelOrigin cancel_origin{CancelOrigin::NONE};
     TerminalStatus terminal_status{TerminalStatus::UNSPECIFIED};
 };
 
-struct ServerTransition {
-    TransitionDecision decision{TransitionDecision::INVARIANT_VIOLATION};
-    ServerGoalContext next{};
-    TransitionEffect effects{TransitionEffect::NONE};
-    TransitionCommit commit{TransitionCommit::IMMEDIATE};
+enum class ServerTransitionKind : std::uint8_t {
+    TRANSITIONED,
+    NOP,
+    ERROR,
 };
 
-ServerTransition reduce_server_goal(
+enum class ServerTransitionError : std::uint8_t {
+    NONE,
+    INVALID_CONTEXT,
+    EVENT_NOT_ALLOWED,
+    CANCEL_DECISION_NOT_PENDING,
+    INVALID_TERMINAL_STATUS,
+    UNKNOWN_EVENT,
+};
+
+struct ServerTransition {
+    ServerTransitionKind kind{ServerTransitionKind::ERROR};
+    ServerGoalContext next{};
+    ServerTransitionError error{ServerTransitionError::INVALID_CONTEXT};
+
+    bool transitioned() const noexcept
+    {
+        return kind == ServerTransitionKind::TRANSITIONED;
+    }
+
+    bool is_nop() const noexcept
+    {
+        return kind == ServerTransitionKind::NOP;
+    }
+
+    bool is_error() const noexcept
+    {
+        return kind == ServerTransitionKind::ERROR;
+    }
+};
+
+ServerTransition transition_server_goal(
     const ServerGoalContext& current,
     ServerGoalEvent event) noexcept;
+
+std::string_view server_transition_error_name(
+    ServerTransitionError error) noexcept;
 
 } // namespace hakoniwa::pdu::action

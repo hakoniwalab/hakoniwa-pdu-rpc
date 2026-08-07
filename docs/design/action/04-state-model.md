@@ -357,11 +357,11 @@ Applicationハング、complete忘れ、Runtimeの致命的内部障害をtermin
 
 - GoalインスタンスはApplicationのaccept後、`EXECUTING`で生成する。
 - `CANCELING`中のFeedbackを許可する。
-- `CANCELING`中の`COMPLETE_SUCCEEDED`は`APPLICATION_API_ERROR`とし、状態を変更しない。
+- `CANCELING`中の`COMPLETE_SUCCEEDED`は`ERROR(EVENT_NOT_ALLOWED)`とし、状態を変更しない。
 - accept済みGoalは`EXECUTING`、`CANCELING`、`FINISHING`の3状態をMUSTで持つ。
 - `UNKNOWN_GOAL_ID_REQUEST_RECEIVED`はper-goal状態マトリクスではなくRuntime dispatcherで扱う。
 - Cancel Request受信だけでは`CANCELING`へ遷移しない。
-- `ACCEPT_CANCEL`および`REJECT_CANCEL`はCancel判断待ちContextが存在する場合だけ有効とし、二重呼び出しは`APPLICATION_API_ERROR`とする。
+- `ACCEPT_CANCEL`および`REJECT_CANCEL`はCancel判断待ちContextが存在する場合だけ有効とし、二重呼び出しは`ERROR(CANCEL_DECISION_NOT_PENDING)`とする。
 - Cancel Requestの重複相関方式は後続のProtocol文書で定義する。
 - Runtime起因の停止要求は`RUNTIME_CANCEL_REQUESTED(goal_id, cause)`でApplicationの正規Cancel経路へ流す。
 - 通信切断だけではGoalのterminal statusを変更しない。
@@ -394,12 +394,12 @@ Applicationハング、complete忘れ、Runtimeの致命的内部障害をtermin
 初版Runtimeは、本書の確定済みマトリクスをTransport非依存の純粋関数として実装します。
 
 ```cpp
-ServerTransition reduce_server_goal(
+ServerTransition transition_server_goal(
     const ServerGoalContext& current,
     ServerGoalEvent event);
 ```
 
-Server固有のContext、Event、reducerは`action_server_state_machine.hpp`／`action_server_state_machine.cpp`に置きます。`action_state_machine.hpp`はServer／Clientが共有する遷移結果の語彙だけを定義します。いずれもPDU、Endpoint、時刻、mutex、Application callbackを参照しません。
+Server固有のContext、Event、状態遷移関数は`action_server_state_machine.hpp`／`action_server_state_machine.cpp`に置きます。PDU、Endpoint、時刻、mutex、Application callbackを参照しません。
 
 ```text
 入力:
@@ -410,37 +410,48 @@ Server固有のContext、Event、reducerは`action_server_state_machine.hpp`／`
   ServerGoalEvent
 
 出力:
-  TransitionDecision
+  TRANSITIONED / NOP / ERROR
   next context
-  semantic effects
-  commit timing
+  ERRORの場合のreason
 ```
 
-`semantic effects`はpacket操作ではありません。`SEND_CANCEL_RESPONSE_ACCEPTED`、`COMMIT_RESULT`、`RELEASE_GOAL`など、上位Services層がProtocol処理へ変換する意味上の指示です。
+`TRANSITIONED`は`GoalState`だけでなく、`cancel_decision_pending`、`cancel_origin`、`terminal_status`を含むContext全体のいずれかが変更されたことを表します。例えばCancel Request受信とCancel rejectは、どちらもprimary stateが`EXECUTING`のままでもContextが変わるため`TRANSITIONED`です。
 
-commit timingは次の二種類です。
+`NOP`は正当なイベントだがContextが変化しないことを表します。Feedback可能状態の`PUBLISH_FEEDBACK`、重複Cancel、`FINISHING`でのResult送信完了などが該当します。状態遷移関数は、NOP後に通信やApplication通知を行うかどうかを指示しません。呼び出したイベントの意味に従って`ActionServicesServer`が判断します。
+
+`ERROR`は状態遷移できないことを表し、`INVALID_CONTEXT`、`EVENT_NOT_ALLOWED`、`CANCEL_DECISION_NOT_PENDING`、`INVALID_TERMINAL_STATUS`などのreasonを必ず伴います。状態遷移関数自身はログを出さず、Services層がreasonを診断ログへ変換します。
+
+状態遷移関数はnext contextを提案するだけで、現在Contextを変更しません。next contextをいつ反映するかはI/O順序を知る`ActionServicesServer`が決めます。例えばClient起因Cancel acceptは、Cancel Response送信成功後にnext contextを反映します。terminal ResultではEndpointがpacket bindingを送信前に`RESULT_COMMITTED`へ変更し、その3値結果に合わせてServices層がGoal Contextを解放または`FINISHING`で保持します。
+
+Endpointのterminal Result送信結果はboolではなく、次の3値でServices層へ返します。
 
 ```text
-IMMEDIATE:
-  effectの成否と独立して意味状態をcommitする
-  例: terminal Result commit
+NOT_COMMITTED:
+  packet、Goal、statusなどの送信前検証に失敗
+  上位Contextは元状態を維持し、Applicationは入力を修正して再試行できる
 
-AFTER_EFFECT_SUCCESS:
-  effectが成功した場合だけnext contextをcommitする
-  例: Client起因Cancel Response、Client Cancel Request送信
+SENT:
+  terminal commitとResult送信が成功
+  Services層は対応するGoalInstanceを解放できる
+
+SEND_FAILED_AFTER_COMMIT:
+  terminal commit後の同期送信に失敗
+  Services層はFINISHINGのGoalInstanceを保持し、二重Resultを禁止する
 ```
+
+この3値はTransport結果を状態遷移関数へ持ち込むためのものではありません。Endpointだけが知るpacket bindingのcommit位置を、Goal Contextの所有者であるServices層へ伝える境界です。
 
 初版では曖昧だったセルを次へ固定します。
 
-- `FINISHING`中の重複`COMPLETE_*`は`APPLICATION_API_ERROR`。
-- `EXECUTING`中の`COMPLETE_CANCELED`は`APPLICATION_API_ERROR`。
-- Cancel判断待ち中の追加Cancelは`IGNORE`し、既存Contextを維持する。
-- Runtime起因Cancelが既存Cancel判断と競合した場合は`IGNORE`し、originを上書きしない。
-- Result送信失敗、切断、shutdown、timeoutはterminal statusを生成せず`DEFER`する。
+- `FINISHING`中の重複`COMPLETE_*`は`ERROR(EVENT_NOT_ALLOWED)`。
+- `EXECUTING`中の`COMPLETE_CANCELED`は`ERROR(EVENT_NOT_ALLOWED)`。
+- Cancel判断待ち中の追加Cancelは`NOP`とし、既存Contextを維持する。
+- Runtime起因Cancelが既存Cancel判断と競合した場合は`NOP`とし、originを上書きしない。
+- Result送信失敗、切断、shutdown、timeoutはterminal statusを生成せず`NOP`とする。保持・再試行・解放PolicyはServices／Runtime層で扱う。
 
-`ActionServicesServer`は自身が所有するmutex内で、対応する`GoalInstance`のcontextをreducerへ渡し、`TransitionCommit`に従ってnext contextを適用します。状態核自身へ排他やI/Oを持ち込みません。初期実装では独立したGoal Transactionクラスを作りません。
+`ActionServicesServer`は自身が所有するmutex内で、対応する`GoalInstance`のcontextとeventを状態遷移関数へ渡します。`TRANSITIONED`の場合は必要なI/O順序を満たした時点でnext contextを適用し、`NOP`ではContextを維持し、`ERROR`ではreasonをログに残します。状態核自身へ排他やI/Oを持ち込みません。初期実装では独立したGoal Transactionクラスを作りません。
 
-受信イベントとの接続は`ActionServicesServer::poll()`で行います。`GOAL_REQUEST`はaccept前なのでGoal状態を生成せずApplicationへ渡します。`CANCEL_REQUEST`と`RUNTIME_CANCEL_REQUEST`は、既存の`GoalInstance`を検索してReducerへ入力し、`NOTIFY_CANCEL_REQUEST`が返った場合だけApplicationへ通知します。
+受信イベントとの接続は`ActionServicesServer::poll()`で行います。`GOAL_REQUEST`はaccept前なのでGoal状態を生成せずApplicationへ渡します。`CANCEL_REQUEST`と`RUNTIME_CANCEL_REQUEST`は、既存の`GoalInstance`を検索して状態遷移関数へ入力し、`TRANSITIONED`の場合だけnext contextを保存してApplicationへ通知します。`NOP`の重複・遅延Cancelは通知せず消費します。
 - Applicationのハング、complete忘れ、watchdog
 - Runtimeが正規のイベント処理を継続できない致命的障害
 - 状態・イベント処理の排他実装

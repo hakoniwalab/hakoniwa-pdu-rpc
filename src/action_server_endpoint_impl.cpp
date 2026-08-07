@@ -949,22 +949,22 @@ bool ActionServerEndpointImpl::send_feedback(
     return true;
 }
 
-bool ActionServerEndpointImpl::complete(
+CompleteResult ActionServerEndpointImpl::complete(
     const ServerGoalHandle& goal,
     TerminalStatus status,
     const PduData& result_pdu)
 {
     if (!goal.valid()) {
-        return false;
+        return CompleteResult::NOT_COMMITTED;
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initialized_) {
-        return false;
+        return CompleteResult::NOT_COMMITTED;
     }
     const auto binding = packet_bindings_.find(goal.goal_id);
     if (binding == packet_bindings_.end()) {
-        return false;
+        return CompleteResult::NOT_COMMITTED;
     }
     const bool executing_completion =
         binding->second.state == PacketBindingState::GOAL_ACCEPTED
@@ -975,10 +975,10 @@ bool ActionServerEndpointImpl::complete(
         && (status == TerminalStatus::CANCELED
             || status == TerminalStatus::ABORTED);
     if (!executing_completion && !canceling_completion) {
-        return false;
+        return CompleteResult::NOT_COMMITTED;
     }
     if (binding->second.slot_index >= slot_routing_.size()) {
-        return false;
+        return CompleteResult::NOT_COMMITTED;
     }
     const auto& routing = slot_routing_[binding->second.slot_index];
     std::size_t wire_size = 0;
@@ -991,7 +991,7 @@ bool ActionServerEndpointImpl::complete(
             wire_size)) {
         // Invalid Application input must not commit the Goal. The caller may
         // correct the encoded Result and call complete() again.
-        return false;
+        return CompleteResult::NOT_COMMITTED;
     }
 
     binding->second.state = PacketBindingState::RESULT_COMMITTED;
@@ -1003,8 +1003,9 @@ bool ActionServerEndpointImpl::complete(
         result_pdu);
     if (sent) {
         release_binding_locked(binding);
+        return CompleteResult::SENT;
     }
-    return sent;
+    return CompleteResult::SEND_FAILED_AFTER_COMMIT;
 }
 
 void ActionServerEndpointImpl::clear_pending_events()

@@ -244,7 +244,7 @@ TEST(ActionGoalResponseTransactionContract, AcceptResponsePrecedesResult)
     const auto result = result_packet(action_server);
 
     bool accepted = false;
-    bool result_completed = false;
+    auto result_completed = action::CompleteResult::NOT_COMMITTED;
     std::thread accept_thread([&] {
         accepted = action_server->accept_goal(event.goal);
     });
@@ -264,7 +264,7 @@ TEST(ActionGoalResponseTransactionContract, AcceptResponsePrecedesResult)
     accept_thread.join();
     complete_thread.join();
     ASSERT_TRUE(accepted);
-    ASSERT_TRUE(result_completed);
+    ASSERT_EQ(result_completed, action::CompleteResult::SENT);
 
     const auto accepted_response = receive_response(endpoint);
     EXPECT_EQ(accepted_response.header.response_kind, 1);

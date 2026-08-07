@@ -42,6 +42,10 @@ public:
                        const ServerGoalHandle& goal);
     bool reject_cancel(const std::string& action_name,
                        const ServerGoalHandle& goal);
+    bool create_feedback_buffer(const std::string& action_name,
+                                PduData& pdu_out);
+    bool create_result_buffer(const std::string& action_name,
+                              PduData& pdu_out);
     bool send_feedback(const std::string& action_name,
                        const ServerGoalHandle& goal,
                        const PduData& feedback_pdu);

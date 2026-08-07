@@ -60,7 +60,7 @@ public:
         const ServerGoalHandle& goal,
         const PduData& feedback_pdu) override;
 
-    bool complete(
+    CompleteResult complete(
         const ServerGoalHandle& goal,
         TerminalStatus status,
         const PduData& result_pdu) override;
@@ -117,6 +117,10 @@ private:
         std::size_t slot_index{0};
         PacketBindingState state{PacketBindingState::AWAITING_GOAL_DECISION};
         std::uint32_t next_feedback_sequence{0};
+
+        // Wire-level Client Cancel Request awaiting its one-shot Cancel
+        // Response. Unlike ServerGoalContext::cancel_decision_pending, this
+        // packet-layer flag is never used for Runtime-origin cancellation.
         bool cancel_decision_pending{false};
     };
 

@@ -828,16 +828,24 @@ TEST(ActionServerInitializationContract, CompletesGoalAndReleasesSlotAfterResult
 
     const auto result = fibonacci_result(
         action_server, {0, 1, 1, 2, 3, 5});
-    EXPECT_FALSE(action_server->complete(
-        event.goal, action::TerminalStatus::SUCCEEDED, result));
+    EXPECT_EQ(
+        action_server->complete(
+            event.goal, action::TerminalStatus::SUCCEEDED, result),
+        action::CompleteResult::NOT_COMMITTED);
     ASSERT_TRUE(action_server->accept_goal(event.goal));
     (void)receive_fibonacci_response(action_endpoint, 1);
-    EXPECT_FALSE(action_server->complete(
-        event.goal, action::TerminalStatus::SUCCEEDED, {}));
-    ASSERT_TRUE(action_server->complete(
-        event.goal, action::TerminalStatus::SUCCEEDED, result));
-    EXPECT_FALSE(action_server->complete(
-        event.goal, action::TerminalStatus::SUCCEEDED, result));
+    EXPECT_EQ(
+        action_server->complete(
+            event.goal, action::TerminalStatus::SUCCEEDED, {}),
+        action::CompleteResult::NOT_COMMITTED);
+    ASSERT_EQ(
+        action_server->complete(
+            event.goal, action::TerminalStatus::SUCCEEDED, result),
+        action::CompleteResult::SENT);
+    EXPECT_EQ(
+        action_server->complete(
+            event.goal, action::TerminalStatus::SUCCEEDED, result),
+        action::CompleteResult::NOT_COMMITTED);
     EXPECT_FALSE(action_server->send_feedback(
         event.goal, fibonacci_feedback(action_server, {0, 1})));
 
@@ -871,10 +879,14 @@ TEST(ActionServerInitializationContract, CompletesGoalAndReleasesSlotAfterResult
     EXPECT_EQ(event.goal.goal_id, second_id);
     ASSERT_TRUE(action_server->accept_goal(event.goal));
     (void)receive_fibonacci_response(action_endpoint, 1);
-    EXPECT_FALSE(action_server->complete(
-        event.goal, action::TerminalStatus::CANCELED, result));
-    EXPECT_TRUE(action_server->complete(
-        event.goal, action::TerminalStatus::ABORTED, result));
+    EXPECT_EQ(
+        action_server->complete(
+            event.goal, action::TerminalStatus::CANCELED, result),
+        action::CompleteResult::NOT_COMMITTED);
+    EXPECT_EQ(
+        action_server->complete(
+            event.goal, action::TerminalStatus::ABORTED, result),
+        action::CompleteResult::SENT);
     const auto aborted = receive_fibonacci_response(action_endpoint, 1);
     EXPECT_EQ(
         aborted.header.status,
@@ -948,14 +960,18 @@ TEST(ActionServerInitializationContract, AcceptsCancelAndCompletesCanceled)
     (void)receive_fibonacci_feedback(action_endpoint, 2);
 
     const auto result = fibonacci_result(action_server, {0, 1});
-    EXPECT_FALSE(action_server->complete(
-        action::ServerGoalHandle{kGoalId},
-        action::TerminalStatus::SUCCEEDED,
-        result));
-    ASSERT_TRUE(action_server->complete(
-        action::ServerGoalHandle{kGoalId},
-        action::TerminalStatus::CANCELED,
-        result));
+    EXPECT_EQ(
+        action_server->complete(
+            action::ServerGoalHandle{kGoalId},
+            action::TerminalStatus::SUCCEEDED,
+            result),
+        action::CompleteResult::NOT_COMMITTED);
+    ASSERT_EQ(
+        action_server->complete(
+            action::ServerGoalHandle{kGoalId},
+            action::TerminalStatus::CANCELED,
+            result),
+        action::CompleteResult::SENT);
     const auto canceled = receive_fibonacci_response(action_endpoint, 1);
     EXPECT_EQ(canceled.header.response_kind, 3);
     EXPECT_EQ(
@@ -1005,10 +1021,12 @@ TEST(ActionServerInitializationContract, RejectsCancelAndContinuesGoal)
     ASSERT_TRUE(action_server->send_feedback(
         event.goal, fibonacci_feedback(action_server, {0, 1})));
     (void)receive_fibonacci_feedback(action_endpoint, 2);
-    ASSERT_TRUE(action_server->complete(
-        event.goal,
-        action::TerminalStatus::SUCCEEDED,
-        fibonacci_result(action_server, {0, 1, 1})));
+    ASSERT_EQ(
+        action_server->complete(
+            event.goal,
+            action::TerminalStatus::SUCCEEDED,
+            fibonacci_result(action_server, {0, 1, 1})),
+        action::CompleteResult::SENT);
     const auto succeeded = receive_fibonacci_response(action_endpoint, 1);
     EXPECT_EQ(succeeded.header.response_kind, 3);
     EXPECT_EQ(
@@ -1180,10 +1198,12 @@ TEST(ActionServerInitializationContract, ResultWinsPendingCancelDecision)
         HAKO_PDU_ERR_OK);
     ASSERT_EQ(
         action_server->poll(event), action::ServerEventType::CANCEL_REQUEST);
-    ASSERT_TRUE(action_server->complete(
-        event.goal,
-        action::TerminalStatus::SUCCEEDED,
-        fibonacci_result(action_server, {0, 1, 1})));
+    ASSERT_EQ(
+        action_server->complete(
+            event.goal,
+            action::TerminalStatus::SUCCEEDED,
+            fibonacci_result(action_server, {0, 1, 1})),
+        action::CompleteResult::SENT);
     EXPECT_FALSE(action_server->accept_cancel(event.goal));
     EXPECT_FALSE(action_server->reject_cancel(event.goal));
     const auto result = receive_fibonacci_response(action_endpoint, 1);
@@ -1217,10 +1237,14 @@ TEST(ActionServerInitializationContract, ResultSendFailureRetainsFinishingSlot)
     (void)receive_fibonacci_response(action_endpoint, 1);
 
     const auto result = fibonacci_result(action_server, {0, 1, 1});
-    EXPECT_FALSE(action_server->complete(
-        event.goal, action::TerminalStatus::SUCCEEDED, result));
-    EXPECT_FALSE(action_server->complete(
-        event.goal, action::TerminalStatus::SUCCEEDED, result));
+    EXPECT_EQ(
+        action_server->complete(
+            event.goal, action::TerminalStatus::SUCCEEDED, result),
+        action::CompleteResult::SEND_FAILED_AFTER_COMMIT);
+    EXPECT_EQ(
+        action_server->complete(
+            event.goal, action::TerminalStatus::SUCCEEDED, result),
+        action::CompleteResult::NOT_COMMITTED);
     EXPECT_FALSE(action_server->send_feedback(
         event.goal, fibonacci_feedback(action_server, {0, 1})));
 
