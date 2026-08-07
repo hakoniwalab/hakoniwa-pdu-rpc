@@ -230,16 +230,19 @@ Goal Response待ち、Cancel Response待ち、Result待ちはGoal Context内のp
 - Action Typeごとの`ActionClientEndpointImpl`生成
 - Action Type名によるRuntime選択
 - 全Action Typeを横断したpoll
+- accept済み`goal_id`ごとのClient Goal Context管理
+- Client状態遷移関数の適用
+- Goal Response、Feedback、Cancel Response、Resultの意味解釈
 - Runtimeの開始、停止、Context解放
 
 次の責務は持ちません。
 
-- Goal lifecycleの状態遷移
-- Goal Response、Feedback、Cancel Response、Resultの意味解釈
-- `goal_id`ごとのpending Context管理
+- Goal Response受信前のpre-accept Context管理
+- packet bindingおよびslot ownership
+- Action Headerのencode／decodeとWire相関
 - Transport実装
 
-これらは`ActionClientEndpointImpl`へ委譲します。
+pre-accept Contextとpacket／slot管理は`ActionClientEndpointImpl`へ委譲します。`GOAL_RESPONSE(ACCEPTED)`をpollした時点で、`ActionServicesClient`が`EXECUTING`のClient Goal Contextを生成します。`GOAL_RESPONSE(REJECTED)`では生成しません。
 
 ## 7. ActionClientEndpointImpl
 
@@ -249,38 +252,35 @@ Goal Response待ち、Cancel Response待ち、Result待ちはGoal Context内のp
 
 ```text
 ActionClientEndpointImpl
-  - Goal Context Registry
+  - pre-accept Packet Binding Registry
   - Request sender
   - Response receiver queue
   - Feedback receiver queue
   - Protocol dispatcher
-  - Client state transition logic
   - Endpoint reference
   - Time source
 ```
 
-Goal Context Registryは`goal_id`をキーとして、少なくとも次を管理します。
+Packet Binding Registryは`goal_id`をキーとして、少なくとも次を管理します。
 
 ```text
 goal_id
-main state
+slot ownership
 Goal Response pending
 Cancel Response pending
 Result pending
 Feedback sequence state
-Application notification state
 ```
 
 主な責務:
 
-- `goal_id`生成または外部UUID受け入れ
-- Goal Context生成
+- 上位Applicationが指定した`goal_id`の検証と保持
+- pre-accept packet binding生成
 - Goal Request送信
 - Cancel Request送信
 - Goal Response、Cancel Response、Resultの相関
 - FeedbackのGoal別配送
-- Client状態モデルの適用
-- terminal Result受信後の通知とContext解放
+- terminal Result受信後のpacket bindingとslot解放
 
 ## 8. ActionServicesServer
 

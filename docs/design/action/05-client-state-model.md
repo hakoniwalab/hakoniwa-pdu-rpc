@@ -329,10 +329,10 @@ RESULT_RECEIVED
 - Hakoniwa Protocol v1のCancelは単一`goal_id`を対象とし、ROS 2の一括CancelはBridgeが単一Goal Cancelへ分解する。
 - Cancel Request送信だけでは`CANCELING`へ遷移しない。
 - Cancel Response ACCEPTED受信時に`CANCELING`へ遷移する。
-- pending ContextのないCancel Responseは診断を記録して`IGNORE`する。
+- pending ContextのないCancel Responseは`NOP`としてApplicationへ配送しない。
 - Result受信時に`FINISHING`へ遷移し、Application通知後にContextを解放する。
 - ClientとServer間のProtocolイベントは共通のデータ契約を使用する。
-- Client Application APIの二重呼び出しは`APPLICATION_API_ERROR`として扱う。
+- Client Application APIの二重呼び出しは理由付き`ERROR`として扱う。
 - Goal Request送信失敗はGoal確立前Contextを解放する。
 - Goal Response timeoutは一度だけ通知し、packet bindingとslotを明示resetまでquarantineする。
 - Goal Response timeout後にServer側Goalが残る可能性に対し、Client側へProtocol主状態、状態照会、自動再送を追加しない。
@@ -343,15 +343,15 @@ RESULT_RECEIVED
 
 Goal Responseでacceptされた後のClient Contextは、Transport非依存の純粋関数として実装します。
 
-Client固有のContext、Event、reducerは`action_client_state_machine.hpp`／`action_client_state_machine.cpp`に置きます。Server固有ファイルへClient状態を混在させません。`action_state_machine.hpp`は両者が共有する遷移結果の語彙だけを定義します。
+Client固有のContext、Event、状態遷移関数は`action_client_state_machine.hpp`／`action_client_state_machine.cpp`に置きます。Server固有ファイルへClient状態を混在させません。Serverと共有するのは`GoalState`などのProtocolデータ型だけであり、遷移結果型はそれぞれのモジュールに置きます。
 
 ```cpp
-ClientTransition reduce_client_goal(
+ClientTransition transition_client_goal(
     const ClientGoalContext& current,
     const ClientGoalEvent& event);
 ```
 
-Goal Request送信からGoal Response受信までのpre-accept ContextはEndpoint契約として既に実装されており、このreducerの対象外です。
+Goal Request送信からGoal Response受信までのpre-accept ContextはEndpoint契約として既に実装されており、この状態遷移関数の対象外です。
 
 Client reducerは次をContextとして保持します。
 
@@ -363,18 +363,34 @@ next_feedback_sequence
 terminal_status
 ```
 
+出力はServer側と同じ考え方で、Client固有の3結果だけを返します。
+
+```text
+TRANSITIONED:
+  Context全体のいずれかが変化し、next contextを返す
+
+NOP:
+  正当な受信イベントだがContextは変化しない
+  遅延・重複packetはApplicationへ再配送しない
+
+ERROR + reason:
+  Client Application APIの誤用または壊れたContext
+```
+
+状態遷移関数はEndpoint送信、Application配送、ログ、mutex、commit timingを知りません。`ActionServicesClient`がイベントの意味とI/O結果に従ってnext contextを反映します。
+
 初版では曖昧だったセルを次へ固定します。
 
-- `FINISHING`中の重複Resultは`IDEMPOTENT`として診断し、Applicationへ再配送しない。
-- `FINISHING`中のFeedbackとCancel Responseは`IGNORE`して診断する。
-- pending ContextのないCancel Responseは`IGNORE`して診断する。
-- `EXECUTING`で`CANCELED` Result、`CANCELING`で`SUCCEEDED` Resultを受信した場合は`IGNORE`して診断する。
-- Feedback sequence不一致は`IGNORE`し、期待sequenceを進めない。
-- timeout、切断、shutdownはterminal statusを生成せず`DEFER`する。
+- `FINISHING`中の重複Resultは`NOP`としてApplicationへ再配送しない。
+- `FINISHING`中のFeedbackとCancel Responseは`NOP`とする。
+- pending ContextのないCancel Responseは`NOP`とする。
+- `EXECUTING`で`CANCELED` Result、`CANCELING`で`SUCCEEDED` Resultを受信した場合は`NOP`とする。
+- Feedback sequence不一致は`NOP`とし、期待sequenceを進めない。
+- timeout、切断、shutdownはterminal statusを生成せず`NOP`とする。通知や回復PolicyはServices／Runtime層で扱う。
 
-Clientの`REQUEST_CANCEL`は送信effect成功後にだけ`cancel_response_pending=true`をcommitします。Result受信は意味上確定済みのProtocol入力であるため即時commitし、Application配送とContext解放をsemantic effectsとして上位へ返します。
+Clientの`REQUEST_CANCEL`は`cancel_response_pending=true`のnext contextを返します。`ActionServicesClient`はCancel Request送信成功後にだけnext contextを反映します。Result受信は`FINISHING`のnext contextを返し、Services層がApplication配送とContext解放を行います。
 
-Server reducerとClient reducerは同じ`GoalState`と遷移結果語彙を共有しますが、別モジュール関数として維持します。Server状態をClientが推測したり、両者のpending Contextを一つの状態機械へ統合してはなりません。
+ServerとClientは同じ`GoalState`を共有しますが、Context、Event、遷移結果、状態遷移関数は別モジュールとして維持します。Server状態をClientが推測したり、両者のpending Contextを一つの状態機械へ統合してはなりません。
 - Runtimeの致命的内部障害からの正規状態遷移は初版の対象外とする。
 
 ## 15. レビューで確認する事項

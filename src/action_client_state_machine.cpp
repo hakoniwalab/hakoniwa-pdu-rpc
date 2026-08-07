@@ -5,11 +5,10 @@ namespace {
 
 ClientTransition client_result(
     const ClientGoalContext& current,
-    TransitionDecision decision,
-    TransitionEffect effects = TransitionEffect::NONE,
-    TransitionCommit commit = TransitionCommit::IMMEDIATE) noexcept
+    ClientTransitionKind kind,
+    ClientTransitionError error = ClientTransitionError::NONE) noexcept
 {
-    return ClientTransition{decision, current, effects, commit};
+    return ClientTransition{kind, current, error};
 }
 
 bool is_goal_state(GoalState state) noexcept
@@ -45,8 +44,7 @@ ClientTransition receive_client_result(
     if (current.state == GoalState::FINISHING) {
         return client_result(
             current,
-            TransitionDecision::IDEMPOTENT,
-            TransitionEffect::RECORD_DIAGNOSTIC);
+            ClientTransitionKind::NOP);
     }
 
     const bool allowed =
@@ -59,14 +57,12 @@ ClientTransition receive_client_result(
     if (!allowed) {
         return client_result(
             current,
-            TransitionDecision::IGNORE,
-            TransitionEffect::RECORD_DIAGNOSTIC);
+            ClientTransitionKind::NOP);
     }
 
     auto result = client_result(
         current,
-        TransitionDecision::ALLOW,
-        TransitionEffect::DELIVER_RESULT | TransitionEffect::RELEASE_GOAL);
+        ClientTransitionKind::TRANSITIONED);
     result.next.state = GoalState::FINISHING;
     result.next.cancel_response_pending = false;
     result.next.result_pending = false;
@@ -76,31 +72,34 @@ ClientTransition receive_client_result(
 
 } // namespace
 
-ClientTransition reduce_client_goal(
+ClientTransition transition_client_goal(
     const ClientGoalContext& current,
     const ClientGoalEvent& event) noexcept
 {
     if (!is_valid_client_context(current)) {
         return client_result(
             current,
-            TransitionDecision::INVARIANT_VIOLATION,
-            TransitionEffect::RECORD_DIAGNOSTIC);
+            ClientTransitionKind::ERROR,
+            ClientTransitionError::INVALID_CONTEXT);
     }
 
     switch (event.type) {
     case ClientGoalEventType::REQUEST_CANCEL:
-        if (current.state != GoalState::EXECUTING
-            || current.cancel_response_pending) {
+        if (current.state != GoalState::EXECUTING) {
             return client_result(
                 current,
-                TransitionDecision::APPLICATION_API_ERROR,
-                TransitionEffect::RECORD_DIAGNOSTIC);
+                ClientTransitionKind::ERROR,
+                ClientTransitionError::EVENT_NOT_ALLOWED);
+        }
+        if (current.cancel_response_pending) {
+            return client_result(
+                current,
+                ClientTransitionKind::ERROR,
+                ClientTransitionError::CANCEL_REQUEST_ALREADY_PENDING);
         } else {
             auto result = client_result(
                 current,
-                TransitionDecision::ALLOW,
-                TransitionEffect::SEND_CANCEL_REQUEST,
-                TransitionCommit::AFTER_EFFECT_SUCCESS);
+                ClientTransitionKind::TRANSITIONED);
             result.next.cancel_response_pending = true;
             return result;
         }
@@ -110,13 +109,11 @@ ClientTransition reduce_client_goal(
             || event.feedback_sequence != current.next_feedback_sequence) {
             return client_result(
                 current,
-                TransitionDecision::IGNORE,
-                TransitionEffect::RECORD_DIAGNOSTIC);
+                ClientTransitionKind::NOP);
         } else {
             auto result = client_result(
                 current,
-                TransitionDecision::ALLOW,
-                TransitionEffect::DELIVER_FEEDBACK);
+                ClientTransitionKind::TRANSITIONED);
             ++result.next.next_feedback_sequence;
             return result;
         }
@@ -125,17 +122,16 @@ ClientTransition reduce_client_goal(
         if (current.state == GoalState::CANCELING) {
             return client_result(
                 current,
-                TransitionDecision::IDEMPOTENT,
-                TransitionEffect::RECORD_DIAGNOSTIC);
+                ClientTransitionKind::NOP);
         }
         if (current.state != GoalState::EXECUTING
             || !current.cancel_response_pending) {
             return client_result(
                 current,
-                TransitionDecision::IGNORE,
-                TransitionEffect::RECORD_DIAGNOSTIC);
+                ClientTransitionKind::NOP);
         } else {
-            auto result = client_result(current, TransitionDecision::ALLOW);
+            auto result = client_result(
+                current, ClientTransitionKind::TRANSITIONED);
             result.next.state = GoalState::CANCELING;
             result.next.cancel_response_pending = false;
             return result;
@@ -146,10 +142,10 @@ ClientTransition reduce_client_goal(
             || !current.cancel_response_pending) {
             return client_result(
                 current,
-                TransitionDecision::IGNORE,
-                TransitionEffect::RECORD_DIAGNOSTIC);
+                ClientTransitionKind::NOP);
         } else {
-            auto result = client_result(current, TransitionDecision::ALLOW);
+            auto result = client_result(
+                current, ClientTransitionKind::TRANSITIONED);
             result.next.cancel_response_pending = false;
             return result;
         }
@@ -162,15 +158,14 @@ ClientTransition reduce_client_goal(
             && current.cancel_response_pending) {
             auto result = client_result(
                 current,
-                TransitionDecision::ALLOW,
-                TransitionEffect::NOTIFY_RUNTIME_ERROR);
+                ClientTransitionKind::TRANSITIONED);
             result.next.cancel_response_pending = false;
             return result;
         }
         return client_result(
             current,
-            TransitionDecision::INVARIANT_VIOLATION,
-            TransitionEffect::RECORD_DIAGNOSTIC);
+            ClientTransitionKind::ERROR,
+            ClientTransitionError::EVENT_NOT_ALLOWED);
 
     case ClientGoalEventType::CANCEL_RESPONSE_TIMEOUT:
     case ClientGoalEventType::RESULT_TIMEOUT:
@@ -178,14 +173,31 @@ ClientTransition reduce_client_goal(
     case ClientGoalEventType::CLIENT_SHUTDOWN_REQUESTED:
         return client_result(
             current,
-            TransitionDecision::DEFER,
-            TransitionEffect::DEFER_TO_POLICY);
+            ClientTransitionKind::NOP);
     }
 
     return client_result(
         current,
-        TransitionDecision::INVARIANT_VIOLATION,
-        TransitionEffect::RECORD_DIAGNOSTIC);
+        ClientTransitionKind::ERROR,
+        ClientTransitionError::UNKNOWN_EVENT);
+}
+
+std::string_view client_transition_error_name(
+    ClientTransitionError error) noexcept
+{
+    switch (error) {
+    case ClientTransitionError::NONE:
+        return "none";
+    case ClientTransitionError::INVALID_CONTEXT:
+        return "invalid_context";
+    case ClientTransitionError::EVENT_NOT_ALLOWED:
+        return "event_not_allowed";
+    case ClientTransitionError::CANCEL_REQUEST_ALREADY_PENDING:
+        return "cancel_request_already_pending";
+    case ClientTransitionError::UNKNOWN_EVENT:
+        return "unknown_event";
+    }
+    return "unknown_error";
 }
 
 } // namespace hakoniwa::pdu::action

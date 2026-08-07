@@ -1,15 +1,19 @@
 #pragma once
 
 #include "action_client_endpoint.hpp"
+#include "action_client_state_machine.hpp"
 #include "action_types.hpp"
 #include "hakoniwa/pdu/endpoint_container.hpp"
 #include "hakoniwa/time_source/time_source.hpp"
 
-#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <vector>
 
 namespace hakoniwa::pdu::action {
+
+class ActionServicesClientTestPeer;
 
 class ActionServicesClient {
 public:
@@ -40,18 +44,33 @@ public:
     bool create_goal_buffer(const std::string& action_name, PduData& pdu_out);
 
 private:
+    friend class ActionServicesClientTestPeer;
+
+    // Semantic state for one Goal accepted by the Action Server. Goal
+    // Response waiting and packet/slot ownership remain in the Endpoint.
+    struct GoalInstance {
+        ClientGoalHandle goal;
+        ClientGoalContext context;
+    };
+
+    // One configured Action Client Endpoint and its accepted Goals.
+    struct ActionInstance {
+        std::string action_name;
+        std::shared_ptr<IActionClientEndpoint> endpoint;
+        std::vector<GoalInstance> goals;
+    };
+
     std::string node_id_;
     std::string client_name_;
     std::string config_path_;
     std::string impl_type_;
     std::uint64_t delta_time_usec_;
 
-    std::map<std::string, std::shared_ptr<IActionClientEndpoint>> action_endpoints_;
+    std::vector<ActionInstance> actions_;
+    mutable std::mutex mutex_;
     std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
     std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container_;
 
-    // TODO(codex): decide whether round-robin polling is sufficient or whether
-    // a ready queue is needed. This is an implementation detail, not API.
 };
 
 } // namespace hakoniwa::pdu::action

@@ -323,6 +323,7 @@ class OperationCompatibilityTests(unittest.TestCase):
             "hakoniwa_pdu_action_server_state_machine_test",
             "hakoniwa_pdu_action_services_server_goal_instance_test",
             "hakoniwa_pdu_action_client_state_machine_test",
+            "hakoniwa_pdu_action_services_client_goal_instance_test",
             "hakoniwa_pdu_action_server_initialization_test",
             "hakoniwa_pdu_action_goal_response_transaction_test",
             "hakoniwa_pdu_action_cancel_response_serialization_test",

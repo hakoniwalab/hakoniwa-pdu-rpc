@@ -67,6 +67,7 @@ ACTION_CONTRACT_TARGETS = (
     "hakoniwa_pdu_action_server_state_machine_test",
     "hakoniwa_pdu_action_services_server_goal_instance_test",
     "hakoniwa_pdu_action_client_state_machine_test",
+    "hakoniwa_pdu_action_services_client_goal_instance_test",
     "hakoniwa_pdu_action_server_initialization_test",
     "hakoniwa_pdu_action_goal_response_transaction_test",
     "hakoniwa_pdu_action_cancel_response_serialization_test",
@@ -76,7 +77,7 @@ ACTION_CONTRACT_TARGETS = (
 REVIEWED_TEST_TARGETS = SERVICE_CONTRACT_TARGETS + ACTION_CONTRACT_TARGETS
 REVIEWED_TEST_REGEX = (
     "^hakoniwa_pdu_(rpc_(basic|infinite_wait|timeout_cancel|cancel_race)"
-    "|action_(configuration|server_state_machine|services_server_goal_instance|client_state_machine|server_initialization|goal_response_transaction"
+    "|action_(configuration|server_state_machine|services_server_goal_instance|client_state_machine|services_client_goal_instance|server_initialization|goal_response_transaction"
     "|cancel_response_serialization|client_endpoint|packet_codec))_test$"
 )
 
