@@ -12,6 +12,9 @@ dependencies = [
   "jsonschema>=4.0",
 ]
 
+[project.scripts]
+hako-pdu-rpc-generate-action-config = "hakoniwa_pdu_rpc.action_config_generator:main"
+
 [tool.setuptools]
 package-dir = {"" = "python"}
 
@@ -20,6 +23,7 @@ where = ["python"]
 
 [tool.setuptools.data-files]
 "share/hakoniwa-pdu-rpc/schema" = [
+  "config/schema/action-schema.json",
   "config/schema/endpoints-schema.json",
   "config/schema/service-schema.json",
 ]
