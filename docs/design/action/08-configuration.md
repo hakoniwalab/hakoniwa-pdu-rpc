@@ -1,6 +1,6 @@
 # Hakoniwa Action設定モデル
 
-> **Status: Implemented contract**  
+> **Status: Implemented contract**
 > 本文書は、user-facing Action manifest、resolved設定、生成Endpoint設定の現行契約です。
 
 ## 1. 目的

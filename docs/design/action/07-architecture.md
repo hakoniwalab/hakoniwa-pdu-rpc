@@ -1,6 +1,6 @@
 # Hakoniwa Action Runtimeアーキテクチャ
 
-> **Status: Implemented contract**  
+> **Status: Implemented contract**
 > 本文書は、既存Service RPCの実装構造を基礎に、Hakoniwa Action Runtimeのコンポーネント構成と責務境界を定義します。
 
 ## 1. 目的

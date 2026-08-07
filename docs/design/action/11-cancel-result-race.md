@@ -1,6 +1,6 @@
 # Hakoniwa Action Cancel／Result競合契約
 
-> **Status: Implemented contract**  
+> **Status: Implemented contract**
 > 本文書は、`04-state-model.md`および`06-protocol.md`に対する規範的な追補です。
 >
 > Action Runtime実装およびContract Testでは、本書の競合規則を適用します。

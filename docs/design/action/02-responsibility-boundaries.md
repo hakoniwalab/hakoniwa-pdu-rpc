@@ -1,6 +1,6 @@
 # Hakoniwa Actionの責務境界
 
-> **Status: Implemented contract**  
+> **Status: Implemented contract**
 > 本文書は、Registry、RPC Runtime、ROS Adapter、Application、Endpoint間の現行責務境界です。
 
 ## 1. 目的

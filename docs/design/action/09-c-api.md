@@ -1,6 +1,6 @@
 # Hakoniwa Action C API設計
 
-> **Status: Implemented contract**  
+> **Status: Implemented contract**
 > 本文書は、Hakoniwa Action Runtimeをユーザーアプリケーションおよび`hakoniwa-pdu-ros`から利用するためのC APIとPython CFFIの現行契約です。正確な宣言は`include/hakoniwa/pdu/action/c_action.h`を正とします。
 
 ## 1. 目的

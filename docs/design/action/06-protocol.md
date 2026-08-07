@@ -1,6 +1,6 @@
 # Hakoniwa Action Protocol概要
 
-> **Status: Implemented contract**  
+> **Status: Implemented contract**
 > 本文書は、Hakoniwa Action Protocolの通信端点、代表的な通信順序、および`hakoniwa-pdu-registry`と整合する論理パケット構成を直感的に理解するための概要です。
 
 ## 1. 目的

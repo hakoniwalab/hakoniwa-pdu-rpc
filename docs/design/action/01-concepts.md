@@ -1,6 +1,6 @@
 # Hakoniwa Actionの基本概念
 
-> **Status: Implemented contract**  
+> **Status: Implemented contract**
 > 本文書は、Hakoniwa Actionで使用する基本概念の現行仕様です。
 
 ## 1. 目的

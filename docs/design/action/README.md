@@ -1,6 +1,6 @@
 # Hakoniwa Action Protocol設計
 
-> **Status: Implemented contract**  
+> **Status: Implemented contract**
 > 本文書群は、`hakoniwa-pdu-rpc`のAction実装、公開API、設定、テストが従う現行契約です。
 
 ## 1. 目的

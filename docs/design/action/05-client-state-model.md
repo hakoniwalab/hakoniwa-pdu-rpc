@@ -1,6 +1,6 @@
 # Hakoniwa Action Clientの状態モデル
 
-> **Status: Implemented contract**  
+> **Status: Implemented contract**
 > 本文書は、Client Runtimeが保持するGoal Contextと状態遷移の現行仕様です。
 
 ## 1. 目的

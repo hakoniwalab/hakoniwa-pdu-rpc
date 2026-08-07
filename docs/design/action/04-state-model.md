@@ -1,6 +1,6 @@
 # Hakoniwa Actionの状態モデル
 
-> **Status: Implemented contract**  
+> **Status: Implemented contract**
 > 本文書は、受理済みServer Goalの状態遷移に関する現行仕様です。
 
 ## 1. 目的

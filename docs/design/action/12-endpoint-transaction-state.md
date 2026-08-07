@@ -1,6 +1,6 @@
 # Hakoniwa Action Endpoint Transaction契約
 
-> **Status: Implemented contract**  
+> **Status: Implemented contract**
 > 本文書は、`04-state-model.md`、`05-client-state-model.md`、`06-protocol.md`、`11-cancel-result-race.md`に対する規範的な追補です。
 
 ## 1. 目的
