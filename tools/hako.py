@@ -934,7 +934,9 @@ def package_test(ctx: Context) -> None:
                 "-c",
                 "from hakoniwa_pdu_rpc import ActionMuxServer; "
                 "assert ActionMuxServer.__module__ == "
-                "'hakoniwa_pdu_rpc.action_cffi'",
+                "'hakoniwa_pdu_rpc.action_cffi'; "
+                "from hakoniwa_pdu_rpc.action_config_generator import generate, resolve; "
+                "assert callable(generate) and callable(resolve)",
             ],
             cwd=ctx.install_dir,
         )

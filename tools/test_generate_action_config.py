@@ -1,17 +1,17 @@
-import importlib.util
 import json
 import io
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 
 
-MODULE_PATH = Path(__file__).with_name("generate_action_config.py")
-SPEC = importlib.util.spec_from_file_location("generate_action_config", MODULE_PATH)
-GENERATOR = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
-SPEC.loader.exec_module(GENERATOR)
+PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
+if str(PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYTHON_ROOT))
+
+from hakoniwa_pdu_rpc import action_config_generator as GENERATOR
 
 
 def manifest(client_role="client", server_role="server"):
