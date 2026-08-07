@@ -421,10 +421,12 @@ python tools/hako.py test
 
 The suite is intentionally split by contract so a failure identifies which lifecycle guarantee changed.
 
-The Action portion currently covers configuration resolution, packet codecs,
-Server Goal accept/reject, and Client Goal send/response/timeout contracts. It
-is included in `hako.py test`; focused Service RPC commands remain available as
-shown below.
+The Action portion covers configuration resolution, Client and Server state
+reducers, packet codecs, Services Goal lifecycle, and a real TCP round trip for
+Goal Response, Feedback, Cancel, and Result. It is included in `hako.py test`.
+The runnable Fibonacci Action pair is documented in
+[`examples/README.md`](examples/README.md). Focused Service RPC commands remain
+available as shown below.
 
 | Contract | Command | Main guarantee |
 |---|---|---|
