@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(hakoniwa_pdu_rpc_package_consumer LANGUAGES CXX)
+project(hakoniwa_pdu_rpc_package_consumer LANGUAGES C CXX)
 
 find_package(hakoniwa_pdu_rpc CONFIG REQUIRED)
 
@@ -14,3 +14,19 @@ target_link_libraries(rpc_package_consumer_compat PRIVATE hakoniwa_pdu_rpc::hako
 add_executable(rpc_package_consumer_shared main.cpp)
 target_compile_features(rpc_package_consumer_shared PRIVATE cxx_std_20)
 target_link_libraries(rpc_package_consumer_shared PRIVATE hakoniwa_pdu_rpc::rpc_shared)
+
+add_executable(action_mux_package_consumer action_mux_main.cpp)
+target_compile_features(action_mux_package_consumer PRIVATE cxx_std_20)
+target_link_libraries(action_mux_package_consumer PRIVATE hakoniwa_pdu_rpc::rpc)
+
+add_executable(action_mux_package_consumer_shared action_mux_main.cpp)
+target_compile_features(action_mux_package_consumer_shared PRIVATE cxx_std_20)
+target_link_libraries(action_mux_package_consumer_shared PRIVATE hakoniwa_pdu_rpc::rpc_shared)
+
+add_executable(action_mux_c_package_consumer c_action_mux_main.c)
+set_target_properties(action_mux_c_package_consumer PROPERTIES LINKER_LANGUAGE CXX)
+target_link_libraries(action_mux_c_package_consumer PRIVATE hakoniwa_pdu_rpc::rpc)
+
+add_executable(action_mux_c_package_consumer_shared c_action_mux_main.c)
+set_target_properties(action_mux_c_package_consumer_shared PROPERTIES LINKER_LANGUAGE CXX)
+target_link_libraries(action_mux_c_package_consumer_shared PRIVATE hakoniwa_pdu_rpc::rpc_shared)

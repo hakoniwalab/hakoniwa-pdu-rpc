@@ -1,6 +1,6 @@
 # Hakoniwa Action Runtimeアーキテクチャ
 
-> **Status: Draft**  
+> **Status: Implemented contract**
 > 本文書は、既存Service RPCの実装構造を基礎に、Hakoniwa Action Runtimeのコンポーネント構成と責務境界を定義します。
 
 ## 1. 目的
@@ -118,6 +118,24 @@ hakoniwa-pdu-endpoint::Endpoint
 configured PDU transport
 ```
 
+### 3.1 Endpointという用語の区別
+
+本アーキテクチャには、名前が似ている二種類のEndpointがあります。
+
+```text
+ActionServerEndpointImpl / ActionClientEndpointImpl
+  = Action Packet Endpoint
+  = 上位Goal TransactionとAction packetのmapping境界
+
+hakoniwa-pdu-endpoint::Endpoint
+  = PDU Endpoint
+  = byte列とchannelを配送する通信境界
+```
+
+Action Packet EndpointはHeader、packet queue、slot、channel、connection associationを扱います。PDU EndpointはActionのGoalや状態遷移を解釈しません。
+
+Goal lifecycleの状態機械は、`hakoniwa-pdu-rpc`内のServices層で一か所に保持します。Goal Protocol stateとEndpointのPacket Binding stateは別のモデルであり、同じ状態を二重管理しません。
+
 ServiceとActionの対応は次のとおりです。
 
 | Service RPC | Action Runtime |
@@ -212,16 +230,19 @@ Goal Response待ち、Cancel Response待ち、Result待ちはGoal Context内のp
 - Action Typeごとの`ActionClientEndpointImpl`生成
 - Action Type名によるRuntime選択
 - 全Action Typeを横断したpoll
+- accept済み`goal_id`ごとのClient Goal Context管理
+- Client状態遷移関数の適用
+- Goal Response、Feedback、Cancel Response、Resultの意味解釈
 - Runtimeの開始、停止、Context解放
 
 次の責務は持ちません。
 
-- Goal lifecycleの状態遷移
-- Goal Response、Feedback、Cancel Response、Resultの意味解釈
-- `goal_id`ごとのpending Context管理
+- Goal Response受信前のpre-accept Context管理
+- packet bindingおよびslot ownership
+- Action Headerのencode／decodeとWire相関
 - Transport実装
 
-これらは`ActionClientEndpointImpl`へ委譲します。
+pre-accept Contextとpacket／slot管理は`ActionClientEndpointImpl`へ委譲します。`GOAL_RESPONSE(ACCEPTED)`をpollした時点で、`ActionServicesClient`が`EXECUTING`のClient Goal Contextを生成します。`GOAL_RESPONSE(REJECTED)`では生成しません。
 
 ## 7. ActionClientEndpointImpl
 
@@ -231,38 +252,35 @@ Goal Response待ち、Cancel Response待ち、Result待ちはGoal Context内のp
 
 ```text
 ActionClientEndpointImpl
-  - Goal Context Registry
+  - pre-accept Packet Binding Registry
   - Request sender
   - Response receiver queue
   - Feedback receiver queue
   - Protocol dispatcher
-  - Client state transition logic
   - Endpoint reference
   - Time source
 ```
 
-Goal Context Registryは`goal_id`をキーとして、少なくとも次を管理します。
+Packet Binding Registryは`goal_id`をキーとして、少なくとも次を管理します。
 
 ```text
 goal_id
-main state
+slot ownership
 Goal Response pending
 Cancel Response pending
 Result pending
 Feedback sequence state
-Application notification state
 ```
 
 主な責務:
 
-- `goal_id`生成または外部UUID受け入れ
-- Goal Context生成
+- 上位Applicationが指定した`goal_id`の検証と保持
+- pre-accept packet binding生成
 - Goal Request送信
 - Cancel Request送信
 - Goal Response、Cancel Response、Resultの相関
 - FeedbackのGoal別配送
-- Client状態モデルの適用
-- terminal Result受信後の通知とContext解放
+- terminal Result受信後のpacket bindingとslot解放
 
 ## 8. ActionServicesServer
 
@@ -288,44 +306,51 @@ Goal受理、Cancel受理、Feedback生成、完了判断はServer Application�
 
 ## 9. ActionServerEndpointImpl
 
-`ActionServerEndpointImpl`は、1 Action Type分のServer Protocol Runtimeです。
+`ActionServerEndpointImpl`は、1 Action Type分のServer Action Packet Endpointです。上位のGoal Transactionと、PDU Endpointが扱うpacket経路を対応付けます。
 
 内部に次を持ちます。
 
 ```text
 ActionServerEndpointImpl
-  - Goal Context Registry
+  - Action Packet Binding Registry
   - Request receiver queue
   - Application event queue
-  - Response / Feedback / Result sender
-  - Protocol dispatcher
-  - Server state transition logic
+  - Response / Feedback / Result packet builder / sender
+  - Header codec / packet dispatcher
+  - slot / channel / connection mapping
   - Endpoint reference
 ```
 
-Goal Context Registryは`goal_id`をキーとして、少なくとも次を管理します。
+Action Packet Binding Registryは上位Transactionの`goal_id`またはGoalHandleをキーとして、少なくとも次を管理します。
 
 ```text
 goal_id
-main state
-Goal identity information
-Cancel decision state
-terminal status
-Result delivery / retention state
+slot_index
+Request / Response / Feedback channel
 Endpoint or connection association
+Goal判断packetのdelivery state
+Result delivery / retention state
 ```
 
 主な責務:
 
 - Goal Request Header検証
-- UUID形式および重複`goal_id`検査
-- Applicationへの新規Goal通知
-- Application判断に基づくGoal Response送信
-- Cancel RequestのGoal相関
-- ApplicationへのCancel通知
-- Feedback送信
-- Result送信と保持
-- Server状態モデルの適用
+- 受信slotと上位Goal Transactionのbinding生成
+- UUID形式および既存bindingとの重複検査
+- Application／上位Transactionへの新規Goal packet通知
+- 上位判断に基づくGoal Response packet生成と配送
+- Cancel Request packetのbinding解決
+- FeedbackおよびResult packetのrouting
+- outbound packetの配送状態とbinding解放
+
+次はAction Packet Endpointの責務ではありません。
+
+- Goalを業務上accept／rejectする判断
+- `EXECUTING`／`CANCELING`／`FINISHING`のProtocol状態機械
+- Cancel／Result競合の意味論的判断
+- Application worker、queue、priority、preemption
+
+これらのうちProtocol共通部分は`hakoniwa-pdu-rpc`内の上位Goal Transaction層が所有し、業務PolicyはServer Applicationが所有します。
 
 ## 10. PDU構成
 
@@ -401,17 +426,11 @@ Service RPCのようにConnectionSlot削除と同時に全Action Goal Contextを
 
 Transport切断時はServer状態モデルに従い、必要に応じてRuntime起因CancelをApplicationへ通知します。ApplicationがGoalを継続、Cancel、Abortのいずれにするかを決定します。
 
-### 12.1 Mux実装上の設計余地
+### 12.1 Muxの所有構造
 
-次の実現方法は後続の実装設計で選択します。
+接続ごとの`ActionServicesServer`がGoal Contextを保持し、active Goalを持つ切断済み`ConnectionSlot`はorphaned slotとしてterminal完了まで保持します。
 
-```text
-A. Goal ContextをConnectionSlot内のActionServer Runtimeが保持し続ける
-B. 接続断時にGoal Contextを接続非依存Registryへ移管する
-C. Muxより上位に共有ActionServer Runtimeを置き、接続AdapterだけをSlotに持つ
-```
-
-本アーキテクチャでは方式を確定しませんが、Goal Contextを接続寿命へ従属させないことを要求します。
+Mux自身は`(action_name, goal_id) -> connection_id`のrouting indexだけを持ち、Goal状態を重複管理しません。接続をまたぐGoal IDの一意性、切断時のRuntime Cancel、orphaned slotの回収条件は[Action Mux Server契約](13-mux-server.md)で規定します。
 
 ## 13. BindingとAdapter
 
@@ -444,29 +463,17 @@ ROS 2 Action
 - `hakoniwa-pdu-endpoint`を変更せず再利用する。
 - Services層は構成とApplication窓口を担当する。
 - Endpoint Impl層は1 Action Type分のProtocol Runtimeを担当する。
-- Goal Contextは`goal_id`単位でEndpoint Impl層が管理する。
+- Services層は`action_name + goal_id`単位のGoal Contextと状態遷移を管理する。
+- Endpoint Impl層はGoalとslot／packet bindingの対応だけを管理し、上位のGoal状態を重複保持しない。
 - 同一Action Typeで複数Goalを同時管理できる。
 - callbackは受信queueへの格納に限定し、Protocol処理はpoll側で行う。
 - PDU RegistryのAction packet構成を使用する。
 - Connection lifetimeとGoal lifetimeを分離する。
 
-## 15. 最小レビュー事項
+## 15. 文書境界
 
-1. Service RPCと同じレイヤ構造を採用するか。
-2. Serviceクラスを拡張せず、Action専用の並行クラス群を追加するか。
-3. Goal Context RegistryをAction Endpoint Implが所有するか。
-4. 1 Action Typeにつき1 Endpoint Runtimeとするか。
-5. Endpoint callbackをqueue格納のみに限定するか。
-6. Connection lifetimeとGoal lifetimeを分離するか。
-7. MuxでGoal Contextをどの層に保持するかを後続実装設計へ残すか。
+公開APIはHeader、JSON設定はSchemaを正とします。queueと排他の契約は
+[Endpoint Transaction State](12-endpoint-transaction-state.md)、C APIとPython CFFIは
+[Action C API](09-c-api.md)で規定します。
 
-## 16. 対象外
-
-- 公開APIの具体的な関数シグネチャ
-- JSON設定Schemaの詳細
-- クラスの具体的なメンバー変数
-- queueの物理構成と容量
-- thread safety実装
-- MuxでのGoal Context所有方式の最終決定
-- C API、Python APIの具体的な形
-- ROS 2 executor統合の詳細
+session resume、接続間のGoal Context migration、ROS 2 executor統合は本Runtimeの責務に含めません。

@@ -1,0 +1,881 @@
+#include "hakoniwa/pdu/action/action_services_server.hpp"
+
+#include "action_configuration.hpp"
+#include "action_server_endpoint_impl.hpp"
+#include "hakoniwa/time_source/time_source_factory.hpp"
+
+#include <algorithm>
+#include <fstream>
+#include <iostream>
+#include <utility>
+
+#include <nlohmann/json.hpp>
+
+namespace hakoniwa::pdu::action {
+
+ActionServicesServer::ActionServicesServer(
+    const std::string& node_id,
+    const std::string& config_path,
+    const std::string& impl_type,
+    std::uint64_t delta_time_usec,
+    std::string time_source_type)
+    : node_id_(node_id),
+      config_path_(config_path),
+      impl_type_(impl_type),
+      delta_time_usec_(delta_time_usec),
+      time_source_(hakoniwa::time_source::create_time_source(
+          time_source_type, delta_time_usec))
+{
+}
+
+ActionServicesServer::~ActionServicesServer()
+{
+    stop_all_services();
+}
+
+ActionServicesServer::ActionInstance* ActionServicesServer::get_action_locked(
+    const std::string& action_name)
+{
+    for (auto& action : actions_) {
+        if (action.action_name == action_name) {
+            return &action;
+        }
+    }
+    return nullptr;
+}
+
+ActionServicesServer::GoalInstance* ActionServicesServer::get_goal_locked(
+    ActionInstance& action,
+    const GoalId& goal_id)
+{
+    for (auto& goal : action.goals) {
+        if (goal.goal.goal_id == goal_id) {
+            return &goal;
+        }
+    }
+    return nullptr;
+}
+
+bool ActionServicesServer::has_goal_locked(
+    ActionInstance& action,
+    const GoalId& goal_id)
+{
+    return get_goal_locked(action, goal_id) != nullptr;
+}
+
+bool ActionServicesServer::remove_goal_locked(
+    ActionInstance& action,
+    const GoalId& goal_id)
+{
+    for (auto goal = action.goals.begin(); goal != action.goals.end(); ++goal) {
+        if (goal->goal.goal_id == goal_id) {
+            action.goals.erase(goal);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ActionServicesServer::initialize_services(
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container)
+{
+    return initialize_services_impl(std::move(endpoint_container), nullptr);
+}
+
+bool ActionServicesServer::initialize_services(
+    std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint)
+{
+    return initialize_services_impl(nullptr, std::move(endpoint));
+}
+
+bool ActionServicesServer::initialize_services_impl(
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container,
+    std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_override)
+{
+    if (!endpoint_container && !endpoint_override) {
+        std::cerr
+            << "ERROR: Action Server EndpointContainer or direct Endpoint "
+            << "is required."
+            << std::endl;
+        return false;
+    }
+
+    std::ifstream stream(config_path_);
+    if (!stream.is_open()) {
+        std::cerr
+            << "ERROR: Failed to open Action configuration: "
+            << config_path_
+            << std::endl;
+        return false;
+    }
+
+    nlohmann::json root;
+    try {
+        stream >> root;
+    } catch (const nlohmann::json::exception& error) {
+        std::cerr
+            << "ERROR: Failed to parse Action configuration JSON: "
+            << error.what()
+            << std::endl;
+        return false;
+    }
+
+    ActionConfiguration configuration;
+    std::string configuration_error;
+    if (!ActionConfigurationLoader::parse(
+            root, configuration, configuration_error)) {
+        std::cerr
+            << "ERROR: Invalid Action configuration: "
+            << configuration_error
+            << std::endl;
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!actions_.empty()) {
+        std::cerr
+            << "ERROR: Action Server Services are already initialized."
+            << std::endl;
+        return false;
+    }
+
+    std::vector<ActionInstance> initialized_actions;
+    const auto& action_entries = root.at("actions");
+    for (std::size_t index = 0; index < configuration.actions.size(); ++index) {
+        const auto& definition = configuration.actions[index];
+        if (definition.server_endpoint.node_id != node_id_) {
+            continue;
+        }
+
+        auto pdu_endpoint = endpoint_override;
+        if (!pdu_endpoint) {
+            const auto& endpoint_id =
+                definition.server_endpoint.endpoint_id.empty()
+                ? definition.server_endpoint.node_id
+                : definition.server_endpoint.endpoint_id;
+            pdu_endpoint = endpoint_container->ref(endpoint_id);
+        }
+        if (!pdu_endpoint) {
+            const auto& endpoint_id =
+                definition.server_endpoint.endpoint_id.empty()
+                ? definition.server_endpoint.node_id
+                : definition.server_endpoint.endpoint_id;
+            std::cerr
+                << "ERROR: Server Endpoint '"
+                << endpoint_id
+                << "' was not found for Action '"
+                << definition.name
+                << "'."
+                << std::endl;
+            return false;
+        }
+
+        if (impl_type_ != "ActionServerEndpointImpl") {
+            std::cerr
+                << "ERROR: Unsupported Action Server Endpoint implementation: "
+                << impl_type_
+                << std::endl;
+            return false;
+        }
+
+        auto action_endpoint = std::make_shared<ActionServerEndpointImpl>(
+            definition.name,
+            delta_time_usec_,
+            std::move(pdu_endpoint),
+            time_source_);
+        if (!action_endpoint->initialize(action_entries.at(index))) {
+            std::cerr
+                << "ERROR: Failed to initialize Action Server Endpoint for '"
+                << definition.name
+                << "'."
+                << std::endl;
+            return false;
+        }
+        initialized_actions.push_back(ActionInstance{
+            definition.name,
+            std::move(action_endpoint),
+            {},
+        });
+    }
+
+    endpoint_container_ = std::move(endpoint_container);
+    actions_ = std::move(initialized_actions);
+    return true;
+}
+
+bool ActionServicesServer::start_all_services()
+{
+    // The caller owns EndpointContainer or EndpointCommMultiplexer startup.
+    return true;
+}
+
+void ActionServicesServer::stop_all_services()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    pending_runtime_events_.clear();
+    for (auto& action : actions_) {
+        if (action.endpoint) {
+            action.endpoint->clear_pending_events();
+        }
+    }
+}
+
+void ActionServicesServer::clear_all_instances()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    pending_runtime_events_.clear();
+    for (auto& action : actions_) {
+        action.goals.clear();
+        if (action.endpoint) {
+            action.endpoint->reset_contexts();
+        }
+    }
+}
+
+void ActionServicesServer::notify_transport_disconnected()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& action : actions_) {
+        for (const auto& goal : action.goals) {
+            const auto already_pending = std::any_of(
+                pending_runtime_events_.begin(),
+                pending_runtime_events_.end(),
+                [&action, &goal](const ServerEvent& event) {
+                    return event.type
+                            == ServerEventType::RUNTIME_CANCEL_REQUEST
+                        && event.action_name == action.action_name
+                        && event.goal.goal_id == goal.goal.goal_id;
+                });
+            if (already_pending) {
+                continue;
+            }
+
+            ServerEvent event;
+            event.type = ServerEventType::RUNTIME_CANCEL_REQUEST;
+            event.action_name = action.action_name;
+            event.goal = goal.goal;
+            event.runtime_cancel_cause =
+                RuntimeCancelCause::TRANSPORT_DISCONNECTED;
+            pending_runtime_events_.push_back(std::move(event));
+        }
+    }
+}
+
+bool ActionServicesServer::discard_pending_goal(
+    const std::string& action_name,
+    const ServerGoalHandle& goal)
+{
+    if (action_name.empty() || !goal.valid()) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* action = get_action_locked(action_name);
+    if (!action || !action->endpoint
+        || has_goal_locked(*action, goal.goal_id)) {
+        return false;
+    }
+    return action->endpoint->discard_pending_goal(goal);
+}
+
+ServerEventType ActionServicesServer::handle_cancel_event_locked(
+    ActionInstance& action,
+    ServerEventType event_type,
+    ServerEvent& event,
+    ServerEvent& event_out)
+{
+    auto* goal = get_goal_locked(action, event.goal.goal_id);
+    if (goal == nullptr) {
+        std::cerr
+            << "ERROR: Action server event for unknown accepted Goal in '"
+            << action.action_name
+            << "'."
+            << std::endl;
+        event.type = ServerEventType::ERROR;
+        event_out = std::move(event);
+        return ServerEventType::ERROR;
+    }
+
+    const auto state_event = event_type == ServerEventType::CANCEL_REQUEST
+        ? ServerGoalEvent::CANCEL_REQUEST_RECEIVED
+        : ServerGoalEvent::RUNTIME_CANCEL_REQUESTED;
+    const auto transition = transition_server_goal(goal->context, state_event);
+    if (transition.is_error()) {
+        std::cerr
+            << "ERROR: Goal state transition failed while polling Action '"
+            << action.action_name
+            << "' (reason="
+            << server_transition_error_name(transition.error)
+            << ")."
+            << std::endl;
+        event.type = ServerEventType::ERROR;
+        event_out = std::move(event);
+        return ServerEventType::ERROR;
+    }
+    if (transition.is_nop()) {
+        std::cerr
+            << "WARNING: Ignored Action Cancel event for '"
+            << action.action_name
+            << "'."
+            << std::endl;
+        return ServerEventType::NONE;
+    }
+
+    goal->context = transition.next;
+    event_out = std::move(event);
+    return event_type;
+}
+
+ServerEventType ActionServicesServer::poll(
+    std::string& action_name,
+    ServerEvent& event_out)
+{
+    action_name.clear();
+    event_out = ServerEvent{};
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    while (!pending_runtime_events_.empty()) {
+        auto event = std::move(pending_runtime_events_.front());
+        pending_runtime_events_.pop_front();
+        auto* action = get_action_locked(event.action_name);
+        if (!action) {
+            std::cerr
+                << "ERROR: Runtime Cancel references unknown Action '"
+                << event.action_name
+                << "'."
+                << std::endl;
+            continue;
+        }
+        const auto handled_type = handle_cancel_event_locked(
+            *action,
+            ServerEventType::RUNTIME_CANCEL_REQUEST,
+            event,
+            event_out);
+        if (handled_type == ServerEventType::NONE) {
+            continue;
+        }
+        action_name = action->action_name;
+        return handled_type;
+    }
+
+    for (auto& action : actions_) {
+        if (!action.endpoint) {
+            continue;
+        }
+
+        ServerEvent event;
+        const auto event_type = action.endpoint->poll(event);
+        if (event_type == ServerEventType::NONE) {
+            continue;
+        }
+
+        event.type = event_type;
+        event.action_name = action.action_name;
+        if (event_type == ServerEventType::GOAL_REQUEST
+            || event_type == ServerEventType::ERROR) {
+            action_name = action.action_name;
+            event_out = std::move(event);
+            return event_type;
+        }
+
+        if (event_type == ServerEventType::CANCEL_REQUEST
+            || event_type == ServerEventType::RUNTIME_CANCEL_REQUEST) {
+            const auto handled_type = handle_cancel_event_locked(
+                action, event_type, event, event_out);
+            if (handled_type == ServerEventType::NONE) {
+                continue;
+            }
+            action_name = action.action_name;
+            return handled_type;
+        } else {
+            std::cerr
+                << "ERROR: Unsupported Action server event for '"
+                << action.action_name
+                << "'."
+                << std::endl;
+            action_name = action.action_name;
+            event.type = ServerEventType::ERROR;
+            event_out = std::move(event);
+            return ServerEventType::ERROR;
+        }
+    }
+
+    return ServerEventType::NONE;
+}
+
+bool ActionServicesServer::accept_goal(
+    const std::string& action_name,
+    const ServerGoalHandle& goal)
+{
+    if (action_name.empty() || !goal.valid()) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
+        return false;
+    }
+
+    if (has_goal_locked(*action, goal.goal_id)) {
+        return false;
+    }
+
+    // Reserve the semantic instance before the ACCEPTED wire send. The
+    // Services mutex keeps this staged entry invisible to other operations;
+    // a failed send rolls it back. This avoids a post-send allocation failure
+    // leaving an accepted Endpoint binding without Goal state.
+    action->goals.push_back(GoalInstance{goal, ServerGoalContext{}});
+    if (!action->endpoint->accept_goal(goal)) {
+        action->goals.pop_back();
+        return false;
+    }
+    return true;
+}
+
+bool ActionServicesServer::reject_goal(
+    const std::string& action_name,
+    const ServerGoalHandle& goal)
+{
+    if (action_name.empty() || !goal.valid()) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
+        return false;
+    }
+
+    if (has_goal_locked(*action, goal.goal_id)) {
+        return false;
+    }
+
+    // A rejected Goal never becomes a semantic GoalInstance. The Endpoint
+    // owns and consumes the pending packet binding when the REJECTED response
+    // is delivered successfully.
+    return action->endpoint->reject_goal(goal);
+}
+
+bool ActionServicesServer::create_feedback_buffer(
+    const std::string& action_name,
+    PduData& pdu_out)
+{
+    if (action_name.empty()) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
+        return false;
+    }
+    return action->endpoint->create_feedback_buffer(pdu_out);
+}
+
+bool ActionServicesServer::create_result_buffer(
+    const std::string& action_name,
+    PduData& pdu_out)
+{
+    if (action_name.empty()) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
+        return false;
+    }
+    return action->endpoint->create_result_buffer(pdu_out);
+}
+
+bool ActionServicesServer::accept_cancel(
+    const std::string& action_name,
+    const ServerGoalHandle& goal)
+{
+    if (action_name.empty() || !goal.valid()) {
+        std::cerr
+            << "WARNING: accept_cancel called with an invalid Action name "
+            << "or Goal handle."
+            << std::endl;
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
+        std::cerr
+            << "WARNING: accept_cancel called for unknown Action '"
+            << action_name
+            << "'."
+            << std::endl;
+        return false;
+    }
+
+    auto* goal_instance = get_goal_locked(*action, goal.goal_id);
+    if (goal_instance == nullptr) {
+        std::cerr
+            << "WARNING: accept_cancel called for an unknown accepted Goal "
+            << "in Action '"
+            << action_name
+            << "'."
+            << std::endl;
+        return false;
+    }
+
+    const auto cancel_origin = goal_instance->context.cancel_origin;
+    const auto transition = transition_server_goal(
+        goal_instance->context,
+        ServerGoalEvent::ACCEPT_CANCEL);
+    if (transition.is_error()) {
+        std::cerr
+            << "WARNING: accept_cancel rejected by the Goal state machine "
+            << "for Action '"
+            << action_name
+            << "' (reason="
+            << server_transition_error_name(transition.error)
+            << ", state="
+            << static_cast<int>(goal_instance->context.state)
+            << ", cancel_decision_pending="
+            << goal_instance->context.cancel_decision_pending
+            << ", cancel_origin="
+            << static_cast<int>(goal_instance->context.cancel_origin)
+            << ")."
+            << std::endl;
+        return false;
+    }
+    if (!transition.transitioned()) {
+        std::cerr
+            << "WARNING: accept_cancel produced no Goal state transition "
+            << "for Action '"
+            << action_name
+            << "'."
+            << std::endl;
+        return false;
+    }
+
+    const bool endpoint_accepted = cancel_origin == CancelOrigin::CLIENT
+        ? action->endpoint->accept_cancel(goal)
+        : action->endpoint->accept_cancel_locally(goal);
+    if (!endpoint_accepted) {
+        std::cerr
+            << "ERROR: Failed to commit the accepted Cancel decision for "
+            << "Action '"
+            << action_name
+            << "'; the Application Cancel decision remains pending."
+            << std::endl;
+        return false;
+    }
+
+    goal_instance->context = transition.next;
+    return true;
+}
+
+bool ActionServicesServer::reject_cancel(
+    const std::string& action_name,
+    const ServerGoalHandle& goal)
+{
+    if (action_name.empty() || !goal.valid()) {
+        std::cerr
+            << "WARNING: reject_cancel called with an invalid Action name "
+            << "or Goal handle."
+            << std::endl;
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
+        std::cerr
+            << "WARNING: reject_cancel called for unknown Action '"
+            << action_name
+            << "'."
+            << std::endl;
+        return false;
+    }
+
+    auto* goal_instance = get_goal_locked(*action, goal.goal_id);
+    if (goal_instance == nullptr) {
+        std::cerr
+            << "WARNING: reject_cancel called for an unknown accepted Goal "
+            << "in Action '"
+            << action_name
+            << "'."
+            << std::endl;
+        return false;
+    }
+
+    const auto cancel_origin = goal_instance->context.cancel_origin;
+    const auto transition = transition_server_goal(
+        goal_instance->context,
+        ServerGoalEvent::REJECT_CANCEL);
+    if (transition.is_error()) {
+        std::cerr
+            << "WARNING: reject_cancel rejected by the Goal state machine "
+            << "for Action '"
+            << action_name
+            << "' (reason="
+            << server_transition_error_name(transition.error)
+            << ", state="
+            << static_cast<int>(goal_instance->context.state)
+            << ", cancel_decision_pending="
+            << goal_instance->context.cancel_decision_pending
+            << ", cancel_origin="
+            << static_cast<int>(goal_instance->context.cancel_origin)
+            << ")."
+            << std::endl;
+        return false;
+    }
+    if (!transition.transitioned()) {
+        std::cerr
+            << "WARNING: reject_cancel produced no Goal state transition "
+            << "for Action '"
+            << action_name
+            << "'."
+            << std::endl;
+        return false;
+    }
+
+    if (cancel_origin == CancelOrigin::CLIENT
+        && !action->endpoint->reject_cancel(goal)) {
+        std::cerr
+            << "ERROR: Failed to send the rejected Cancel Response for "
+            << "Action '"
+            << action_name
+            << "'; the Application Cancel decision remains pending for "
+            << "an explicit retry."
+            << std::endl;
+        return false;
+    }
+
+    goal_instance->context = transition.next;
+    return true;
+}
+
+bool ActionServicesServer::send_feedback(
+    const std::string& action_name,
+    const ServerGoalHandle& goal,
+    const PduData& feedback_pdu)
+{
+    if (action_name.empty() || !goal.valid() || feedback_pdu.empty()) {
+        std::cerr
+            << "WARNING: send_feedback called with an invalid Action name, "
+            << "Goal handle, or packet."
+            << std::endl;
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* action = get_action_locked(action_name);
+    if (action == nullptr || !action->endpoint) {
+        std::cerr
+            << "WARNING: send_feedback called for unknown Action '"
+            << action_name
+            << "'."
+            << std::endl;
+        return false;
+    }
+
+    auto* goal_instance = get_goal_locked(*action, goal.goal_id);
+    if (goal_instance == nullptr) {
+        std::cerr
+            << "WARNING: send_feedback called for an unknown accepted Goal "
+            << "in Action '"
+            << action_name
+            << "'."
+            << std::endl;
+        return false;
+    }
+
+    const auto transition = transition_server_goal(
+        goal_instance->context,
+        ServerGoalEvent::PUBLISH_FEEDBACK);
+    if (transition.is_error()) {
+        std::cerr
+            << "WARNING: send_feedback rejected by the Goal state machine "
+            << "for Action '"
+            << action_name
+            << "' (reason="
+            << server_transition_error_name(transition.error)
+            << ", state="
+            << static_cast<int>(goal_instance->context.state)
+            << ")."
+            << std::endl;
+        return false;
+    }
+    if (!transition.is_nop()) {
+        std::cerr
+            << "ERROR: PUBLISH_FEEDBACK unexpectedly changed Goal state for "
+            << "Action '"
+            << action_name
+            << "'."
+            << std::endl;
+        return false;
+    }
+
+    if (!action->endpoint->send_feedback(goal, feedback_pdu)) {
+        std::cerr
+            << "ERROR: Failed to send Feedback for Action '"
+            << action_name
+            << "'; Goal state remains unchanged."
+            << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool ActionServicesServer::complete_goal_locked(
+    ActionInstance& action,
+    GoalInstance& goal_instance,
+    TerminalStatus status,
+    const PduData& result_pdu,
+    bool local_only)
+{
+    auto state_event = ServerGoalEvent::COMPLETE_UNSPECIFIED;
+    switch (status) {
+    case TerminalStatus::SUCCEEDED:
+        state_event = ServerGoalEvent::COMPLETE_SUCCEEDED;
+        break;
+    case TerminalStatus::CANCELED:
+        state_event = ServerGoalEvent::COMPLETE_CANCELED;
+        break;
+    case TerminalStatus::ABORTED:
+        state_event = ServerGoalEvent::COMPLETE_ABORTED;
+        break;
+    case TerminalStatus::UNSPECIFIED:
+        state_event = ServerGoalEvent::COMPLETE_UNSPECIFIED;
+        break;
+    }
+
+    const auto transition = transition_server_goal(
+        goal_instance.context,
+        state_event);
+    if (transition.is_error()) {
+        std::cerr
+            << "WARNING: complete rejected by the Goal state machine for "
+            << "Action '"
+            << action.action_name
+            << "' (reason="
+            << server_transition_error_name(transition.error)
+            << ", state="
+            << static_cast<int>(goal_instance.context.state)
+            << ", terminal_status="
+            << static_cast<int>(status)
+            << ")."
+            << std::endl;
+        return false;
+    }
+    if (!transition.transitioned()) {
+        std::cerr
+            << "ERROR: terminal completion unexpectedly produced no Goal "
+            << "state transition for Action '"
+            << action.action_name
+            << "'."
+            << std::endl;
+        return false;
+    }
+
+    if (local_only) {
+        if (!action.endpoint->complete_locally(
+                goal_instance.goal, status, result_pdu)) {
+            std::cerr
+                << "WARNING: Endpoint rejected local terminal completion "
+                << "for disconnected Action '"
+                << action.action_name
+                << "'; Goal state remains unchanged."
+                << std::endl;
+            return false;
+        }
+        remove_goal_locked(action, goal_instance.goal.goal_id);
+        return true;
+    }
+
+    const auto result = action.endpoint->complete(
+        goal_instance.goal, status, result_pdu);
+    switch (result) {
+    case CompleteResult::NOT_COMMITTED:
+        std::cerr
+            << "WARNING: Endpoint rejected Result before terminal commit for "
+            << "Action '"
+            << action.action_name
+            << "'; Goal state remains unchanged."
+            << std::endl;
+        return false;
+
+    case CompleteResult::SENT:
+        remove_goal_locked(action, goal_instance.goal.goal_id);
+        return true;
+
+    case CompleteResult::SEND_FAILED_AFTER_COMMIT:
+        goal_instance.context = transition.next;
+        std::cerr
+            << "ERROR: Result send failed after terminal commit for Action '"
+            << action.action_name
+            << "'; Goal remains FINISHING and cannot be reused."
+            << std::endl;
+        return false;
+    }
+
+    std::cerr
+        << "ERROR: Endpoint returned an unknown completion result for Action '"
+        << action.action_name
+        << "'."
+        << std::endl;
+    return false;
+}
+
+bool ActionServicesServer::complete(
+    const std::string& action_name,
+    const ServerGoalHandle& goal,
+    TerminalStatus status,
+    const PduData& result_pdu)
+{
+    if (action_name.empty() || !goal.valid() || result_pdu.empty()) {
+        std::cerr
+            << "WARNING: complete called with an invalid Action name, Goal "
+            << "handle, or Result packet."
+            << std::endl;
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* action = get_action_locked(action_name);
+    auto* goal_instance = action
+        ? get_goal_locked(*action, goal.goal_id)
+        : nullptr;
+    if (!action || !action->endpoint || !goal_instance) {
+        std::cerr
+            << "WARNING: complete called for an unknown Action or accepted "
+            << "Goal in Action '"
+            << action_name
+            << "'."
+            << std::endl;
+        return false;
+    }
+    return complete_goal_locked(
+        *action, *goal_instance, status, result_pdu, false);
+}
+
+bool ActionServicesServer::complete_locally(
+    const std::string& action_name,
+    const ServerGoalHandle& goal,
+    TerminalStatus status,
+    const PduData& result_pdu)
+{
+    if (action_name.empty() || !goal.valid() || result_pdu.empty()) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* action = get_action_locked(action_name);
+    auto* goal_instance = action
+        ? get_goal_locked(*action, goal.goal_id)
+        : nullptr;
+    if (!action || !action->endpoint || !goal_instance) {
+        return false;
+    }
+    return complete_goal_locked(
+        *action, *goal_instance, status, result_pdu, true);
+}
+
+} // namespace hakoniwa::pdu::action

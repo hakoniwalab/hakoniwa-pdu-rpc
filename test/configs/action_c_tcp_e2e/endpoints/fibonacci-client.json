@@ -1,0 +1,6 @@
+{
+  "name": "fibonacci-client-action-tcp",
+  "cache": "../queue.json",
+  "comm": "../transport/fibonacci-client.json",
+  "recv_cache_write": false
+}

@@ -1,0 +1,6 @@
+{
+  "name": "fibonacci-server-action-mux",
+  "cache": "queue.json",
+  "comm": "server_transport.json",
+  "recv_cache_write": false
+}

@@ -317,6 +317,42 @@ class OperationCompatibilityTests(unittest.TestCase):
                     record["cmake_args"],
                 )
 
+    def test_reviewed_test_suite_includes_action_contracts(self):
+        expected = {
+            "hakoniwa_pdu_action_configuration_test",
+            "hakoniwa_pdu_action_server_state_machine_test",
+            "hakoniwa_pdu_action_services_server_goal_instance_test",
+            "hakoniwa_pdu_action_client_state_machine_test",
+            "hakoniwa_pdu_action_services_client_goal_instance_test",
+            "hakoniwa_pdu_action_server_initialization_test",
+            "hakoniwa_pdu_action_goal_response_transaction_test",
+            "hakoniwa_pdu_action_cancel_response_serialization_test",
+            "hakoniwa_pdu_action_client_endpoint_test",
+            "hakoniwa_pdu_action_packet_codec_test",
+            "hakoniwa_pdu_action_tcp_e2e_test",
+            "hakoniwa_pdu_action_mux_server_test",
+            "hakoniwa_pdu_action_c_api_mux_server_test",
+            "hakoniwa_pdu_action_c_api_header_test",
+            "hakoniwa_pdu_action_c_api_tcp_e2e_test",
+        }
+        self.assertEqual(set(HAKO.ACTION_CONTRACT_TARGETS), expected)
+        self.assertTrue(expected.issubset(set(HAKO.REVIEWED_TEST_TARGETS)))
+        self.assertEqual(
+            HAKO.REVIEWED_TEST_BUILD_TARGET,
+            "hakoniwa_pdu_rpc_reviewed_tests",
+        )
+        self.assertEqual(HAKO.WINDOWS_REVIEWED_TEST_PARALLELISM, 2)
+        self.assertEqual(
+            HAKO.reviewed_test_parallel_args("windows"),
+            ["--parallel", "2"],
+        )
+        self.assertEqual(
+            HAKO.reviewed_test_parallel_args("macos"),
+            ["--parallel"],
+        )
+        for target in expected:
+            self.assertRegex(target, HAKO.REVIEWED_TEST_REGEX)
+
     def test_non_test_operations_keep_tests_disabled(self):
         ctx = self.context()
         for operation in (

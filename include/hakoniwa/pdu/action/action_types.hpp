@@ -9,11 +9,6 @@ namespace hakoniwa::pdu::action {
 
 using PduData = std::vector<std::uint8_t>;
 using GoalId = std::array<std::uint8_t, 16>;
-using EventToken = std::uint64_t;
-using GoalToken = std::uint64_t;
-
-inline constexpr EventToken INVALID_EVENT_TOKEN = 0;
-inline constexpr GoalToken INVALID_GOAL_TOKEN = 0;
 
 inline bool is_valid_goal_id(const GoalId& goal_id) noexcept {
     for (auto byte : goal_id) {
@@ -24,31 +19,50 @@ inline bool is_valid_goal_id(const GoalId& goal_id) noexcept {
     return false;
 }
 
-// High-level client code should retain this handle rather than manipulate a
-// GoalId directly. GoalId remains available for adapters that must preserve an
-// external protocol identity, such as a ROS 2 Action bridge.
+// Client-side typed handle for a Goal identity.
 //
-// The all-zero GoalId is reserved as invalid. Runtime-generated IDs must be
-// non-zero, and an explicitly requested all-zero ID must be rejected.
+// The upper application supplies the GoalId to send_goal(). The Runtime returns
+// it in this handle, and the same value is used for cancel
+// requests and Client event correlation. GoalId remains directly available to
+// adapters that must preserve an external protocol identity, such as a ROS 2
+// Action bridge.
+//
+// The all-zero GoalId is reserved as invalid. The Runtime does not generate
+// GoalIds; invalid or already-active IDs must be rejected synchronously.
 struct ClientGoalHandle {
     GoalId goal_id{};
 
     bool valid() const noexcept { return is_valid_goal_id(goal_id); }
 };
 
-// Server event metadata for an accepted Goal. This groups the wire identity
-// and the Runtime-local capability so an Application can identify the target
-// of CANCEL_REQUEST and RUNTIME_CANCEL_REQUEST events.
+// Server-side typed handle for a Goal identity.
 //
-// Server operations continue to use goal_token directly. This type is not a
-// replacement for event_token, which remains a one-shot decision token.
+// GOAL_REQUEST carries a valid GoalId before the Goal is accepted.
+// CANCEL_REQUEST and RUNTIME_CANCEL_REQUEST carry the same GoalId for an
+// already accepted Goal.
+//
+// ClientGoalHandle and ServerGoalHandle intentionally remain distinct types
+// so that client-side and server-side API values cannot be mixed accidentally.
 struct ServerGoalHandle {
     GoalId goal_id{};
-    GoalToken goal_token{INVALID_GOAL_TOKEN};
 
     bool valid() const noexcept {
-        return is_valid_goal_id(goal_id) && goal_token != INVALID_GOAL_TOKEN;
+        return is_valid_goal_id(goal_id);
     }
+};
+
+// Synchronous result of submitting a new Goal. This describes why the Goal
+// was or was not handed to the transport; it is distinct from the later
+// protocol-level GOAL_RESPONSE decision.
+enum class GoalSendResult : std::uint8_t {
+    SUCCESS = 0,
+    INVALID_ARGUMENT,
+    ACTION_NOT_FOUND,
+    NOT_INITIALIZED,
+    DUPLICATE_GOAL,
+    NO_FREE_SLOT,
+    INVALID_PACKET,
+    TRANSPORT_ERROR,
 };
 
 // These values describe logical runtime events. Wire-level values are defined
@@ -114,20 +128,20 @@ struct ClientEvent {
 
 struct ServerEvent {
     ServerEventType type{ServerEventType::NONE};
-    EventToken event_token{INVALID_EVENT_TOKEN};
     ServerGoalHandle goal;
     RuntimeCancelCause runtime_cancel_cause{RuntimeCancelCause::UNSPECIFIED};
     std::string action_name;
-    std::string client_name;
     PduData pdu;
 };
 
 // Event field contract:
-//   GOAL_REQUEST:           goal.goal_token == INVALID_GOAL_TOKEN
-//                           and goal.goal_id is non-zero
-//   CANCEL_REQUEST:         goal identifies the accepted target Goal
-//   RUNTIME_CANCEL_REQUEST: goal identifies the target Goal and cause is set
-// event_token is consumed by exactly one accept/reject operation.
+//   Client events:          goal identifies the correlated Goal.
+//   GOAL_REQUEST:           goal contains the requested non-zero GoalId.
+//   CANCEL_REQUEST:         goal identifies the accepted target Goal.
+//   RUNTIME_CANCEL_REQUEST: goal identifies the target Goal and cause is set.
+//
+// The Native API uses the typed Goal handles above as lifecycle identities. It
+// does not expose separate event or goal tokens.
 
 // TODO(codex): define the precise runtime error model without exposing
 // implementation-specific exceptions through the public API.

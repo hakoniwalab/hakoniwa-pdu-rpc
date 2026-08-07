@@ -21,6 +21,9 @@ TEST(ActionConfigurationContract, LoadsAndExpandsSampleConfiguration)
     EXPECT_EQ(definition.name, "fibonacci");
     EXPECT_EQ(definition.type, "sample_action_msgs/Fibonacci");
     EXPECT_EQ(definition.slot_count, 4U);
+    EXPECT_EQ(definition.buffer_heap.request_size, 1048576U);
+    EXPECT_EQ(definition.buffer_heap.response_size, 1048576U);
+    EXPECT_EQ(definition.buffer_heap.feedback_size, 1048576U);
     EXPECT_EQ(definition.client_endpoint.node_id, "fibonacci-client");
     EXPECT_EQ(definition.server_endpoint.node_id, "fibonacci-server");
     ASSERT_EQ(definition.channels.size(), 12U);
@@ -57,6 +60,30 @@ TEST(ActionConfigurationContract, RejectsInvalidSlotCount)
     EXPECT_NE(error.find("slotCount"), std::string::npos);
 }
 
+TEST(ActionConfigurationContract, ReadsGeneratedEndpointIds)
+{
+    const auto action_json = nlohmann::json::parse(R"({
+        "name": "fibonacci",
+        "type": "sample_action_msgs/Fibonacci",
+        "slotCount": 1,
+        "clientEndpoint": {
+            "nodeId": "client",
+            "endpointId": "client-action-tcp"
+        },
+        "serverEndpoint": {
+            "nodeId": "server",
+            "endpointId": "server-action-tcp"
+        }
+    })");
+    action::ActionDefinition definition;
+    std::string error;
+
+    ASSERT_TRUE(action::ActionConfigurationLoader::parse_action(
+        action_json, definition, error)) << error;
+    EXPECT_EQ(definition.client_endpoint.endpoint_id, "client-action-tcp");
+    EXPECT_EQ(definition.server_endpoint.endpoint_id, "server-action-tcp");
+}
+
 TEST(ActionConfigurationContract, RejectsMalformedActionType)
 {
     const auto action_json = nlohmann::json::parse(R"({
@@ -72,6 +99,43 @@ TEST(ActionConfigurationContract, RejectsMalformedActionType)
     EXPECT_FALSE(action::ActionConfigurationLoader::parse_action(
         action_json, definition, error));
     EXPECT_NE(error.find("package/ActionName"), std::string::npos);
+}
+
+TEST(ActionConfigurationContract, ResolvesOmittedBufferHeapDefaults)
+{
+    const auto action_json = nlohmann::json::parse(R"({
+        "name": "fibonacci",
+        "type": "sample_action_msgs/Fibonacci",
+        "slotCount": 1,
+        "clientEndpoint": {"nodeId": "client"},
+        "serverEndpoint": {"nodeId": "server"}
+    })");
+    action::ActionDefinition definition;
+    std::string error;
+
+    ASSERT_TRUE(action::ActionConfigurationLoader::parse_action(
+        action_json, definition, error)) << error;
+    EXPECT_EQ(definition.buffer_heap.request_size, action::ActionBufferHeap::DEFAULT_SIZE);
+    EXPECT_EQ(definition.buffer_heap.response_size, action::ActionBufferHeap::DEFAULT_SIZE);
+    EXPECT_EQ(definition.buffer_heap.feedback_size, action::ActionBufferHeap::DEFAULT_SIZE);
+}
+
+TEST(ActionConfigurationContract, RejectsInvalidBufferHeap)
+{
+    const auto action_json = nlohmann::json::parse(R"({
+        "name": "fibonacci",
+        "type": "sample_action_msgs/Fibonacci",
+        "slotCount": 1,
+        "bufferHeap": {"requestSize": -1},
+        "clientEndpoint": {"nodeId": "client"},
+        "serverEndpoint": {"nodeId": "server"}
+    })");
+    action::ActionDefinition definition;
+    std::string error;
+
+    EXPECT_FALSE(action::ActionConfigurationLoader::parse_action(
+        action_json, definition, error));
+    EXPECT_NE(error.find("requestSize"), std::string::npos);
 }
 
 TEST(ActionConfigurationContract, RejectsDuplicateActionNames)

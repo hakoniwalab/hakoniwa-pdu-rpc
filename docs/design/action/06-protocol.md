@@ -1,6 +1,6 @@
 # Hakoniwa Action Protocol概要
 
-> **Status: Draft**  
+> **Status: Implemented contract**
 > 本文書は、Hakoniwa Action Protocolの通信端点、代表的な通信順序、および`hakoniwa-pdu-registry`と整合する論理パケット構成を直感的に理解するための概要です。
 
 ## 1. 目的
@@ -228,7 +228,7 @@ duration    = sec 0 / nanosec 0
 
 ## 7. v1で追加しない共通フィールド
 
-初稿で候補としていた次のフィールドは、現行PDU RegistryのAction Headerには存在しないため、v1 Headerへ追加しません。
+次のフィールドはPDU RegistryのAction Headerに含めず、v1 Headerへ追加しません。
 
 ```text
 action_type_id
@@ -247,7 +247,7 @@ Action Typeは、使用するPDU Schema／packet型およびendpoint設定によ
 
 v1は`goal_id`とpending ContextでGoal／Cancel応答を相関します。独立した`request_id`は追加しません。
 
-Cancel再送の厳密な要求単位相関が必要になった場合は、将来のHeader versionで検討します。
+同一GoalのCancel判断待ち中またはCancel受理後に届く追加Cancel Requestは、要求単位を区別せず重複として扱います。
 
 ### 7.3 body_length
 
@@ -283,7 +283,7 @@ uint8[16]
 
 ### 8.3 request_kind
 
-初期割り当て案:
+v1の割り当て:
 
 ```text
 0 = UNSPECIFIED
@@ -293,7 +293,7 @@ uint8[16]
 
 ### 8.4 response_kind
 
-初期割り当て案:
+v1の割り当て:
 
 ```text
 0 = UNSPECIFIED
@@ -319,13 +319,21 @@ response_kind = RESULT:
   3 = ABORTED
 ```
 
+v1のResultはServerからResponse channelへpushします。Server Runtimeはterminal statusとResult bodyをcommitしてから1回だけ送信し、Client Runtimeは`goal_id`とslot ownershipを検証してApplicationへ配送します。`EXECUTING`からは`SUCCEEDED`または`ABORTED`を許可し、`CANCELED`はCancel受理後の`CANCELING`からだけ許可します。
+
+Result packetの形式・容量検証はterminal commit前に行い、Application入力エラーではGoalを維持します。Result送信成功後、ServerはGoal Contextとslot ownershipを解放します。ClientもResultをイベントへ移した後に対応Contextとslotを解放します。検証通過後のTransport送信失敗では、Server Contextとslot ownershipを誤再利用防止のため`FINISHING`で保持し、stop／reset時に解放します。
+
 ### 8.6 sequence_no
 
 ```text
 uint32 sequence_no
 初期値 = 0
-Feedback送信ごとに1増加
+Feedback送信成功ごとに1増加
 ```
+
+採番はGoalごとにServer Runtimeが所有します。送信失敗時は番号を進めず、明示的な再試行では同じ番号を使用します。Client RuntimeはGoalごとの期待値と一致するFeedbackだけを上位Applicationへ配送し、重複、逆転、欠番を診断対象として無視します。`uint32`の最大値後はmoduloで0へ戻ります。
+
+ROS 2 ActionのFeedback契約にはsequence番号がないため、ROS Bridgeは`sequence_no`をROS Feedbackへ露出しません。これは箱庭Runtime内部の配送検査用フィールドです。
 
 ### 8.7 未使用bodyの既定値
 
@@ -368,7 +376,7 @@ hakoniwa-pdu-registry:
 
 byte order、padding、可変長body、固定サイズはPDU Registryの生成規則へ委ねます。本Protocol文書では独自に再定義しません。
 
-## 10. 現時点の設計判断
+## 10. Protocolの設計判断
 
 - PDU Registryの既存Action Headerをv1データ契約の基準とする。
 - packetはRequest、Response、Feedbackの3種類とし、kindで論理イベントを識別する。
@@ -380,15 +388,7 @@ byte order、padding、可変長body、固定サイズはPDU Registryの生成�
 - `sequence_no`は`uint32`で0開始とする。
 - reservedは0送信、受信時無視とする。
 
-## 11. 最小レビュー事項
-
-1. `request_kind`の数値割り当てを`GOAL=1`、`CANCEL=2`とするか。
-2. `response_kind`の数値割り当てを`GOAL=1`、`CANCEL=2`、`RESULT=3`とするか。
-3. `status`をresponse kind依存の共用フィールドとするか。
-4. 未使用bodyを生成型の通常の既定値で初期化し、受信側が解釈しない方針でよいか。
-5. `sequence_no`を0開始とするか。
-
-## 12. 対象外
+## 11. 対象外
 
 - 状態遷移規則の再定義
 - 全異常シーケンスの列挙

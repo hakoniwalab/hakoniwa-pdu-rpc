@@ -21,11 +21,19 @@ set(HAKO_PDU_RPC_SOURCES
   rpc_client_endpoint_impl.cpp
   rpc_services_client.cpp
   action_configuration.cpp
+  action_services_server.cpp
+  action_services_mux_server.cpp
+  action_services_client.cpp
+  action_server_state_machine.cpp
+  action_client_state_machine.cpp
+  action_client_endpoint_impl.cpp
   action_server_endpoint_impl.cpp
+  c_action.cpp
   c_rpc.cpp
   c_rpc_cancel.cpp
   c_rpc_alloc.cpp
   c_rpc_mux.cpp
+  "${HAKONIWA_PDU_REGISTRY_DIR}/pdu/types/pdu_size_registry.c"
 )
 
 function(hako_pdu_rpc_configure_target target)

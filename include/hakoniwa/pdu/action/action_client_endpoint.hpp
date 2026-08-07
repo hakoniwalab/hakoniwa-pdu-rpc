@@ -3,7 +3,6 @@
 #include "action_types.hpp"
 
 #include <nlohmann/json_fwd.hpp>
-#include <optional>
 #include <string>
 #include <utility>
 
@@ -13,19 +12,36 @@ class IActionClientEndpoint {
 public:
     virtual ~IActionClientEndpoint() = default;
 
-    virtual bool initialize(const nlohmann::json& action_config,
-                            int pdu_meta_data_size) = 0;
+    virtual bool initialize(const nlohmann::json& action_config) = 0;
 
-    // Normal clients omit requested_goal_id and let the Runtime generate a
-    // non-zero UUID. Protocol adapters may provide an external GoalId that must
-    // be preserved; an explicitly requested all-zero GoalId is invalid and
-    // must be rejected. The returned handle is used for cancel and correlation.
+    // Goal identity is owned by the upper application or protocol adapter.
+    // The Runtime preserves the supplied ID and does not generate one.
+    // All-zero and already-active GoalIds are rejected synchronously.
+    //
+    // The returned typed ClientGoalHandle is the Native API identity used for
+    // cancel requests and event correlation. No separate client token is
+    // exposed.
+    //
     // timeout_usec applies only while waiting for GOAL_RESPONSE; zero disables
     // that timeout. It does not time out Result or Cancel Response delivery.
     virtual bool send_goal(const PduData& goal_pdu,
+                           const GoalId& goal_id,
                            ClientGoalHandle& goal_handle_out,
-                           std::optional<GoalId> requested_goal_id = std::nullopt,
                            std::uint64_t timeout_usec = 0) = 0;
+    // Detailed form used by bindings that must preserve the synchronous
+    // rejection reason. Existing custom endpoints remain source-compatible:
+    // unless overridden, false from send_goal() maps to TRANSPORT_ERROR.
+    virtual GoalSendResult send_goal_with_result(
+        const PduData& goal_pdu,
+        const GoalId& goal_id,
+        ClientGoalHandle& goal_handle_out,
+        std::uint64_t timeout_usec = 0)
+    {
+        return send_goal(
+                   goal_pdu, goal_id, goal_handle_out, timeout_usec)
+            ? GoalSendResult::SUCCESS
+            : GoalSendResult::TRANSPORT_ERROR;
+    }
     virtual bool send_cancel(const ClientGoalHandle& goal) = 0;
     virtual ClientEventType poll(ClientEvent& event_out) = 0;
 
@@ -33,6 +49,11 @@ public:
     // selected GoalId into the Action header when send_goal() is called.
     virtual bool create_goal_buffer(PduData& pdu_out) = 0;
     virtual void clear_pending_events() = 0;
+
+    // Clears all Goal contexts and slot ownership after the underlying
+    // transport has been stopped or disconnected. This is intentionally
+    // separate from clear_pending_events(), which only discards queued input.
+    virtual void reset_contexts() = 0;
 
     const std::string& get_action_name() const { return action_name_; }
     const std::string& get_client_name() const { return client_name_; }

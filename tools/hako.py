@@ -59,11 +59,34 @@ OPERATIONS: dict[str, OperationSpec] = {
     "package-test": OperationSpec(),
 }
 TEST_COMMANDS = {name for name, spec in OPERATIONS.items() if spec.tests}
-REVIEWED_TEST_TARGETS = tuple(
+SERVICE_CONTRACT_TARGETS = tuple(
     spec.target for spec in OPERATIONS.values() if spec.target is not None
 )
+ACTION_CONTRACT_TARGETS = (
+    "hakoniwa_pdu_action_configuration_test",
+    "hakoniwa_pdu_action_server_state_machine_test",
+    "hakoniwa_pdu_action_services_server_goal_instance_test",
+    "hakoniwa_pdu_action_client_state_machine_test",
+    "hakoniwa_pdu_action_services_client_goal_instance_test",
+    "hakoniwa_pdu_action_server_initialization_test",
+    "hakoniwa_pdu_action_goal_response_transaction_test",
+    "hakoniwa_pdu_action_cancel_response_serialization_test",
+    "hakoniwa_pdu_action_client_endpoint_test",
+    "hakoniwa_pdu_action_packet_codec_test",
+    "hakoniwa_pdu_action_tcp_e2e_test",
+    "hakoniwa_pdu_action_mux_server_test",
+    "hakoniwa_pdu_action_c_api_mux_server_test",
+    "hakoniwa_pdu_action_c_api_header_test",
+    "hakoniwa_pdu_action_c_api_tcp_e2e_test",
+)
+REVIEWED_TEST_TARGETS = SERVICE_CONTRACT_TARGETS + ACTION_CONTRACT_TARGETS
+REVIEWED_TEST_BUILD_TARGET = "hakoniwa_pdu_rpc_reviewed_tests"
+WINDOWS_REVIEWED_TEST_PARALLELISM = 2
 REVIEWED_TEST_REGEX = (
-    "^hakoniwa_pdu_rpc_(basic|infinite_wait|timeout_cancel|cancel_race)_test$"
+    "^hakoniwa_pdu_(rpc_(basic|infinite_wait|timeout_cancel|cancel_race)"
+    "|action_(configuration|server_state_machine|services_server_goal_instance|client_state_machine|services_client_goal_instance|server_initialization|goal_response_transaction"
+    "|cancel_response_serialization|client_endpoint|packet_codec|tcp_e2e|mux_server"
+    "|c_api_(header|tcp_e2e|mux_server)))_test$"
 )
 
 
@@ -822,8 +845,18 @@ def run_test_target(ctx: Context, spec: OperationSpec) -> None:
     )
 
 
+def reviewed_test_parallel_args(platform_name: str) -> list[str]:
+    if platform_name == "windows":
+        return ["--parallel", str(WINDOWS_REVIEWED_TEST_PARALLELISM)]
+    return ["--parallel"]
+
+
 def test(ctx: Context) -> None:
     configure(ctx, tests=True)
+    # The reviewed aggregate target fans out to many MSVC translation units.
+    # GitHub-hosted Windows runners can terminate unconstrained MSBuild without
+    # a compiler diagnostic when this graph exhausts the available memory.
+    parallel_args = reviewed_test_parallel_args(ctx.platform_name)
     run(
         [
             "cmake",
@@ -832,8 +865,8 @@ def test(ctx: Context) -> None:
             "--config",
             ctx.build_type,
             "--target",
-            *REVIEWED_TEST_TARGETS,
-            "--parallel",
+            REVIEWED_TEST_BUILD_TARGET,
+            *parallel_args,
         ],
         cwd=ctx.repo_root,
     )
@@ -893,6 +926,18 @@ def package_test(ctx: Context) -> None:
         ],
         cwd=ctx.repo_root,
     )
+    if ctx.venv_python is not None:
+        run(
+            [
+                str(ctx.venv_python),
+                "-I",
+                "-c",
+                "from hakoniwa_pdu_rpc import ActionMuxServer; "
+                "assert ActionMuxServer.__module__ == "
+                "'hakoniwa_pdu_rpc.action_cffi'",
+            ],
+            cwd=ctx.install_dir,
+        )
 
 
 def create_parser() -> argparse.ArgumentParser:

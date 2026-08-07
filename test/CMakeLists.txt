@@ -57,6 +57,43 @@ target_compile_definitions(hakoniwa_pdu_action_configuration_test PRIVATE
 add_test(NAME hakoniwa_pdu_action_configuration_test COMMAND hakoniwa_pdu_action_configuration_test)
 set_tests_properties(hakoniwa_pdu_action_configuration_test PROPERTIES TIMEOUT 30)
 
+add_executable(hakoniwa_pdu_action_server_state_machine_test
+  action_server_state_machine_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_server_state_machine_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+add_test(NAME hakoniwa_pdu_action_server_state_machine_test COMMAND hakoniwa_pdu_action_server_state_machine_test)
+set_tests_properties(hakoniwa_pdu_action_server_state_machine_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_services_server_goal_instance_test
+  action_services_server_goal_instance_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_services_server_goal_instance_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_compile_definitions(hakoniwa_pdu_action_services_server_goal_instance_test PRIVATE
+  ACTION_CONFIG_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_resolved.json"
+  ACTION_SERVER_CONTAINER_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_server_container.json"
+  ACTION_SERVER_ENDPOINT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_server_endpoint.json"
+)
+add_test(NAME hakoniwa_pdu_action_services_server_goal_instance_test COMMAND hakoniwa_pdu_action_services_server_goal_instance_test)
+set_tests_properties(hakoniwa_pdu_action_services_server_goal_instance_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_client_state_machine_test
+  action_client_state_machine_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_client_state_machine_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+add_test(NAME hakoniwa_pdu_action_client_state_machine_test COMMAND hakoniwa_pdu_action_client_state_machine_test)
+set_tests_properties(hakoniwa_pdu_action_client_state_machine_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_services_client_goal_instance_test
+  action_services_client_goal_instance_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_services_client_goal_instance_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_compile_definitions(hakoniwa_pdu_action_services_client_goal_instance_test PRIVATE
+  ACTION_CONFIG_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_resolved.json"
+  ACTION_CLIENT_CONTAINER_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_client_container.json"
+)
+add_test(NAME hakoniwa_pdu_action_services_client_goal_instance_test COMMAND hakoniwa_pdu_action_services_client_goal_instance_test)
+set_tests_properties(hakoniwa_pdu_action_services_client_goal_instance_test PROPERTIES TIMEOUT 30)
+
 add_executable(hakoniwa_pdu_action_server_initialization_test
   action_server_initialization_contract_test.cpp
 )
@@ -64,8 +101,50 @@ target_link_libraries(hakoniwa_pdu_action_server_initialization_test PRIVATE ${H
 target_include_directories(hakoniwa_pdu_action_server_initialization_test PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../src"
 )
+target_compile_definitions(hakoniwa_pdu_action_server_initialization_test PRIVATE
+  ACTION_SERVER_ENDPOINT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_server_endpoint.json"
+)
 add_test(NAME hakoniwa_pdu_action_server_initialization_test COMMAND hakoniwa_pdu_action_server_initialization_test)
 set_tests_properties(hakoniwa_pdu_action_server_initialization_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_goal_response_transaction_test
+  action_goal_response_transaction_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_goal_response_transaction_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_include_directories(hakoniwa_pdu_action_goal_response_transaction_test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_compile_definitions(hakoniwa_pdu_action_goal_response_transaction_test PRIVATE
+  ACTION_SERVER_ENDPOINT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_server_endpoint.json"
+)
+add_test(NAME hakoniwa_pdu_action_goal_response_transaction_test COMMAND hakoniwa_pdu_action_goal_response_transaction_test)
+set_tests_properties(hakoniwa_pdu_action_goal_response_transaction_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_cancel_response_serialization_test
+  action_cancel_response_serialization_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_cancel_response_serialization_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_include_directories(hakoniwa_pdu_action_cancel_response_serialization_test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_compile_definitions(hakoniwa_pdu_action_cancel_response_serialization_test PRIVATE
+  ACTION_SERVER_ENDPOINT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_server_endpoint.json"
+)
+add_test(NAME hakoniwa_pdu_action_cancel_response_serialization_test COMMAND hakoniwa_pdu_action_cancel_response_serialization_test)
+set_tests_properties(hakoniwa_pdu_action_cancel_response_serialization_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_client_endpoint_test
+  action_client_endpoint_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_client_endpoint_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_include_directories(hakoniwa_pdu_action_client_endpoint_test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_compile_definitions(hakoniwa_pdu_action_client_endpoint_test PRIVATE
+  ACTION_CLIENT_ENDPOINT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_server_endpoint.json"
+)
+add_test(NAME hakoniwa_pdu_action_client_endpoint_test COMMAND hakoniwa_pdu_action_client_endpoint_test)
+set_tests_properties(hakoniwa_pdu_action_client_endpoint_test PROPERTIES TIMEOUT 30)
 
 add_executable(hakoniwa_pdu_action_packet_codec_test
   action_packet_codec_contract_test.cpp
@@ -73,6 +152,60 @@ add_executable(hakoniwa_pdu_action_packet_codec_test
 target_link_libraries(hakoniwa_pdu_action_packet_codec_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
 add_test(NAME hakoniwa_pdu_action_packet_codec_test COMMAND hakoniwa_pdu_action_packet_codec_test)
 set_tests_properties(hakoniwa_pdu_action_packet_codec_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_tcp_e2e_test
+  action_tcp_e2e_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_tcp_e2e_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_compile_definitions(hakoniwa_pdu_action_tcp_e2e_test PRIVATE
+  ACTION_TCP_CONFIG_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_resolved.json"
+  ACTION_TCP_ENDPOINTS_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_tcp_e2e/endpoints.json"
+)
+add_test(NAME hakoniwa_pdu_action_tcp_e2e_test COMMAND hakoniwa_pdu_action_tcp_e2e_test)
+set_tests_properties(hakoniwa_pdu_action_tcp_e2e_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_mux_server_test
+  action_mux_server_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_mux_server_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_compile_definitions(hakoniwa_pdu_action_mux_server_test PRIVATE
+  ACTION_MUX_CONFIG_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_resolved.json"
+  ACTION_MUX_CLIENT_ENDPOINTS_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_mux_e2e/endpoints.json"
+  ACTION_MUX_SERVER_ENDPOINT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_mux_e2e/server_endpoint.json"
+)
+add_test(NAME hakoniwa_pdu_action_mux_server_test COMMAND hakoniwa_pdu_action_mux_server_test)
+set_tests_properties(hakoniwa_pdu_action_mux_server_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_c_api_mux_server_test
+  c_action_mux_server_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_c_api_mux_server_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_compile_definitions(hakoniwa_pdu_action_c_api_mux_server_test PRIVATE
+  ACTION_C_MUX_CONFIG_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_resolved.json"
+  ACTION_C_MUX_CLIENT_ENDPOINTS_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_mux_e2e/endpoints.json"
+  ACTION_C_MUX_SERVER_ENDPOINT_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_mux_e2e/server_endpoint.json"
+)
+add_test(NAME hakoniwa_pdu_action_c_api_mux_server_test COMMAND hakoniwa_pdu_action_c_api_mux_server_test)
+set_tests_properties(hakoniwa_pdu_action_c_api_mux_server_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_c_api_tcp_e2e_test
+  c_action_tcp_e2e_contract_test.cpp
+)
+target_link_libraries(hakoniwa_pdu_action_c_api_tcp_e2e_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+target_compile_definitions(hakoniwa_pdu_action_c_api_tcp_e2e_test PRIVATE
+  ACTION_C_TCP_CONFIG_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_resolved.json"
+  ACTION_C_TCP_ENDPOINTS_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/configs/action_c_tcp_e2e/endpoints.json"
+)
+add_test(NAME hakoniwa_pdu_action_c_api_tcp_e2e_test COMMAND hakoniwa_pdu_action_c_api_tcp_e2e_test)
+set_tests_properties(hakoniwa_pdu_action_c_api_tcp_e2e_test PROPERTIES TIMEOUT 30)
+
+add_executable(hakoniwa_pdu_action_c_api_header_test
+  c_action_header_contract_test.c
+)
+target_link_libraries(hakoniwa_pdu_action_c_api_header_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY})
+set_target_properties(hakoniwa_pdu_action_c_api_header_test PROPERTIES LINKER_LANGUAGE CXX)
+add_test(NAME hakoniwa_pdu_action_c_api_header_test COMMAND hakoniwa_pdu_action_c_api_header_test)
+set_tests_properties(hakoniwa_pdu_action_c_api_header_test PROPERTIES TIMEOUT 30)
 
 add_executable(hakoniwa_pdu_rpc_basic_test
   rpc_basic_contract_test.cpp
@@ -148,8 +281,16 @@ set_tests_properties(hakoniwa_pdu_rpc_c_api_cancel_race_test PROPERTIES WORKING_
 
 set(HAKO_PDU_RPC_NATIVE_CONTRACT_TARGETS
   hakoniwa_pdu_action_configuration_test
+  hakoniwa_pdu_action_server_state_machine_test
+  hakoniwa_pdu_action_services_server_goal_instance_test
+  hakoniwa_pdu_action_client_state_machine_test
   hakoniwa_pdu_action_server_initialization_test
+  hakoniwa_pdu_action_goal_response_transaction_test
+  hakoniwa_pdu_action_cancel_response_serialization_test
+  hakoniwa_pdu_action_client_endpoint_test
   hakoniwa_pdu_action_packet_codec_test
+  hakoniwa_pdu_action_mux_server_test
+  hakoniwa_pdu_action_c_api_mux_server_test
   hakoniwa_pdu_rpc_basic_test
   hakoniwa_pdu_rpc_mux_server_test
   hakoniwa_pdu_rpc_c_api_mux_server_test
@@ -165,3 +306,29 @@ set(HAKO_PDU_RPC_NATIVE_CONTRACT_TARGETS
 foreach(target IN LISTS HAKO_PDU_RPC_NATIVE_CONTRACT_TARGETS)
   hako_pdu_rpc_stage_windows_test_dlls(${target})
 endforeach()
+
+# Give the cross-platform build driver one stable CMake target instead of
+# forwarding a long list of project targets to the native generator.  In
+# particular, Visual Studio/MSBuild does not provide the same reliable
+# multi-target command-line boundary as Make and Ninja.
+add_custom_target(hakoniwa_pdu_rpc_reviewed_tests DEPENDS
+  hakoniwa_pdu_rpc_basic_test
+  hakoniwa_pdu_rpc_infinite_wait_test
+  hakoniwa_pdu_rpc_timeout_cancel_test
+  hakoniwa_pdu_rpc_cancel_race_test
+  hakoniwa_pdu_action_configuration_test
+  hakoniwa_pdu_action_server_state_machine_test
+  hakoniwa_pdu_action_services_server_goal_instance_test
+  hakoniwa_pdu_action_client_state_machine_test
+  hakoniwa_pdu_action_services_client_goal_instance_test
+  hakoniwa_pdu_action_server_initialization_test
+  hakoniwa_pdu_action_goal_response_transaction_test
+  hakoniwa_pdu_action_cancel_response_serialization_test
+  hakoniwa_pdu_action_client_endpoint_test
+  hakoniwa_pdu_action_packet_codec_test
+  hakoniwa_pdu_action_tcp_e2e_test
+  hakoniwa_pdu_action_mux_server_test
+  hakoniwa_pdu_action_c_api_mux_server_test
+  hakoniwa_pdu_action_c_api_header_test
+  hakoniwa_pdu_action_c_api_tcp_e2e_test
+)

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "actions": [
+    {
+      "name": "fibonacci",
+      "type": "sample_action_msgs/Fibonacci",
+      "slotCount": 4,
+      "bufferHeap": {
+        "requestSize": 1048576,
+        "responseSize": 1048576,
+        "feedbackSize": 1048576
+      },
+      "clientEndpoint": {
+        "nodeId": "fibonacci-client",
+        "endpointId": "fibonacci-client-action-tcp"
+      },
+      "serverEndpoint": {
+        "nodeId": "fibonacci-server",
+        "endpointId": "fibonacci-server-action-tcp"
+      }
+    }
+  ]
+}

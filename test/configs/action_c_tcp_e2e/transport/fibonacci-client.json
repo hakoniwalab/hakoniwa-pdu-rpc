@@ -1,0 +1,16 @@
+{
+  "protocol": "tcp",
+  "name": "fibonacci-client-action-tcp",
+  "direction": "inout",
+  "role": "client",
+  "comm_raw_version": "v2",
+  "remote": {
+    "address": "127.0.0.1",
+    "port": 54112
+  },
+  "options": {
+    "connect_timeout_ms": 2000,
+    "read_timeout_ms": 1000,
+    "write_timeout_ms": 1000
+  }
+}

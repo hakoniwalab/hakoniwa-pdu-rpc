@@ -1,7 +1,7 @@
 # Hakoniwa Action Clientの状態モデル
 
-> **Status: Draft**  
-本文書はレビューと議論のための初稿です。現時点では確定仕様ではありません。
+> **Status: Implemented contract**
+> 本文書は、Client Runtimeが保持するGoal Contextと状態遷移の現行仕様です。
 
 ## 1. 目的
 
@@ -59,7 +59,7 @@ EXECUTING
 
 ### 3.3 FINISHING
 
-Client Runtimeがterminal Resultを受信し、Client Applicationへの完了通知、Future解決、callback実行、Goal Context解放を処理している内部状態です。
+Client Runtimeがterminal Resultを受信し、Client ApplicationへのResult event配送とGoal Context解放を処理している内部状態です。
 
 Server側の`FINISHING`はResult配送・保持を管理します。Client側の`FINISHING`はResult受信後の通知・解放を管理します。名称は共通ですが、各Runtimeが所有する処理は対称です。
 
@@ -73,13 +73,13 @@ FINISHING -> RELEASE
 
 `SEND_GOAL`を呼び出した時点で、Client RuntimeはGoal Requestを送信するためのContextを作成します。
 
-通常のHakoniwa ClientではRuntimeがUUID形式の`goal_id`を生成します。ROS BridgeなどのAdapterは、外部で生成された互換UUIDを`goal_id`として指定できます。生成元が異なっても、以降の状態遷移は同じです。
+通常のHakoniwa Clientも上位Applicationが`goal_id`を指定します。ROS BridgeなどのAdapterは、外部で生成された互換UUIDをそのまま指定します。Runtimeは自動生成せず、all-zeroまたはactive Goalとの衝突を同期エラーとして拒否します。
 
 Goal Responseを受信するまでは、accept済みGoalの主状態を持ちません。
 
 ```text
 SEND_GOAL
-  -> goal_idを生成、または外部UUIDを受け入れる
+  -> 上位Application／Adapter指定のgoal_idを検証する
   -> Goal Context生成
   -> Goal Request送信
   -> goal_response_pending = true
@@ -105,18 +105,21 @@ REQUEST_SEND_FAILED(GOAL)
 RESPONSE_TIMEOUT(GOAL_RESPONSE)
   -> goal_response_pending = false
   -> Client Applicationへtimeoutを通知
-  -> RELEASE
+  -> slotをquarantineして保持
+  -> transport stop / disconnect後の明示resetでRELEASE
 ```
 
-初版Client APIの`send_goal(..., timeout_usec)`は、このGoal Response待ちにだけ適用します。`timeout_usec=0`はGoal Response timeoutなしを表します。Goalがacceptされた後のResult待ち、およびCancel Response待ちには同じ値を流用しません。それらのtimeout／保持Policyは初版の公開契約へ含めません。
+Client APIの`send_goal(..., timeout_usec)`は、このGoal Response待ちにだけ適用します。`timeout_usec=0`はGoal Response timeoutなしを表します。Goalがacceptされた後のResult待ち、およびCancel Response待ちには同じ値を流用しません。
 
-Goal Response timeout時、Goal RequestがServerへ到達し、Server側でaccept済みとなっている可能性があります。しかし、Client Runtimeはこの可能性を理由に追加主状態、状態照会、自動再送、特別な救済処理を導入しません。Client側では通信失敗としてContextを解放し、Server側で残存Goalが発生し得ることは異常ケースとして扱います。
+Goal Response timeout時、Goal RequestがServerへ到達し、Server側でaccept済みとなっている可能性があります。このためClient RuntimeはTIMEOUTを一度だけ通知した後もpacket bindingとslot ownershipを保持し、同じslotを別Goalへ再利用しません。この保持状態はaccept済みGoalの主状態ではなく、通信laneを安全側へ隔離する内部状態です。状態照会、自動再送、自動Cancelは導入しません。
+
+timeout後の遅延Goal Responseは通常のGoal ResponseとしてApplicationへ再通知せず、診断対象として無視します。slotはtransportのstopまたはdisconnect後に行う明示的なContext reset、あるいはRuntime instanceの破棄によって回収します。`clear_pending_events()`は受信queueだけを破棄するAPIであり、Goal Contextやslot ownershipを解放しません。
 
 `GOAL_REQUESTING`や`ACCEPTED`などの追加主状態は設けません。これはROS 2 Action ClientがGoal Response待ちをFutureで表現する考え方と整合します。
 
 ## 5. Client Application APIイベント
 
-初版で必須とするClient Application起因イベントは、次の2つです。
+Client Application起因イベントは、次の2つです。
 
 ```text
 SEND_GOAL(goal_body)
@@ -130,7 +133,7 @@ REQUEST_CANCEL(goal_id)
 Runtimeは少なくとも次を行います。
 
 - Goal bodyのローカル検査
-- UUID形式の`goal_id`生成、またはAdapterが指定した互換UUIDの受け入れ
+- 上位Application／Adapterが指定した16 byteかつall-zeroでない`goal_id`の検証
 - Goal Context生成
 - Goal Request送信
 - Goal Response待ちContext生成
@@ -202,7 +205,7 @@ Cancel Request送信後、Cancel Response受信までを表します。
 
 acceptされたGoalについてterminal Resultを待っていることを表します。
 
-Resultをpushで受信するか、Clientが明示的に取得要求を送るかはProtocol文書で決定します。どちらの場合も、待ち状態を新しいGoal主状態として追加しません。
+ResultはServer pushで受信します。待ち状態を新しいGoal主状態として追加せず、accept済みGoal ContextとslotをResult受信まで保持します。
 
 ## 8. Client Application APIイベント × 状態マトリクス
 
@@ -225,13 +228,17 @@ unknown `goal_id`へのAPI呼び出しも`APPLICATION_API_ERROR`とします。
 
 pending Contextが存在しないCancel Responseは、Client Application APIの誤用ではありません。相関不能、遅延、重複したProtocol応答としてApplicationへ通知せず、診断を記録して`IGNORE`します。
 
-`RESULT_RECEIVED`に含まれるterminal statusは、少なくとも`SUCCEEDED`、`CANCELED`、`ABORTED`を扱います。
+Feedbackの期待sequenceはGoal accept時に0で初期化します。受信した`sequence_no`が期待値と一致した場合だけApplicationへ通知して期待値を1増加させます。重複、逆転、欠番は通常Feedbackとして通知せず診断対象として無視します。`uint32`の最大値後はmoduloで0へ戻ります。
 
-Server側がRuntime起因Cancelを開始した場合、Client endpointが切断済みならCancel Responseを受信しない可能性があります。再接続後の状態照会、Result再取得、遅延Cancel Responseの扱いは後続Protocolで定義します。
+`RESULT_RECEIVED`に含まれるterminal statusは`SUCCEEDED`、`CANCELED`、`ABORTED`を扱います。`EXECUTING`相当のContextでは`SUCCEEDED`または`ABORTED`、Cancel Responseを受理した`CANCELING`では`CANCELED`または`ABORTED`だけを受理します。Cancel Response待ち中に`SUCCEEDED`または`ABORTED`が先着した場合はResult勝利として受理し、後着Cancel Responseを無視します。
+
+ResultをApplicationイベントへコピーした後、Client RuntimeはそのGoal Contextとslot ownershipを解放します。解放後に届いた重複または遅延Resultは、相関するContextがないためApplicationへ再配送しません。
+
+Server側がRuntime起因Cancelを開始し、Client endpointが切断済みの場合、ClientはCancel Responseを受信しません。現在のProtocolは再接続後の状態照会やResult再取得を提供しません。
 
 ## 10. Client Runtime / Transportイベント
 
-初版では、Runtimeが正常に観測・通知できる通信系イベントだけを状態モデルへ含めます。
+Runtimeが正常に観測・通知できる通信系イベントだけを状態モデルへ含めます。
 
 ```text
 REQUEST_SEND_FAILED(goal_id, request_kind)
@@ -247,14 +254,14 @@ Runtime自体のクラッシュ、メモリ破壊、プロセス強制終了な�
 | Event | EXECUTING | CANCELING | FINISHING |
 | --- | --- | --- | --- |
 | `REQUEST_SEND_FAILED(CANCEL)` | pendingを解除し、Client Applicationへ送信失敗を通知。Goal terminal statusは変更しない。`SAME` | 通常は対象外。発生時は診断記録。`SAME` | 通常は対象外。`SAME` |
-| `RESPONSE_TIMEOUT(CANCEL_RESPONSE)` | timeout policyへ`DEFER`。Goal terminal statusは変更しない。`SAME` | 通常は対象外 | 通常は対象外 |
-| `RESPONSE_TIMEOUT(RESULT)` | timeout policyへ`DEFER`。Goal terminal statusは変更しない。`SAME` | 同左 | 通常は対象外 |
-| `TRANSPORT_DISCONNECTED` | Applicationへ通信切断を通知し、再接続Policyへ`DEFER`。`SAME` | 同左。Server側の停止処理を推測しない。`SAME` | Result通知・Context解放の状況に応じて保持Policyへ`DEFER` |
-| `CLIENT_SHUTDOWN_REQUESTED` | shutdown policyへ`DEFER`。Goalを自動的に`CANCELED`または`ABORTED`へ変更しない | 同左 | Application通知とContext解放Policyへ`DEFER` |
+| `RESPONSE_TIMEOUT(CANCEL_RESPONSE)` | `NOP`: Goal terminal statusとContextを変更しない | `NOP` | `NOP` |
+| `RESPONSE_TIMEOUT(RESULT)` | `NOP`: Goal terminal statusとContextを変更しない | `NOP` | `NOP` |
+| `TRANSPORT_DISCONNECTED` | `NOP`: Server状態を推測しない | `NOP` | `NOP` |
+| `CLIENT_SHUTDOWN_REQUESTED` | `NOP`: terminal statusを生成しない | `NOP` | `NOP` |
 
-Goal確立前の`REQUEST_SEND_FAILED(GOAL)`および`RESPONSE_TIMEOUT(GOAL_RESPONSE)`は4節で定義します。どちらもaccept済みGoalの主状態を生成せず、Client Applicationへ通信失敗を通知してGoal確立前Contextを解放します。
+Goal確立前の`REQUEST_SEND_FAILED(GOAL)`および`RESPONSE_TIMEOUT(GOAL_RESPONSE)`は4節で定義します。どちらもaccept済みGoalの主状態を生成しません。Request送信失敗ではContextを解放できますが、Goal Response timeoutではServer側の受理状態が不明なため、Client Applicationへ通信失敗を通知したうえでslotをquarantineします。
 
-Goal Response timeout後にServer側へGoalが残る可能性はありますが、初版Client Runtimeは状態照会、自動再送、受理状態UNKNOWNなどの特別な救済を提供しません。このケースはServer側の異常ケースとして記録し、Client状態モデルは単純な通信失敗として閉じます。
+Goal Response timeout後にServer側へGoalが残る可能性があります。Client Runtimeは状態照会、自動再送、受理状態UNKNOWNを提供せず、TIMEOUTを一度だけ通知して該当slotを明示resetまで隔離します。
 
 ## 12. 通信異常とGoal terminal statusの分離
 
@@ -272,9 +279,9 @@ RESPONSE_TIMEOUT
 
 accept済みGoalの通信異常時点では、Server上のGoalが`EXECUTING`、`CANCELING`、terminal済みのいずれであるかをClientが確定できないためです。
 
-accept済みGoalについては、Client Runtimeが通信異常をClient Applicationへ通知し、Goal Contextを保持したうえで、再接続、状態照会、Result再取得、保持期限による解放などのPolicyへ委譲します。
+accept済みGoalについて、状態遷移核は通信異常を`NOP`として扱い、terminal statusを生成しません。通知とContext resetはServices／Endpointのlifecycle契約で処理します。再接続、状態照会、Result再取得は提供しません。
 
-Goal確立前のGoal Request送信失敗またはGoal Response timeoutは、Client Applicationへ通信失敗を通知してContextを解放します。Goal Response timeout時にServer側でGoalが残り得ることを理由に、Client側へ新しい主状態や救済Protocolを追加しません。
+Goal確立前のGoal Request送信失敗はContextを解放します。Goal Response timeoutはClient Applicationへ通信失敗を通知しますが、Server側でGoalが残り得るためpacket bindingとslotを明示resetまで保持します。Client側へ新しいProtocol主状態や救済Protocolは追加しません。
 
 ## 13. ROS 2 Action Clientとの親和性
 
@@ -289,11 +296,11 @@ Client状態モデルは、ROS 2 Action ClientのGoalHandleとFutureの構造へ
 | `cancel_response_pending` | Cancel Future pending | Cancel応答待ちを主状態にしない |
 | `CANCELING` | `CANCELING` | ServerがCancelを受理した状態 |
 | `RESULT_RECEIVED` | Result Future completion | terminal Result受信 |
-| `FINISHING` | Future解決、callback実行、GoalHandle後処理 | Hakoniwa Runtime内部状態 |
+| `FINISHING` | Result event配送、GoalHandle後処理 | Hakoniwa Runtime内部状態 |
 | 単一`goal_id` Cancel | ROS 2の単一・複数Goal Cancel | Bridgeが複数対象をgoal_id単位へ分解 |
 | Goal Context管理 | ROS 2 status topic生成元 | Bridgeが管理中GoalからROS側statusを生成 |
 
-箱庭独自の`FINISHING`はROS 2の公開Goal Statusへ変換しません。`hakoniwa-pdu-ros`内部でResult Future解決やcallback実行を行う後処理として閉じ込めます。
+箱庭独自の`FINISHING`はROS 2の公開Goal Statusへ変換しません。Hakoniwa RuntimeではResult event配送とContext解放、`hakoniwa-pdu-ros`ではResult Future解決やcallback実行へそれぞれ写像します。
 
 Hakoniwa共通ProtocolはROS 2のstatus topic相当のブロードキャストを持ちません。`hakoniwa-pdu-ros`が自身の管理するGoalHandleとHakoniwa Goal状態からROS 2のstatus topicを生成します。status topicはClient側主状態へ新しいイベントを追加する理由にはしません。
 
@@ -312,36 +319,78 @@ RESULT_RECEIVED
 
 この制約により、Hakoniwa ClientとROS 2 GoalHandleの状態認識を一致させやすくします。
 
-## 14. 現時点の設計判断
+## 14. Client状態モデルの設計判断
 
 - accept済みGoalの主状態はServerと同じ`EXECUTING`、`CANCELING`、`FINISHING`を使用する。
 - Goal Response待ち、Cancel Response待ち、Result待ちはpending Contextとして管理する。
 - `GOAL_REQUESTING`、`CANCEL_REQUESTING`、`RESULT_WAITING`などの主状態を追加しない。
-- Client Application APIは初版では`SEND_GOAL`と`REQUEST_CANCEL`を必須とする。
-- 通常ClientはRuntimeが`goal_id`を生成し、Adapterは外部UUIDを指定できる。
+- Client Application APIは`SEND_GOAL`と`REQUEST_CANCEL`を提供する。
+- 通常ClientとAdapterのどちらも上位層が`goal_id`を指定し、RuntimeはGoal IDを自動生成しない。
 - Hakoniwa Protocol v1のCancelは単一`goal_id`を対象とし、ROS 2の一括CancelはBridgeが単一Goal Cancelへ分解する。
 - Cancel Request送信だけでは`CANCELING`へ遷移しない。
 - Cancel Response ACCEPTED受信時に`CANCELING`へ遷移する。
-- pending ContextのないCancel Responseは診断を記録して`IGNORE`する。
+- pending ContextのないCancel Responseは`NOP`としてApplicationへ配送しない。
 - Result受信時に`FINISHING`へ遷移し、Application通知後にContextを解放する。
 - ClientとServer間のProtocolイベントは共通のデータ契約を使用する。
-- Client Application APIの二重呼び出しは`APPLICATION_API_ERROR`として扱う。
-- Goal Request送信失敗とGoal Response timeoutは、Client側では通信失敗としてGoal確立前Contextを解放する。
-- Goal Response timeout後にServer側Goalが残る可能性に対し、Client側へ特別な状態、照会、自動再送を追加しない。
+- Client Application APIの二重呼び出しは理由付き`ERROR`として扱う。
+- Goal Request送信失敗はGoal確立前Contextを解放する。
+- Goal Response timeoutは一度だけ通知し、packet bindingとslotを明示resetまでquarantineする。
+- Goal Response timeout後にServer側Goalが残る可能性に対し、Client側へProtocol主状態、状態照会、自動再送を追加しない。
 - Hakoniwa共通ProtocolはROS 2 status topic相当を持たず、ROS Bridgeが管理中GoalからROS statusを生成する。
 - 通信異常をGoalの`CANCELED`または`ABORTED`へ自動変換しない。
-- Runtimeの致命的内部障害からの正規状態遷移は初版の対象外とする。
 
-## 15. レビューで確認する事項
+## 15. 実行可能なClient状態核
 
-1. `CANCELING`中に受信したFeedbackを常にClient Applicationへ通知するか。
-2. 重複Cancel Responseを冪等処理またはIGNOREのどちらにするか。
-3. `FINISHING`中の遅延FeedbackおよびCancel ResponseをIGNOREとするか、診断対象とするか。
-4. 重複Resultを冪等処理するために保持すべき情報は何か。
-5. ResultをServer pushとClient pullのどちらで配送するか。
-6. Cancel ResponseおよびResultのtimeout Policyをどこで定義するか。
-7. accept済みGoalの通信切断後に、再接続、状態照会、Result再取得、Context解放条件をどう定義するか。
-8. Client shutdown時に未終端GoalへCancelを試行するか。
+Goal Responseでacceptされた後のClient Contextは、Transport非依存の純粋関数として実装します。
+
+Client固有のContext、Event、状態遷移関数は`action_client_state_machine.hpp`／`action_client_state_machine.cpp`に置きます。Server固有ファイルへClient状態を混在させません。Serverと共有するのは`GoalState`などのProtocolデータ型だけであり、遷移結果型はそれぞれのモジュールに置きます。
+
+```cpp
+ClientTransition transition_client_goal(
+    const ClientGoalContext& current,
+    const ClientGoalEvent& event);
+```
+
+Goal Request送信からGoal Response受信までのpre-accept ContextはEndpoint契約として既に実装されており、この状態遷移関数の対象外です。
+
+Client reducerは次をContextとして保持します。
+
+```text
+GoalState
+cancel_response_pending
+result_pending
+next_feedback_sequence
+terminal_status
+```
+
+出力はServer側と同じ考え方で、Client固有の3結果だけを返します。
+
+```text
+TRANSITIONED:
+  Context全体のいずれかが変化し、next contextを返す
+
+NOP:
+  正当な受信イベントだがContextは変化しない
+  遅延・重複packetはApplicationへ再配送しない
+
+ERROR + reason:
+  Client Application APIの誤用または壊れたContext
+```
+
+状態遷移関数はEndpoint送信、Application配送、ログ、mutex、commit timingを知りません。`ActionServicesClient`がイベントの意味とI/O結果に従ってnext contextを反映します。
+
+主要な競合セルを次へ固定します。
+
+- `FINISHING`中の重複Resultは`NOP`としてApplicationへ再配送しない。
+- `FINISHING`中のFeedbackとCancel Responseは`NOP`とする。
+- pending ContextのないCancel Responseは`NOP`とする。
+- `EXECUTING`で`CANCELED` Result、`CANCELING`で`SUCCEEDED` Resultを受信した場合は`NOP`とする。
+- Feedback sequence不一致は`NOP`とし、期待sequenceを進めない。
+- timeout、切断、shutdownはterminal statusを生成せず`NOP`とする。通知や回復PolicyはServices／Runtime層で扱う。
+
+Clientの`REQUEST_CANCEL`は`cancel_response_pending=true`のnext contextを返します。`ActionServicesClient`はCancel Request送信成功後にだけnext contextを反映します。Result受信は`FINISHING`のnext contextを返し、Services層がApplication配送とContext解放を行います。
+
+ServerとClientは同じ`GoalState`を共有しますが、Context、Event、遷移結果、状態遷移関数は別モジュールとして維持します。Server状態をClientが推測したり、両者のpending Contextを一つの状態機械へ統合してはなりません。
 
 ## 16. 対象外
 

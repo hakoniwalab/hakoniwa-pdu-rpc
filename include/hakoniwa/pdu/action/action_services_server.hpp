@@ -1,15 +1,21 @@
 #pragma once
 
 #include "action_server_endpoint.hpp"
+#include "action_server_state_machine.hpp"
 #include "action_types.hpp"
 #include "hakoniwa/pdu/endpoint_container.hpp"
+#include "hakoniwa/pdu/endpoint.hpp"
 #include "hakoniwa/time_source/time_source.hpp"
 
-#include <map>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <vector>
 
 namespace hakoniwa::pdu::action {
+
+class ActionServicesServerTestPeer;
 
 class ActionServicesServer {
 public:
@@ -22,38 +28,104 @@ public:
 
     bool initialize_services(
         std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container);
+    // Used by transport owners such as EndpointCommMultiplexer, which hand
+    // over an already-opened connection Endpoint.
+    bool initialize_services(
+        std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint);
     bool start_all_services();
     void stop_all_services();
     void clear_all_instances();
 
+    // Transport owners use these lifecycle hooks without exposing transport
+    // identity to the Application-facing Goal API.
+    void notify_transport_disconnected();
+    bool discard_pending_goal(
+        const std::string& action_name,
+        const ServerGoalHandle& goal);
+    bool complete_locally(
+        const std::string& action_name,
+        const ServerGoalHandle& goal,
+        TerminalStatus status,
+        const PduData& result_pdu);
+
     ServerEventType poll(std::string& action_name, ServerEvent& event_out);
 
+    // poll() returns the typed ServerGoalHandle used by all subsequent Goal
+    // lifecycle operations. No separate event or goal token is exposed.
     bool accept_goal(const std::string& action_name,
-                     EventToken event_token,
-                     GoalToken& goal_token_out);
-    bool reject_goal(const std::string& action_name, EventToken event_token);
-    bool accept_cancel(const std::string& action_name, EventToken event_token);
-    bool reject_cancel(const std::string& action_name, EventToken event_token);
+                     const ServerGoalHandle& goal);
+    bool reject_goal(const std::string& action_name,
+                     const ServerGoalHandle& goal);
+    bool accept_cancel(const std::string& action_name,
+                       const ServerGoalHandle& goal);
+    bool reject_cancel(const std::string& action_name,
+                       const ServerGoalHandle& goal);
+    bool create_feedback_buffer(const std::string& action_name,
+                                PduData& pdu_out);
+    bool create_result_buffer(const std::string& action_name,
+                              PduData& pdu_out);
     bool send_feedback(const std::string& action_name,
-                       GoalToken goal_token,
+                       const ServerGoalHandle& goal,
                        const PduData& feedback_pdu);
     bool complete(const std::string& action_name,
-                  GoalToken goal_token,
+                  const ServerGoalHandle& goal,
                   TerminalStatus status,
                   const PduData& result_pdu);
 
 private:
+    friend class ActionServicesServerTestPeer;
+
+    // Semantic state for one accepted Goal. Packet binding and slot ownership
+    // remain in IActionServerEndpoint.
+    struct GoalInstance {
+        ServerGoalHandle goal;
+        ServerGoalContext context;
+    };
+
+    // One configured Action and its accepted Goal instances. slotCount bounds
+    // the vector size, so the initial implementation intentionally uses a
+    // simple linear lookup instead of another index or manager abstraction.
+    struct ActionInstance {
+        std::string action_name;
+        std::shared_ptr<IActionServerEndpoint> endpoint;
+        std::vector<GoalInstance> goals;
+    };
+
+    ActionInstance* get_action_locked(const std::string& action_name);
+    GoalInstance* get_goal_locked(
+        ActionInstance& action,
+        const GoalId& goal_id);
+    bool has_goal_locked(
+        ActionInstance& action,
+        const GoalId& goal_id);
+    bool remove_goal_locked(
+        ActionInstance& action,
+        const GoalId& goal_id);
+    ServerEventType handle_cancel_event_locked(
+        ActionInstance& action,
+        ServerEventType event_type,
+        ServerEvent& event,
+        ServerEvent& event_out);
+    bool complete_goal_locked(
+        ActionInstance& action,
+        GoalInstance& goal_instance,
+        TerminalStatus status,
+        const PduData& result_pdu,
+        bool local_only);
+    bool initialize_services_impl(
+        std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container,
+        std::shared_ptr<hakoniwa::pdu::Endpoint> endpoint_override);
+
     std::string node_id_;
     std::string config_path_;
     std::string impl_type_;
     std::uint64_t delta_time_usec_;
 
-    std::map<std::string, std::shared_ptr<IActionServerEndpoint>> action_endpoints_;
+    std::vector<ActionInstance> actions_;
+    std::deque<ServerEvent> pending_runtime_events_;
+    mutable std::mutex mutex_;
     std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
     std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container_;
-
-    // TODO(codex): the Goal Context map, locking strategy, and token allocator
-    // belong in the implementation. Do not expose them through this API.
 };
 
 } // namespace hakoniwa::pdu::action
