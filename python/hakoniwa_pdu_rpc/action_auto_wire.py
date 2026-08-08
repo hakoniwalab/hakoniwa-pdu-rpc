@@ -10,8 +10,13 @@ from .action_cffi import (
     ActionClient,
     ActionClientEvent,
     ActionDecision,
+    ActionMuxServer,
+    ActionServer,
+    ActionServerEvent,
     ActionTerminalStatus,
     ClientGoalHandle,
+    RuntimeCancelCause,
+    ServerGoalHandle,
 )
 
 
@@ -38,6 +43,15 @@ class TypedActionClientPollResult:
     feedback_sequence: int
     feedback: Any | None = None
     result: Any | None = None
+
+
+@dataclass(frozen=True)
+class TypedActionServerPollResult:
+    event: ActionServerEvent
+    action_name: str
+    goal: ServerGoalHandle | None
+    runtime_cancel_cause: RuntimeCancelCause
+    goal_body: Any | None = None
 
 
 def load_action_wire(
@@ -232,6 +246,134 @@ class TypedActionClient:
         )
 
 
+class TypedServerAction:
+    """Typed view of one Action managed by a TypedActionServer."""
+
+    def __init__(
+        self,
+        action_server: ActionServer | ActionMuxServer,
+        action_name: str,
+        action_type: str,
+        wire: ActionWire,
+    ) -> None:
+        self._action_server = action_server
+        self.action_name = action_name
+        self.action_type = action_type
+        self.wire = wire
+
+    def accept_goal(self, goal: ServerGoalHandle) -> None:
+        self._action_server.accept_goal(self.action_name, goal)
+
+    def reject_goal(self, goal: ServerGoalHandle) -> None:
+        self._action_server.reject_goal(self.action_name, goal)
+
+    def accept_cancel(self, goal: ServerGoalHandle) -> None:
+        self._action_server.accept_cancel(self.action_name, goal)
+
+    def reject_cancel(self, goal: ServerGoalHandle) -> None:
+        self._action_server.reject_cancel(self.action_name, goal)
+
+    def create_feedback(self) -> Any:
+        return self.wire.feedback_packet_type().body
+
+    def send_feedback(
+        self,
+        goal: ServerGoalHandle,
+        feedback: Any,
+    ) -> None:
+        base_pdu = self._action_server.create_feedback_buffer(self.action_name)
+        packet = self.wire.feedback_decode(base_pdu)
+        packet.body = feedback
+        self._action_server.send_feedback(
+            self.action_name,
+            goal,
+            self.wire.feedback_encode(packet),
+        )
+
+    def create_result(self) -> Any:
+        return self.wire.response_packet_type().body
+
+    def complete(
+        self,
+        goal: ServerGoalHandle,
+        status: ActionTerminalStatus,
+        result: Any,
+    ) -> None:
+        base_pdu = self._action_server.create_result_buffer(self.action_name)
+        packet = self.wire.response_decode(base_pdu)
+        packet.body = result
+        self._action_server.complete(
+            self.action_name,
+            goal,
+            status,
+            self.wire.response_encode(packet),
+        )
+
+
+class TypedActionServer:
+    """Registry-aware multi-Action adapter over one raw Action server."""
+
+    def __init__(
+        self,
+        action_server: ActionServer | ActionMuxServer,
+        action_config_path: str | Path,
+        *,
+        packages: Mapping[str, str] | None = None,
+    ) -> None:
+        self._action_server = action_server
+        definitions = _load_action_definitions(action_config_path)
+        package_overrides = dict(packages or {})
+        unknown_packages = package_overrides.keys() - definitions.keys()
+        if unknown_packages:
+            unknown = ", ".join(sorted(unknown_packages))
+            raise ValueError(
+                f"package override references unknown Action(s): {unknown}"
+            )
+        self._actions = {
+            action_name: TypedServerAction(
+                action_server,
+                action_name,
+                action_type,
+                load_action_wire(
+                    action_type,
+                    package_overrides.get(action_name),
+                ),
+            )
+            for action_name, action_type in definitions.items()
+        }
+
+    @property
+    def action_names(self) -> tuple[str, ...]:
+        return tuple(self._actions)
+
+    def action(self, action_name: str) -> TypedServerAction:
+        try:
+            return self._actions[action_name]
+        except KeyError as error:
+            raise KeyError(f"unknown Action: {action_name}") from error
+
+    def poll(self) -> TypedActionServerPollResult:
+        raw = self._action_server.poll()
+        goal_body = None
+        if raw.event != ActionServerEvent.NONE:
+            try:
+                action = self._actions[raw.action_name]
+            except KeyError as error:
+                raise RuntimeError(
+                    f"event references unknown Action: {raw.action_name!r}"
+                ) from error
+            if raw.event == ActionServerEvent.GOAL_REQUEST:
+                goal_body = action.wire.request_decode(raw.pdu).body
+
+        return TypedActionServerPollResult(
+            event=raw.event,
+            action_name=raw.action_name,
+            goal=raw.goal,
+            runtime_cancel_cause=raw.runtime_cancel_cause,
+            goal_body=goal_body,
+        )
+
+
 def make_typed_action_client(
     action_client: ActionClient,
     action_config_path: str | Path,
@@ -240,6 +382,19 @@ def make_typed_action_client(
 ) -> TypedActionClient:
     return TypedActionClient(
         action_client,
+        action_config_path,
+        packages=packages,
+    )
+
+
+def make_typed_action_server(
+    action_server: ActionServer | ActionMuxServer,
+    action_config_path: str | Path,
+    *,
+    packages: Mapping[str, str] | None = None,
+) -> TypedActionServer:
+    return TypedActionServer(
+        action_server,
         action_config_path,
         packages=packages,
     )

@@ -756,8 +756,8 @@ goal = client.send_goal("fibonacci", goal_pdu, goal_id_bytes)
 event = client.poll()
 ```
 
-The typed adapter loads every `name` / `type` pair from the same resolved
-Action configuration. One typed client therefore mirrors one native Client
+The typed adapters load every `name` / `type` pair from the same resolved
+Action configuration. One typed client or server therefore mirrors one native
 handle and can route events for multiple Actions without consuming an event in
 the wrong per-Action wrapper:
 
@@ -774,6 +774,41 @@ goal = fibonacci.send_goal(goal_body, goal_id_bytes, timeout_usec=1_000_000)
 # poll() is centralized and selects the converter from event.action_name.
 event = typed.poll()
 ```
+
+The Server adapter exposes typed Goal bodies and accepts typed Feedback and
+Result bodies. Packet headers, native buffers, converters, slots, and Mux
+connection identity remain internal:
+
+```python
+from hakoniwa_pdu_rpc import (
+    ActionServerEvent,
+    ActionTerminalStatus,
+    make_typed_action_server,
+)
+
+typed_server = make_typed_action_server(server, action_config_path)
+event = typed_server.poll()
+
+if event.event == ActionServerEvent.GOAL_REQUEST:
+    fibonacci = typed_server.action(event.action_name)
+    fibonacci.accept_goal(event.goal)
+
+    feedback = fibonacci.create_feedback()
+    feedback.partial_sequence = [0, 1, 1, 2, 3]
+    fibonacci.send_feedback(event.goal, feedback)
+
+    result = fibonacci.create_result()
+    result.sequence = [0, 1, 1, 2, 3, 5]
+    fibonacci.complete(
+        event.goal,
+        ActionTerminalStatus.SUCCEEDED,
+        result,
+    )
+```
+
+The same `make_typed_action_server()` contract accepts either an
+`ActionServer` or `ActionMuxServer`. Goal and Cancel decisions continue to use
+the native `ServerGoalHandle`; only the user-defined body is converted.
 
 Use `typed.action_names` to inspect configured Actions. Custom generated
 Python packages can be selected per Action with the optional `packages`

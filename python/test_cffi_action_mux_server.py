@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -12,10 +13,12 @@ from hakoniwa_pdu_rpc import (
     ActionServerEvent,
     ActionTerminalStatus,
     RuntimeCancelCause,
+    make_typed_action_server,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "hakoniwa-pdu-registry"))
 ACTION_CONFIG = ROOT / "test" / "configs" / "action_resolved.json"
 CLIENT_ENDPOINT_CONFIG = (
     ROOT / "test" / "configs" / "action_mux_e2e" / "endpoints.json"
@@ -52,6 +55,17 @@ def wait_server(server: ActionMuxServer, expected: ActionServerEvent):
     raise AssertionError(f"server event timed out: {expected.name}")
 
 
+def wait_typed_server(server, expected: ActionServerEvent):
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        result = server.poll()
+        if result.event == expected:
+            return result
+        assert result.event == ActionServerEvent.NONE
+        time.sleep(0.001)
+    raise AssertionError(f"typed server event timed out: {expected.name}")
+
+
 def wait_client(client: ActionClient, expected: ActionClientEvent):
     deadline = time.monotonic() + 3.0
     while time.monotonic() < deadline:
@@ -81,6 +95,8 @@ def test_action_mux_server_routes_two_clients_with_shared_goal_handle_contract()
         )
         for index in range(2)
     ]
+    typed_server = make_typed_action_server(server, ACTION_CONFIG)
+    fibonacci = typed_server.action(ACTION_NAME)
 
     try:
         server.start()
@@ -100,24 +116,31 @@ def test_action_mux_server_routes_two_clients_with_shared_goal_handle_contract()
                 goal_id(0x20 + index * 0x20),
                 timeout_usec=1_000_000,
             )
-            incoming = wait_server(server, ActionServerEvent.GOAL_REQUEST)
+            incoming = wait_typed_server(
+                typed_server,
+                ActionServerEvent.GOAL_REQUEST,
+            )
             assert incoming.goal is not None
             assert incoming.goal.goal_id == client_goal.goal_id
-            server.accept_goal(incoming.action_name, incoming.goal)
+            assert incoming.goal_body is not None
+            fibonacci.accept_goal(incoming.goal)
             accepted = wait_client(client, ActionClientEvent.GOAL_RESPONSE)
             assert accepted.decision == ActionDecision.ACCEPTED
             server_goals.append(incoming.goal)
             client_goals.append(client_goal)
 
-        feedback = server.create_feedback_buffer(ACTION_NAME)
-        server.send_feedback(ACTION_NAME, server_goals[0], feedback)
+        feedback = fibonacci.create_feedback()
+        fibonacci.send_feedback(server_goals[0], feedback)
         delivered_feedback = wait_client(clients[0], ActionClientEvent.FEEDBACK)
         assert delivered_feedback.goal == client_goals[0]
 
         clients[1].cancel_goal(ACTION_NAME, client_goals[1])
-        cancel = wait_server(server, ActionServerEvent.CANCEL_REQUEST)
+        cancel = wait_typed_server(
+            typed_server,
+            ActionServerEvent.CANCEL_REQUEST,
+        )
         assert cancel.goal == server_goals[1]
-        server.accept_cancel(cancel.action_name, cancel.goal)
+        fibonacci.accept_cancel(cancel.goal)
         cancel_response = wait_client(
             clients[1], ActionClientEvent.CANCEL_RESPONSE
         )
@@ -129,8 +152,8 @@ def test_action_mux_server_routes_two_clients_with_shared_goal_handle_contract()
                 if index == 0
                 else ActionTerminalStatus.CANCELED
             )
-            result = server.create_result_buffer(ACTION_NAME)
-            server.complete(ACTION_NAME, server_goals[index], status, result)
+            result = fibonacci.create_result()
+            fibonacci.complete(server_goals[index], status, result)
             delivered = wait_client(client, ActionClientEvent.RESULT)
             assert delivered.goal == client_goals[index]
             assert delivered.terminal_status == status
@@ -142,25 +165,28 @@ def test_action_mux_server_routes_two_clients_with_shared_goal_handle_contract()
             goal_id(0x70),
             timeout_usec=1_000_000,
         )
-        incoming = wait_server(server, ActionServerEvent.GOAL_REQUEST)
+        incoming = wait_typed_server(
+            typed_server,
+            ActionServerEvent.GOAL_REQUEST,
+        )
         assert incoming.goal is not None
-        server.accept_goal(incoming.action_name, incoming.goal)
+        fibonacci.accept_goal(incoming.goal)
         accepted = wait_client(clients[0], ActionClientEvent.GOAL_RESPONSE)
         assert accepted.goal == disconnected_goal
 
         clients[0].close()
-        runtime_cancel = wait_server(
-            server, ActionServerEvent.RUNTIME_CANCEL_REQUEST
+        runtime_cancel = wait_typed_server(
+            typed_server,
+            ActionServerEvent.RUNTIME_CANCEL_REQUEST,
         )
         assert runtime_cancel.goal == incoming.goal
         assert (
             runtime_cancel.runtime_cancel_cause
             == RuntimeCancelCause.TRANSPORT_DISCONNECTED
         )
-        server.accept_cancel(runtime_cancel.action_name, runtime_cancel.goal)
-        local_result = server.create_result_buffer(ACTION_NAME)
-        server.complete(
-            runtime_cancel.action_name,
+        fibonacci.accept_cancel(runtime_cancel.goal)
+        local_result = fibonacci.create_result()
+        fibonacci.complete(
             runtime_cancel.goal,
             ActionTerminalStatus.CANCELED,
             local_result,

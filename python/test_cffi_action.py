@@ -19,6 +19,7 @@ from hakoniwa_pdu_rpc import (
     ClientGoalHandle,
     load_action_wire,
     make_typed_action_client,
+    make_typed_action_server,
 )
 
 
@@ -183,6 +184,86 @@ def test_typed_action_goal_feedback_and_result_round_trip():
         delivered_result = client.poll()
         deadline = time.monotonic() + 3.0
         while delivered_result.event == ActionClientEvent.NONE and time.monotonic() < deadline:
+            time.sleep(0.001)
+            delivered_result = client.poll()
+        assert delivered_result.event == ActionClientEvent.RESULT
+        assert delivered_result.terminal_status == ActionTerminalStatus.SUCCEEDED
+        assert list(delivered_result.result.sequence) == [0, 1, 1, 2, 3, 5, 8]
+
+
+def test_typed_action_server_goal_feedback_and_result_round_trip():
+    with ActionPair() as runtime:
+        client = make_typed_action_client(runtime.client, ACTION_CONFIG)
+        server = make_typed_action_server(runtime.server, ACTION_CONFIG)
+        fibonacci_client = client.action(ACTION_NAME)
+        fibonacci_server = server.action(ACTION_NAME)
+
+        goal_body = fibonacci_client.create_goal()
+        goal_body.order = 7
+        client_goal = fibonacci_client.send_goal(
+            goal_body,
+            goal_id(0x35),
+            timeout_usec=1_000_000,
+        )
+
+        incoming = server.poll()
+        deadline = time.monotonic() + 3.0
+        while (
+            incoming.event == ActionServerEvent.NONE
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.001)
+            incoming = server.poll()
+        assert incoming.event == ActionServerEvent.GOAL_REQUEST
+        assert incoming.goal is not None
+        assert incoming.goal.goal_id == client_goal.goal_id
+        assert incoming.goal_body.order == 7
+
+        fibonacci_server.accept_goal(incoming.goal)
+        accepted = client.poll()
+        deadline = time.monotonic() + 3.0
+        while (
+            accepted.event == ActionClientEvent.NONE
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.001)
+            accepted = client.poll()
+        assert accepted.event == ActionClientEvent.GOAL_RESPONSE
+        assert accepted.decision == ActionDecision.ACCEPTED
+
+        feedback = fibonacci_server.create_feedback()
+        feedback.partial_sequence = [0, 1, 1, 2, 3]
+        fibonacci_server.send_feedback(incoming.goal, feedback)
+        delivered_feedback = client.poll()
+        deadline = time.monotonic() + 3.0
+        while (
+            delivered_feedback.event == ActionClientEvent.NONE
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.001)
+            delivered_feedback = client.poll()
+        assert delivered_feedback.event == ActionClientEvent.FEEDBACK
+        assert list(delivered_feedback.feedback.partial_sequence) == [
+            0,
+            1,
+            1,
+            2,
+            3,
+        ]
+
+        result = fibonacci_server.create_result()
+        result.sequence = [0, 1, 1, 2, 3, 5, 8]
+        fibonacci_server.complete(
+            incoming.goal,
+            ActionTerminalStatus.SUCCEEDED,
+            result,
+        )
+        delivered_result = client.poll()
+        deadline = time.monotonic() + 3.0
+        while (
+            delivered_result.event == ActionClientEvent.NONE
+            and time.monotonic() < deadline
+        ):
             time.sleep(0.001)
             delivered_result = client.poll()
         assert delivered_result.event == ActionClientEvent.RESULT

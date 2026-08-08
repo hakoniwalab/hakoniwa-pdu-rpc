@@ -41,8 +41,12 @@ from .action_auto_wire import (
     TypedAction,
     TypedActionClient,
     TypedActionClientPollResult,
+    TypedActionServer,
+    TypedActionServerPollResult,
+    TypedServerAction,
     load_action_wire,
     make_typed_action_client,
+    make_typed_action_server,
 )
 from .action_cffi import (
     ActionClient,
@@ -105,10 +109,14 @@ __all__ = [
     "TypedAction",
     "TypedActionClient",
     "TypedActionClientPollResult",
+    "TypedActionServer",
+    "TypedActionServerPollResult",
+    "TypedServerAction",
     "load_action_wire",
     "load_service_wire",
     "make_typed_client",
     "make_typed_action_client",
+    "make_typed_action_server",
     "RuntimeCancelCause",
     "validate_configs",
 ]
