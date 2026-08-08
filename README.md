@@ -225,6 +225,10 @@ if event.event.name == "REQUEST_IN":
 `TypedRpcServiceError` for non-`DONE/OK` responses rather than returning a
 default body as a successful result.
 
+The canonical ownership, allocation, Typed Server, error, and lifecycle
+contracts are documented in
+[`docs/design/service/README.md`](docs/design/service/README.md).
+
 ## Repository Setup
 
 Clone the repository including the generated PDU registry submodule:
@@ -619,6 +623,10 @@ Generated files include:
 ```
 
 The installed command is `hako-pdu-rpc-generate-service-config`.
+
+See [`docs/design/service/README.md`](docs/design/service/README.md) for the
+normative manifest schema, allocation rules, generator ownership, and Typed
+runtime boundary.
 
 Existing hand-authored native Service topology remains valid and can be
 validated before runtime.
