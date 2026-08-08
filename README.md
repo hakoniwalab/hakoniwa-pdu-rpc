@@ -205,6 +205,26 @@ response = add_client.call(request, timeout_usec=1_000_000)
 
 The auto-wire layer owns packet conversion and normalizes generated converter output to Python `bytes`. Higher-level bridges should map only the service request/response body and leave packet headers, request IDs, timeout, and cancellation lifecycle to PDU-RPC.
 
+`TypedRpcServer` provides the reverse, multi-Service adapter over `RpcServer`
+or `RpcMuxServer`:
+
+```python
+from hakoniwa_pdu_rpc import make_typed_server
+
+server = make_typed_server(raw_server, "generated/rpc-server-services.json")
+event = server.poll()
+if event.event.name == "REQUEST_IN":
+    service = server.service(event.service_name)
+    response = service.create_response()
+    response.sum = event.request_body.a + event.request_body.b
+    service.send_reply(event, response)
+```
+
+`send_error()` writes an explicit non-OK Service header, and
+`send_cancel_reply()` writes `DONE/CANCELED`. `TypedRpcClient` raises
+`TypedRpcServiceError` for non-`DONE/OK` responses rather than returning a
+default body as a successful result.
+
 ## Repository Setup
 
 Clone the repository including the generated PDU registry submodule:
@@ -569,6 +589,39 @@ arguments, and troubleshooting.
 ## Configuration
 
 ### Service RPC configuration
+
+For new integrations, generate native Service/Endpoint configuration from the
+direction-neutral Service manifest:
+
+```bash
+python tools/generate_service_config.py \
+  --config hakoniwa-service.json \
+  --output .hako/service
+```
+
+The manifest declares Service/type, `maxClients`, semantic request/response
+heap limits and sizes, logical client/server node IDs, and a TCP Transport
+object. The generator owns client names, channel IDs, native `pduSize`
+placement, Endpoint IDs, queue/PDU definitions, and transport files. A logical
+server Endpoint becomes a TCP Mux Server with `expected_clients` calculated
+from the referenced Services.
+
+Generated files include:
+
+```text
+.hako/service/hakoniwa-service.json   # normally written by an upstream adapter
+.hako/service/resolved-service.json
+.hako/service/rpc-server-services.json
+.hako/service/rpc-client-services.json
+.hako/service/endpoints.json
+.hako/service/endpoints/*.json
+.hako/service/transport/*.json
+```
+
+The installed command is `hako-pdu-rpc-generate-service-config`.
+
+Existing hand-authored native Service topology remains valid and can be
+validated before runtime.
 
 Service topology is defined in JSON and can be validated before runtime.
 

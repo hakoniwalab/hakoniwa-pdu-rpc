@@ -7,12 +7,19 @@ from typing import Any
 
 import pytest
 
-from hakoniwa_pdu_rpc import RpcFuture, ServiceWire, TypedRpcClient
+from hakoniwa_pdu_rpc import (
+    RpcFuture,
+    ServiceWire,
+    TypedRpcClient,
+    TypedRpcServiceError,
+)
 
 
 @dataclass
 class Header:
     request_id: int
+    status: int = 3
+    result_code: int = 0
 
 
 @dataclass
@@ -66,8 +73,14 @@ def make_typed_client() -> tuple[TypedRpcClient, FakeRpcClient]:
 
     def response_decode(pdu: bytes) -> Packet:
         request_id = 99 if pdu == b"mismatched-response" else 17
+        status = 4 if pdu == b"error-response" else 3
+        result_code = 3 if pdu == b"error-response" else 0
         return Packet(
-            header=Header(request_id=request_id),
+            header=Header(
+                request_id=request_id,
+                status=status,
+                result_code=result_code,
+            ),
             body=SimpleNamespace(sum=30),
         )
 
@@ -142,6 +155,19 @@ def test_typed_call_async_propagates_raw_rpc_exception() -> None:
 
     with pytest.raises(RuntimeError, match="transport failed"):
         future.result(timeout=1.0)
+
+
+def test_typed_call_async_exposes_service_error_status() -> None:
+    client, rpc_client = make_typed_client()
+    future = client.call_async(make_request(), timeout_usec=1_000_000)
+
+    rpc_client.raw_future._set_result(b"error-response")
+
+    with pytest.raises(TypedRpcServiceError) as caught:
+        future.result(timeout=1.0)
+    assert caught.value.service_name == "Service/Add"
+    assert caught.value.status == 4
+    assert caught.value.result_code == 3
 
 
 def test_typed_future_cancel_forwards_protocol_cancel() -> None:

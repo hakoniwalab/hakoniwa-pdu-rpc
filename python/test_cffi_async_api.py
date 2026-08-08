@@ -74,3 +74,26 @@ def test_client_rejects_multiple_inflight_calls():
 
     release.set()
     assert first.result(timeout=2.0) == b"response"
+
+
+def test_done_callback_can_immediately_reuse_the_same_client():
+    callback_done = threading.Event()
+    calls = []
+
+    def worker(self, service_name, pdu, timeout_usec, **kwargs):
+        calls.append(pdu)
+        return b"response:" + pdu
+
+    client = make_client(worker)
+    first = client.call_async("Service/Add", b"one", 1_000_000)
+
+    def on_done(completed):
+        assert completed.result() == b"response:one"
+        second = client.call_async("Service/Add", b"two", 1_000_000)
+        assert second.result(timeout=2.0) == b"response:two"
+        callback_done.set()
+
+    first.add_done_callback(on_done)
+
+    assert callback_done.wait(timeout=2.0)
+    assert calls == [b"one", b"two"]

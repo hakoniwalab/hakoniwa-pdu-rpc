@@ -46,6 +46,9 @@ jobs:
       - name: Test hako.py contracts
         run: python -m unittest tools/test_hako.py tools/test_hako_operations.py -v
 
+      - name: Test configuration generator contracts
+        run: python -m unittest tools/test_generate_action_config.py tools/test_generate_service_config.py -v
+
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         shell: bash

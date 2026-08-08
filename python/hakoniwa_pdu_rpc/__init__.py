@@ -35,7 +35,20 @@ def _add_windows_runtime_search_dirs() -> None:
 
 _add_windows_runtime_search_dirs()
 
-from .auto_wire import ServiceWire, TypedRpcClient, load_service_wire, make_typed_client
+from .auto_wire import (
+    RpcServiceResultCode,
+    RpcServiceStatus,
+    ServiceWire,
+    TypedRpcClient,
+    TypedRpcRequestDecodeError,
+    TypedRpcServer,
+    TypedRpcServerPollResult,
+    TypedRpcServiceError,
+    TypedServerService,
+    load_service_wire,
+    make_typed_client,
+    make_typed_server,
+)
 from .action_auto_wire import (
     ActionWire,
     TypedAction,
@@ -100,12 +113,19 @@ __all__ = [
     "RpcFuture",
     "RpcMuxServer",
     "RpcServer",
+    "RpcServiceResultCode",
+    "RpcServiceStatus",
     "RpcTimeoutError",
     "ServerEvent",
     "ServerGoalHandle",
     "ServerPollResult",
     "ServiceWire",
     "TypedRpcClient",
+    "TypedRpcRequestDecodeError",
+    "TypedRpcServer",
+    "TypedRpcServerPollResult",
+    "TypedRpcServiceError",
+    "TypedServerService",
     "TypedAction",
     "TypedActionClient",
     "TypedActionClientPollResult",
@@ -115,6 +135,7 @@ __all__ = [
     "load_action_wire",
     "load_service_wire",
     "make_typed_client",
+    "make_typed_server",
     "make_typed_action_client",
     "make_typed_action_server",
     "RuntimeCancelCause",

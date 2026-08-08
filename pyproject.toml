@@ -14,6 +14,7 @@ dependencies = [
 
 [project.scripts]
 hako-pdu-rpc-generate-action-config = "hakoniwa_pdu_rpc.action_config_generator:main"
+hako-pdu-rpc-generate-service-config = "hakoniwa_pdu_rpc.service_config_generator:main"
 
 [tool.setuptools]
 package-dir = {"" = "python"}

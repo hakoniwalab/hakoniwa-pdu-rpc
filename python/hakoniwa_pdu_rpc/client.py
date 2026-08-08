@@ -114,11 +114,19 @@ class RpcClient:
                     poll_interval_sec=poll_interval_sec,
                 )
             except BaseException as error:
-                future._set_exception(error)
+                outcome_error: BaseException | None = error
+                response = None
+            else:
+                outcome_error = None
+
+            # Future completion invokes user callbacks synchronously. Make the
+            # client reusable before publishing terminal completion so a pool
+            # may safely lease it again from inside a done callback.
+            self._inflight_lock.release()
+            if outcome_error is not None:
+                future._set_exception(outcome_error)
             else:
                 future._set_result(response)
-            finally:
-                self._inflight_lock.release()
 
         threading.Thread(
             target=run,

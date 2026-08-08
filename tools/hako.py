@@ -937,10 +937,15 @@ def package_test(ctx: Context) -> None:
                 "'hakoniwa_pdu_rpc.action_cffi'; "
                 "from hakoniwa_pdu_rpc.action_config_generator import generate, resolve; "
                 "assert callable(generate) and callable(resolve); "
+                "from hakoniwa_pdu_rpc.service_config_generator import "
+                "generate as generate_service, resolve as resolve_service; "
+                "assert callable(generate_service) and callable(resolve_service); "
                 "from hakoniwa_pdu_rpc import TypedAction, TypedActionClient, "
-                "load_action_wire, make_typed_action_client; "
+                "TypedRpcServer, load_action_wire, make_typed_action_client, "
+                "make_typed_server; "
                 "assert TypedAction and TypedActionClient and "
-                "callable(load_action_wire) and callable(make_typed_action_client)",
+                "TypedRpcServer and callable(load_action_wire) and "
+                "callable(make_typed_action_client) and callable(make_typed_server)",
             ],
             cwd=ctx.install_dir,
         )
