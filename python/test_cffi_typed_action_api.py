@@ -8,11 +8,17 @@ from hakoniwa_pdu_rpc import (
     ActionClientEvent,
     ActionClientPollResult,
     ActionDecision,
+    ActionServerEvent,
+    ActionServerPollResult,
     ActionTerminalStatus,
     ActionWire,
     ClientGoalHandle,
+    RuntimeCancelCause,
+    ServerGoalHandle,
     TypedAction,
     TypedActionClient,
+    TypedActionServer,
+    TypedServerAction,
 )
 
 
@@ -46,6 +52,41 @@ class FakeActionClient:
 
     def poll(self) -> ActionClientPollResult:
         return self.events.pop(0)
+
+
+class FakeActionServer:
+    def __init__(self) -> None:
+        self.events = []
+        self.calls = []
+
+    def poll(self) -> ActionServerPollResult:
+        return self.events.pop(0)
+
+    def accept_goal(self, action_name, goal) -> None:
+        self.calls.append(("accept_goal", action_name, goal))
+
+    def reject_goal(self, action_name, goal) -> None:
+        self.calls.append(("reject_goal", action_name, goal))
+
+    def accept_cancel(self, action_name, goal) -> None:
+        self.calls.append(("accept_cancel", action_name, goal))
+
+    def reject_cancel(self, action_name, goal) -> None:
+        self.calls.append(("reject_cancel", action_name, goal))
+
+    def create_feedback_buffer(self, action_name) -> bytes:
+        self.calls.append(("create_feedback", action_name))
+        return f"feedback-base-{action_name}".encode()
+
+    def send_feedback(self, action_name, goal, pdu) -> None:
+        self.calls.append(("send_feedback", action_name, goal, pdu))
+
+    def create_result_buffer(self, action_name) -> bytes:
+        self.calls.append(("create_result", action_name))
+        return f"result-base-{action_name}".encode()
+
+    def complete(self, action_name, goal, status, pdu) -> None:
+        self.calls.append(("complete", action_name, goal, status, pdu))
 
 
 def action_wire(action_name: str) -> ActionWire:
@@ -88,6 +129,59 @@ def make_typed_client() -> tuple[TypedActionClient, FakeActionClient]:
     return client, raw
 
 
+def server_action_wire(action_name: str) -> ActionWire:
+    def request_decode(pdu: bytes):
+        return SimpleNamespace(
+            body=SimpleNamespace(order=int.from_bytes(pdu, "little"))
+        )
+
+    def feedback_decode(pdu: bytes):
+        assert pdu == f"feedback-base-{action_name}".encode()
+        return SimpleNamespace(body=SimpleNamespace(partial_sequence=[]))
+
+    def feedback_encode(packet) -> bytes:
+        return bytes(packet.body.partial_sequence)
+
+    def response_decode(pdu: bytes):
+        assert pdu == f"result-base-{action_name}".encode()
+        return SimpleNamespace(body=SimpleNamespace(sequence=[]))
+
+    def response_encode(packet) -> bytes:
+        return bytes(packet.body.sequence)
+
+    return ActionWire(
+        request_packet_type=SimpleNamespace,
+        response_packet_type=lambda: SimpleNamespace(
+            body=SimpleNamespace(sequence=[])
+        ),
+        feedback_packet_type=lambda: SimpleNamespace(
+            body=SimpleNamespace(partial_sequence=[])
+        ),
+        request_encode=lambda _packet: b"unused",
+        request_decode=request_decode,
+        response_encode=response_encode,
+        response_decode=response_decode,
+        feedback_encode=feedback_encode,
+        feedback_decode=feedback_decode,
+    )
+
+
+def make_typed_server() -> tuple[TypedActionServer, FakeActionServer]:
+    raw = FakeActionServer()
+    server = TypedActionServer.__new__(TypedActionServer)
+    server._action_server = raw
+    server._actions = {
+        name: TypedServerAction(
+            raw,
+            name,
+            "sample_action_msgs/Fibonacci",
+            server_action_wire(name),
+        )
+        for name in ("fibonacci", "lucas")
+    }
+    return server, raw
+
+
 def event(
     event_type: ActionClientEvent,
     *,
@@ -102,6 +196,25 @@ def event(
         decision=ActionDecision.UNSPECIFIED,
         terminal_status=status,
         feedback_sequence=0,
+        pdu=pdu,
+    )
+
+
+def server_event(
+    event_type: ActionServerEvent,
+    *,
+    action_name: str = "fibonacci",
+    pdu: bytes = b"",
+) -> ActionServerPollResult:
+    return ActionServerPollResult(
+        event=event_type,
+        action_name=action_name,
+        goal=(
+            None
+            if event_type == ActionServerEvent.NONE
+            else ServerGoalHandle(bytes(range(1, 17)))
+        ),
+        runtime_cancel_cause=RuntimeCancelCause.UNSPECIFIED,
         pdu=pdu,
     )
 
@@ -225,3 +338,104 @@ def test_exposes_configured_action_names() -> None:
     assert client.action_names == ("fibonacci", "lucas")
     with pytest.raises(KeyError, match="unknown Action"):
         client.action("unknown")
+
+
+def test_typed_server_decodes_goal_body_and_routes_multiple_actions() -> None:
+    server, raw = make_typed_server()
+    raw.events.extend(
+        [
+            server_event(
+                ActionServerEvent.GOAL_REQUEST,
+                action_name="fibonacci",
+                pdu=b"\x08",
+            ),
+            server_event(
+                ActionServerEvent.GOAL_REQUEST,
+                action_name="lucas",
+                pdu=b"\x0a",
+            ),
+        ]
+    )
+
+    fibonacci = server.poll()
+    lucas = server.poll()
+
+    assert fibonacci.goal_body.order == 8
+    assert lucas.goal_body.order == 10
+    assert fibonacci.action_name == "fibonacci"
+    assert lucas.action_name == "lucas"
+
+
+def test_typed_server_does_not_decode_non_goal_events() -> None:
+    server, raw = make_typed_server()
+    raw.events.extend(
+        [
+            server_event(ActionServerEvent.CANCEL_REQUEST, pdu=b"ignored"),
+            server_event(ActionServerEvent.RUNTIME_CANCEL_REQUEST),
+            server_event(ActionServerEvent.NONE),
+        ]
+    )
+
+    assert server.poll().goal_body is None
+    assert server.poll().goal_body is None
+    assert server.poll().goal_body is None
+
+
+def test_typed_server_action_forwards_goal_and_cancel_decisions() -> None:
+    server, raw = make_typed_server()
+    action = server.action("fibonacci")
+    goal = ServerGoalHandle(bytes(range(1, 17)))
+
+    action.accept_goal(goal)
+    action.reject_goal(goal)
+    action.accept_cancel(goal)
+    action.reject_cancel(goal)
+
+    assert raw.calls == [
+        ("accept_goal", "fibonacci", goal),
+        ("reject_goal", "fibonacci", goal),
+        ("accept_cancel", "fibonacci", goal),
+        ("reject_cancel", "fibonacci", goal),
+    ]
+
+
+def test_typed_server_encodes_feedback_and_result_bodies() -> None:
+    server, raw = make_typed_server()
+    action = server.action("fibonacci")
+    goal = ServerGoalHandle(bytes(range(1, 17)))
+
+    feedback = action.create_feedback()
+    feedback.partial_sequence = [1, 1, 2, 3]
+    action.send_feedback(goal, feedback)
+    result = action.create_result()
+    result.sequence = [0, 1, 1, 2, 3, 5]
+    action.complete(goal, ActionTerminalStatus.SUCCEEDED, result)
+
+    assert raw.calls == [
+        ("create_feedback", "fibonacci"),
+        ("send_feedback", "fibonacci", goal, b"\x01\x01\x02\x03"),
+        ("create_result", "fibonacci"),
+        (
+            "complete",
+            "fibonacci",
+            goal,
+            ActionTerminalStatus.SUCCEEDED,
+            b"\x00\x01\x01\x02\x03\x05",
+        ),
+    ]
+
+
+def test_typed_server_rejects_unknown_action_and_event() -> None:
+    server, raw = make_typed_server()
+    with pytest.raises(KeyError, match="unknown Action"):
+        server.action("unknown")
+
+    raw.events.append(
+        server_event(
+            ActionServerEvent.GOAL_REQUEST,
+            action_name="unknown",
+            pdu=b"\x01",
+        )
+    )
+    with pytest.raises(RuntimeError, match="event references unknown Action"):
+        server.poll()
