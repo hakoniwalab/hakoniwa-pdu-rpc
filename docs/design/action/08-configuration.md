@@ -264,11 +264,12 @@ Action定義は、生成される3種類のPacketと1対1に対応するheap容�
 ```text
 metadata.total_size <= PduData.size()       # outbound capacity buffer
 metadata.total_size == received span.size() # inbound wire packet
+metadata.base_off <= metadata.heap_off <= metadata.total_size
 actual_heap_storage_size = metadata.total_size - metadata.heap_off
 actual_heap_storage_size <= align(bufferHeap.<packet kind>)
 ```
 
-PDU heapは8-byte境界へalignされるため、上限比較にも同じalign規則を適用します。`metadata.heap_off`はRegistryのgenerated base sizeから求めた位置と完全一致しなければならず、baseとheapの間へ任意の領域を挿入して上限検査を迂回することはできません。
+Nativeのbuffer factoryが確保するPDU heapは8-byte境界へalignされるため、上限比較にも同じalign規則を適用します。一方、受け取るPDUの`metadata.heap_off`にはNative C構造体のalignmentを強制しません。既存のRegistry converterには、言語ごとのserialized base直後を`heap_off`とするものがあるためです。Action Endpointはmetadataが示す実際のwire配置を正とし、領域の順序、packet範囲、実heap容量を検証します。
 
 上限超過、metadata不整合、または変換時のbuffer不足は送信失敗とし、Action設計で定義するRuntime Errorとして上位レイヤへ通知します。受信側もdecode前に同じ検証を行い、上限を超えるPacketを拒否します。
 

@@ -212,7 +212,11 @@ bool ActionServerEndpointImpl::validate_packet_capacity(
     std::size_t& wire_size_out) const
 {
     wire_size_out = 0;
-    if (!has_valid_packet_prefix(packet, base_size)) {
+    // Packet metadata describes the wire layout. Do not require heap_off to
+    // include the native C struct's trailing ABI padding: Registry converters
+    // in other languages may place the heap immediately after serialized
+    // base fields.
+    if (!has_valid_packet_prefix(packet, 0)) {
         std::cerr
             << "ERROR: Invalid Action packet layout for type '"
             << packet_type
@@ -226,17 +230,13 @@ bool ActionServerEndpointImpl::validate_packet_capacity(
     if (!supported_packet_capacity(base_size, heap_capacity)) {
         return false;
     }
-    const auto expected_heap_off =
-        static_cast<std::size_t>(HAKO_PDU_META_DATA_SIZE())
-        + aligned_size(base_size);
     const auto aligned_heap_capacity = aligned_size(heap_capacity);
-    if (metadata.heap_off != expected_heap_off
-        || metadata.total_size > packet.size()
+    if (metadata.total_size > packet.size()
         || (require_exact_buffer_size
             && metadata.total_size != packet.size())) {
         std::cerr
-            << "ERROR: Action packet offsets or total_size do not match "
-            << "the generated layout for type '"
+            << "ERROR: Action packet total_size does not match its buffer "
+            << "for type '"
             << packet_type
             << "'."
             << std::endl;

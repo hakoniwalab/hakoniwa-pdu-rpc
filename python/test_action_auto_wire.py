@@ -28,7 +28,8 @@ def test_loads_fibonacci_action_wire_from_registry_layout() -> None:
     _, _, _, heap_off, total_size = struct.unpack_from(
         "<IIIII", encoded_response, 0
     )
-    assert heap_off % 8 == 0
+    # Preserve the Registry converter's existing, non-aligned layout.
+    assert heap_off == 52
     assert total_size == len(encoded_response)
     assert list(wire.response_decode(encoded_response).body.sequence) == [0, 1, 1]
     feedback = wire.feedback_packet_type()

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
-import struct
 from typing import Any, Callable
 
 from .action_cffi import (
@@ -101,15 +100,15 @@ def _load_action_wire_from_package(
         request_packet_type=getattr(request_type_module, request_name),
         response_packet_type=getattr(response_type_module, response_name),
         feedback_packet_type=getattr(feedback_type_module, feedback_name),
-        request_encode=lambda packet: _canonicalize_pdu_layout(request_encoder(packet)),
+        request_encode=lambda packet: bytes(request_encoder(packet)),
         request_decode=getattr(
             request_converter_module, f"pdu_to_py_{request_name}"
         ),
-        response_encode=lambda packet: _canonicalize_pdu_layout(response_encoder(packet)),
+        response_encode=lambda packet: bytes(response_encoder(packet)),
         response_decode=getattr(
             response_converter_module, f"pdu_to_py_{response_name}"
         ),
-        feedback_encode=lambda packet: _canonicalize_pdu_layout(feedback_encoder(packet)),
+        feedback_encode=lambda packet: bytes(feedback_encoder(packet)),
         feedback_decode=getattr(
             feedback_converter_module, f"pdu_to_py_{feedback_name}"
         ),
@@ -208,51 +207,3 @@ def _split_action_type(action_type: str) -> tuple[str, str]:
             f"Action type must use package/Type form: {action_type}"
         )
     return parts[0], parts[1]
-
-
-def _canonicalize_pdu_layout(encoded: bytes | bytearray) -> bytes:
-    """Align the generated Python PDU base/heap boundary to the native ABI.
-
-    Some generated converters emit the heap immediately after an unaligned
-    base. Native Action endpoints use the canonical eight-byte-aligned PDU
-    layout. Heap references are relative to ``heap_off``, so relocating the
-    heap while preserving base and heap contents is lossless.
-    """
-
-    data = bytes(encoded)
-    metadata_size = 24
-    if len(data) < metadata_size:
-        raise ValueError("generated Action PDU is smaller than its metadata")
-    magic, version, base_off, heap_off, total_size = struct.unpack_from(
-        "<IIIII", data, 0
-    )
-    if (
-        magic != 0x12345678
-        or version != 1
-        or base_off != metadata_size
-        or not base_off <= heap_off <= total_size <= len(data)
-    ):
-        raise ValueError("generated Action PDU has invalid metadata")
-
-    base = data[base_off:heap_off]
-    heap = data[heap_off:total_size]
-    canonical_heap_off = metadata_size + ((len(base) + 7) & ~7)
-    canonical_total_size = canonical_heap_off + len(heap)
-    if heap_off == canonical_heap_off and total_size == len(data):
-        return data
-
-    canonical = bytearray(canonical_total_size)
-    canonical[:metadata_size] = data[:metadata_size]
-    struct.pack_into(
-        "<IIIII",
-        canonical,
-        0,
-        magic,
-        version,
-        base_off,
-        canonical_heap_off,
-        canonical_total_size,
-    )
-    canonical[base_off : base_off + len(base)] = base
-    canonical[canonical_heap_off:] = heap
-    return bytes(canonical)
