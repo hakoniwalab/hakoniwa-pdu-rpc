@@ -134,12 +134,12 @@ def test_typed_action_goal_feedback_and_result_round_trip():
     with ActionPair() as runtime:
         client = make_typed_action_client(
             runtime.client,
-            ACTION_NAME,
-            "sample_action_msgs/Fibonacci",
+            ACTION_CONFIG,
         )
-        goal_body = client.create_goal()
+        fibonacci = client.action(ACTION_NAME)
+        goal_body = fibonacci.create_goal()
         goal_body.order = 8
-        goal = client.send_goal(
+        goal = fibonacci.send_goal(
             goal_body, goal_id(0x30), timeout_usec=1_000_000
         )
 

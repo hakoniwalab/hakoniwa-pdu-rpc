@@ -38,6 +38,7 @@ _add_windows_runtime_search_dirs()
 from .auto_wire import ServiceWire, TypedRpcClient, load_service_wire, make_typed_client
 from .action_auto_wire import (
     ActionWire,
+    TypedAction,
     TypedActionClient,
     TypedActionClientPollResult,
     load_action_wire,
@@ -101,6 +102,7 @@ __all__ = [
     "ServerPollResult",
     "ServiceWire",
     "TypedRpcClient",
+    "TypedAction",
     "TypedActionClient",
     "TypedActionClientPollResult",
     "load_action_wire",

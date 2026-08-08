@@ -11,6 +11,7 @@ from hakoniwa_pdu_rpc import (
     ActionTerminalStatus,
     ActionWire,
     ClientGoalHandle,
+    TypedAction,
     TypedActionClient,
 )
 
@@ -28,8 +29,7 @@ class FakeActionClient:
         self.events = []
 
     def create_goal_buffer(self, action_name: str) -> bytes:
-        assert action_name == "fibonacci"
-        return b"base-goal"
+        return f"base-{action_name}".encode()
 
     def send_goal(
         self,
@@ -48,11 +48,9 @@ class FakeActionClient:
         return self.events.pop(0)
 
 
-def make_typed_client() -> tuple[TypedActionClient, FakeActionClient]:
-    raw = FakeActionClient()
-
+def action_wire(action_name: str) -> ActionWire:
     def request_decode(pdu: bytes):
-        assert pdu == b"base-goal"
+        assert pdu == f"base-{action_name}".encode()
         return SimpleNamespace(
             header=SimpleNamespace(goal_id=bytes(16)),
             body=None,
@@ -60,13 +58,9 @@ def make_typed_client() -> tuple[TypedActionClient, FakeActionClient]:
 
     def request_encode(packet) -> bytes:
         assert packet.body.order == 10
-        return b"encoded-goal"
+        return f"encoded-{action_name}".encode()
 
-    client = TypedActionClient.__new__(TypedActionClient)
-    client._action_client = raw
-    client.action_name = "fibonacci"
-    client.action_type = "sample_action_msgs/Fibonacci"
-    client.wire = ActionWire(
+    return ActionWire(
         request_packet_type=RequestPacket,
         response_packet_type=SimpleNamespace,
         feedback_packet_type=SimpleNamespace,
@@ -74,13 +68,23 @@ def make_typed_client() -> tuple[TypedActionClient, FakeActionClient]:
         request_decode=request_decode,
         response_encode=lambda _packet: b"unused",
         response_decode=lambda pdu: SimpleNamespace(
-            body=SimpleNamespace(sequence=list(pdu))
+            body=SimpleNamespace(sequence=list(pdu), source=action_name)
         ),
         feedback_encode=lambda _packet: b"unused",
         feedback_decode=lambda pdu: SimpleNamespace(
-            body=SimpleNamespace(sequence=list(pdu))
+            body=SimpleNamespace(sequence=list(pdu), source=action_name)
         ),
     )
+
+
+def make_typed_client() -> tuple[TypedActionClient, FakeActionClient]:
+    raw = FakeActionClient()
+    client = TypedActionClient.__new__(TypedActionClient)
+    client._action_client = raw
+    client._actions = {
+        name: TypedAction(raw, name, "sample_action_msgs/Fibonacci", action_wire(name))
+        for name in ("fibonacci", "lucas")
+    }
     return client, raw
 
 
@@ -104,7 +108,7 @@ def event(
 
 def test_creates_typed_goal_body() -> None:
     client, _ = make_typed_client()
-    goal = client.create_goal()
+    goal = client.action("fibonacci").create_goal()
     goal.order = 10
     assert goal.order == 10
 
@@ -114,11 +118,13 @@ def test_encodes_typed_goal_through_raw_action_client() -> None:
     goal_id = bytes(range(1, 17))
     goal = SimpleNamespace(order=10)
 
-    handle = client.send_goal(goal, goal_id, timeout_usec=3_000_000)
+    handle = client.action("fibonacci").send_goal(
+        goal, goal_id, timeout_usec=3_000_000
+    )
 
     assert handle.goal_id == goal_id
     assert raw.sent == [
-        ("fibonacci", b"encoded-goal", goal_id, 3_000_000)
+        ("fibonacci", b"encoded-fibonacci", goal_id, 3_000_000)
     ]
 
 
@@ -143,6 +149,7 @@ def test_decodes_only_feedback_and_result_bodies() -> None:
     assert goal_response.feedback is None
     assert goal_response.result is None
     assert feedback.feedback.sequence == [1, 2]
+    assert feedback.feedback.source == "fibonacci"
     assert feedback.result is None
     assert result.feedback is None
     assert result.result.sequence == [3, 5]
@@ -173,16 +180,48 @@ def test_cancel_preserves_typed_goal_handle() -> None:
     client, raw = make_typed_client()
     handle = ClientGoalHandle(bytes(range(1, 17)))
 
-    client.cancel_goal(handle)
+    client.action("fibonacci").cancel_goal(handle)
 
     assert raw.canceled == [("fibonacci", handle)]
 
 
-def test_rejects_event_from_another_action() -> None:
+def test_routes_events_from_multiple_actions() -> None:
     client, raw = make_typed_client()
-    raw.events.append(
-        event(ActionClientEvent.GOAL_RESPONSE, action_name="another-action")
+    raw.events.extend(
+        [
+            event(
+                ActionClientEvent.FEEDBACK,
+                action_name="fibonacci",
+                pdu=b"\x01",
+            ),
+            event(
+                ActionClientEvent.RESULT,
+                action_name="lucas",
+                pdu=b"\x02",
+            ),
+        ]
     )
 
-    with pytest.raises(RuntimeError, match="Action event name mismatch"):
+    first = client.poll()
+    second = client.poll()
+
+    assert first.feedback.source == "fibonacci"
+    assert second.result.source == "lucas"
+
+
+def test_rejects_event_from_unknown_action() -> None:
+    client, raw = make_typed_client()
+    raw.events.append(
+        event(ActionClientEvent.GOAL_RESPONSE, action_name="unknown-action")
+    )
+
+    with pytest.raises(RuntimeError, match="event references unknown Action"):
         client.poll()
+
+
+def test_exposes_configured_action_names() -> None:
+    client, _ = make_typed_client()
+
+    assert client.action_names == ("fibonacci", "lucas")
+    with pytest.raises(KeyError, match="unknown Action"):
+        client.action("unknown")

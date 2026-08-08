@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, Callable
+import json
+from pathlib import Path
+from typing import Any, Callable, Mapping
 
 from .action_cffi import (
     ActionClient,
@@ -115,25 +117,20 @@ def _load_action_wire_from_package(
     )
 
 
-class TypedActionClient:
-    """Registry-aware adapter over a raw ActionClient.
-
-    Callers exchange Action body objects. Packet headers, converters and raw
-    wire buffers remain owned by this adapter and the native endpoint.
-    """
+class TypedAction:
+    """Typed view of one Action managed by a TypedActionClient."""
 
     def __init__(
         self,
         action_client: ActionClient,
         action_name: str,
         action_type: str,
-        *,
-        package: str | None = None,
+        wire: ActionWire,
     ) -> None:
         self._action_client = action_client
         self.action_name = action_name
         self.action_type = action_type
-        self.wire = load_action_wire(action_type, package)
+        self.wire = wire
 
     def create_goal(self) -> Any:
         return self.wire.request_packet_type().body
@@ -158,20 +155,70 @@ class TypedActionClient:
     def cancel_goal(self, goal: ClientGoalHandle) -> None:
         self._action_client.cancel_goal(self.action_name, goal)
 
+
+class TypedActionClient:
+    """Registry-aware multi-Action adapter over one raw ActionClient.
+
+    Callers exchange Action body objects. Packet headers, converters and raw
+    wire buffers remain owned by this adapter and the native endpoint. Polling
+    is centralized here because the underlying client returns events for every
+    Action in its resolved configuration.
+    """
+
+    def __init__(
+        self,
+        action_client: ActionClient,
+        action_config_path: str | Path,
+        *,
+        packages: Mapping[str, str] | None = None,
+    ) -> None:
+        self._action_client = action_client
+        definitions = _load_action_definitions(action_config_path)
+        package_overrides = dict(packages or {})
+        unknown_packages = package_overrides.keys() - definitions.keys()
+        if unknown_packages:
+            unknown = ", ".join(sorted(unknown_packages))
+            raise ValueError(
+                f"package override references unknown Action(s): {unknown}"
+            )
+        self._actions = {
+            action_name: TypedAction(
+                action_client,
+                action_name,
+                action_type,
+                load_action_wire(
+                    action_type,
+                    package_overrides.get(action_name),
+                ),
+            )
+            for action_name, action_type in definitions.items()
+        }
+
+    @property
+    def action_names(self) -> tuple[str, ...]:
+        return tuple(self._actions)
+
+    def action(self, action_name: str) -> TypedAction:
+        try:
+            return self._actions[action_name]
+        except KeyError as error:
+            raise KeyError(f"unknown Action: {action_name}") from error
+
     def poll(self) -> TypedActionClientPollResult:
         raw = self._action_client.poll()
-        if raw.event != ActionClientEvent.NONE and raw.action_name != self.action_name:
-            raise RuntimeError(
-                "Action event name mismatch: "
-                f"expected={self.action_name!r}, actual={raw.action_name!r}"
-            )
-
         feedback = None
         result = None
-        if raw.event == ActionClientEvent.FEEDBACK:
-            feedback = self.wire.feedback_decode(raw.pdu).body
-        elif raw.event == ActionClientEvent.RESULT:
-            result = self.wire.response_decode(raw.pdu).body
+        if raw.event != ActionClientEvent.NONE:
+            try:
+                action = self._actions[raw.action_name]
+            except KeyError as error:
+                raise RuntimeError(
+                    f"event references unknown Action: {raw.action_name!r}"
+                ) from error
+            if raw.event == ActionClientEvent.FEEDBACK:
+                feedback = action.wire.feedback_decode(raw.pdu).body
+            elif raw.event == ActionClientEvent.RESULT:
+                result = action.wire.response_decode(raw.pdu).body
 
         return TypedActionClientPollResult(
             event=raw.event,
@@ -187,17 +234,45 @@ class TypedActionClient:
 
 def make_typed_action_client(
     action_client: ActionClient,
-    action_name: str,
-    action_type: str,
+    action_config_path: str | Path,
     *,
-    package: str | None = None,
+    packages: Mapping[str, str] | None = None,
 ) -> TypedActionClient:
     return TypedActionClient(
         action_client,
-        action_name,
-        action_type,
-        package=package,
+        action_config_path,
+        packages=packages,
     )
+
+
+def _load_action_definitions(
+    action_config_path: str | Path,
+) -> dict[str, str]:
+    path = Path(action_config_path)
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"failed to load Action configuration: {path}") from error
+
+    actions = document.get("actions") if isinstance(document, dict) else None
+    if not isinstance(actions, list) or not actions:
+        raise ValueError("Action configuration must contain a non-empty actions list")
+
+    definitions: dict[str, str] = {}
+    for index, entry in enumerate(actions):
+        if not isinstance(entry, dict):
+            raise ValueError(f"actions[{index}] must be an object")
+        action_name = entry.get("name")
+        action_type = entry.get("type")
+        if not isinstance(action_name, str) or not action_name:
+            raise ValueError(f"actions[{index}].name must be a non-empty string")
+        if not isinstance(action_type, str) or not action_type:
+            raise ValueError(f"actions[{index}].type must be a non-empty string")
+        _split_action_type(action_type)
+        if action_name in definitions:
+            raise ValueError(f"duplicate Action name: {action_name}")
+        definitions[action_name] = action_type
+    return definitions
 
 
 def _split_action_type(action_type: str) -> tuple[str, str]:

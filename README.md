@@ -756,6 +756,30 @@ goal = client.send_goal("fibonacci", goal_pdu, goal_id_bytes)
 event = client.poll()
 ```
 
+The typed adapter loads every `name` / `type` pair from the same resolved
+Action configuration. One typed client therefore mirrors one native Client
+handle and can route events for multiple Actions without consuming an event in
+the wrong per-Action wrapper:
+
+```python
+from hakoniwa_pdu_rpc import make_typed_action_client
+
+typed = make_typed_action_client(client, action_config_path)
+fibonacci = typed.action("fibonacci")
+
+goal_body = fibonacci.create_goal()
+goal_body.order = 10
+goal = fibonacci.send_goal(goal_body, goal_id_bytes, timeout_usec=1_000_000)
+
+# poll() is centralized and selects the converter from event.action_name.
+event = typed.poll()
+```
+
+Use `typed.action_names` to inspect configured Actions. Custom generated
+Python packages can be selected per Action with the optional `packages`
+mapping. Unknown Action names, duplicate names in the resolved configuration,
+and events that do not belong to the configuration are rejected explicitly.
+
 Python Goal IDs are exactly 16 bytes and must not be all-zero. Native error numbers are exposed
 as `ActionErrorCode`, and `ActionError.code` preserves the precise synchronous
 failure reason. The Python layer copies allocated native buffers into `bytes`
