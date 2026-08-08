@@ -936,7 +936,11 @@ def package_test(ctx: Context) -> None:
                 "assert ActionMuxServer.__module__ == "
                 "'hakoniwa_pdu_rpc.action_cffi'; "
                 "from hakoniwa_pdu_rpc.action_config_generator import generate, resolve; "
-                "assert callable(generate) and callable(resolve)",
+                "assert callable(generate) and callable(resolve); "
+                "from hakoniwa_pdu_rpc import TypedAction, TypedActionClient, "
+                "load_action_wire, make_typed_action_client; "
+                "assert TypedAction and TypedActionClient and "
+                "callable(load_action_wire) and callable(make_typed_action_client)",
             ],
             cwd=ctx.install_dir,
         )

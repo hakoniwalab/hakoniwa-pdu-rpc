@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -16,10 +17,13 @@ from hakoniwa_pdu_rpc import (
     ActionServerEvent,
     ActionTerminalStatus,
     ClientGoalHandle,
+    load_action_wire,
+    make_typed_action_client,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "hakoniwa-pdu-registry"))
 ACTION_CONFIG = ROOT / "test" / "configs" / "action_resolved.json"
 ENDPOINT_CONFIG = ROOT / "test" / "configs" / "action_c_tcp_e2e" / "endpoints.json"
 ACTION_NAME = "fibonacci"
@@ -123,6 +127,67 @@ def test_action_goal_feedback_and_result_round_trip():
         assert delivered_result.goal == goal
         assert delivered_result.terminal_status == ActionTerminalStatus.SUCCEEDED
         assert isinstance(delivered_result.pdu, bytes)
+
+
+def test_typed_action_goal_feedback_and_result_round_trip():
+    wire = load_action_wire("sample_action_msgs/Fibonacci")
+    with ActionPair() as runtime:
+        client = make_typed_action_client(
+            runtime.client,
+            ACTION_CONFIG,
+        )
+        fibonacci = client.action(ACTION_NAME)
+        goal_body = fibonacci.create_goal()
+        goal_body.order = 8
+        goal = fibonacci.send_goal(
+            goal_body, goal_id(0x30), timeout_usec=1_000_000
+        )
+
+        incoming = wait_server(runtime.server, ActionServerEvent.GOAL_REQUEST)
+        request_packet = wire.request_decode(incoming.pdu)
+        assert request_packet.body.order == 8
+        runtime.server.accept_goal(ACTION_NAME, incoming.goal)
+        accepted = client.poll()
+        deadline = time.monotonic() + 3.0
+        while accepted.event == ActionClientEvent.NONE and time.monotonic() < deadline:
+            time.sleep(0.001)
+            accepted = client.poll()
+        assert accepted.event == ActionClientEvent.GOAL_RESPONSE
+        assert accepted.decision == ActionDecision.ACCEPTED
+
+        feedback_pdu = runtime.server.create_feedback_buffer(ACTION_NAME)
+        feedback_packet = wire.feedback_decode(feedback_pdu)
+        feedback_packet.body.partial_sequence = [1, 1, 2, 3]
+        runtime.server.send_feedback(
+            ACTION_NAME,
+            incoming.goal,
+            wire.feedback_encode(feedback_packet),
+        )
+        delivered_feedback = client.poll()
+        deadline = time.monotonic() + 3.0
+        while delivered_feedback.event == ActionClientEvent.NONE and time.monotonic() < deadline:
+            time.sleep(0.001)
+            delivered_feedback = client.poll()
+        assert delivered_feedback.event == ActionClientEvent.FEEDBACK
+        assert list(delivered_feedback.feedback.partial_sequence) == [1, 1, 2, 3]
+
+        result_pdu = runtime.server.create_result_buffer(ACTION_NAME)
+        result_packet = wire.response_decode(result_pdu)
+        result_packet.body.sequence = [0, 1, 1, 2, 3, 5, 8]
+        runtime.server.complete(
+            ACTION_NAME,
+            incoming.goal,
+            ActionTerminalStatus.SUCCEEDED,
+            wire.response_encode(result_packet),
+        )
+        delivered_result = client.poll()
+        deadline = time.monotonic() + 3.0
+        while delivered_result.event == ActionClientEvent.NONE and time.monotonic() < deadline:
+            time.sleep(0.001)
+            delivered_result = client.poll()
+        assert delivered_result.event == ActionClientEvent.RESULT
+        assert delivered_result.terminal_status == ActionTerminalStatus.SUCCEEDED
+        assert list(delivered_result.result.sequence) == [0, 1, 1, 2, 3, 5, 8]
 
 
 def test_action_cancel_round_trip():
