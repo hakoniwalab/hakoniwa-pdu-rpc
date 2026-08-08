@@ -286,6 +286,16 @@ class PrecedenceTests(unittest.TestCase):
 
 
 class OperationCompatibilityTests(unittest.TestCase):
+    def test_environment_parallel_limit_is_delegated_to_cmake(self):
+        with patch.dict(
+            HAKO.os.environ,
+            {"CMAKE_BUILD_PARALLEL_LEVEL": "2"},
+            clear=False,
+        ):
+            self.assertEqual(HAKO.build_parallel_args(), [])
+        with patch.dict(HAKO.os.environ, {}, clear=True):
+            self.assertEqual(HAKO.build_parallel_args(), ["--parallel"])
+
     def context(self):
         cfg = HAKO.resolve_config(
             HAKO.load_simple_yaml(REPO_ROOT / "hakoniwa-build.yaml")
@@ -372,6 +382,21 @@ class OperationCompatibilityTests(unittest.TestCase):
 
 
 class FoundationInstallTests(unittest.TestCase):
+    def test_python_receipt_capabilities_cover_public_runtime_surfaces(self):
+        self.assertEqual(
+            set(HAKO.PYTHON_RECEIPT_CAPABILITIES),
+            {
+                "python_rpc_mux_server",
+                "typed_async_client",
+                "typed_rpc_server",
+                "service_config_generator",
+                "typed_action_client",
+                "typed_action_server",
+                "python_action_mux_server",
+                "action_config_generator",
+            },
+        )
+
     def test_python_install_resolves_declared_dependencies(self):
         context = SimpleNamespace(
             venv_python=Path("/foundation/python/bin/python"),

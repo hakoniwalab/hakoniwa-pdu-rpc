@@ -82,6 +82,16 @@ ACTION_CONTRACT_TARGETS = (
 REVIEWED_TEST_TARGETS = SERVICE_CONTRACT_TARGETS + ACTION_CONTRACT_TARGETS
 REVIEWED_TEST_BUILD_TARGET = "hakoniwa_pdu_rpc_reviewed_tests"
 WINDOWS_REVIEWED_TEST_PARALLELISM = 2
+PYTHON_RECEIPT_CAPABILITIES = (
+    "python_rpc_mux_server",
+    "typed_async_client",
+    "typed_rpc_server",
+    "service_config_generator",
+    "typed_action_client",
+    "typed_action_server",
+    "python_action_mux_server",
+    "action_config_generator",
+)
 REVIEWED_TEST_REGEX = (
     "^hakoniwa_pdu_(rpc_(basic|infinite_wait|timeout_cancel|cancel_race)"
     "|action_(configuration|server_state_machine|services_server_goal_instance|client_state_machine|services_client_goal_instance|server_initialization|goal_response_transaction"
@@ -583,10 +593,17 @@ def build(ctx: Context) -> None:
             str(ctx.build_dir),
             "--config",
             ctx.build_type,
-            "--parallel",
+            *build_parallel_args(),
         ],
         cwd=ctx.repo_root,
     )
+
+
+def build_parallel_args() -> list[str]:
+    """Let CMake honor an explicit environment build limit when present."""
+    if os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL"):
+        return []
+    return ["--parallel"]
 
 
 def _command_output(command: list[str], cwd: Path) -> str:
@@ -751,8 +768,10 @@ def write_receipt(ctx: Context) -> Path:
         "  rpc_client: true",
         "  rpc_server: true",
         "  tcp_mux: true",
-        f"  python_rpc_mux_server: {_yaml_scalar(ctx.python_venv is not None)}",
-        f"  typed_async_client: {_yaml_scalar(ctx.python_venv is not None)}",
+        *(
+            f"  {capability}: {_yaml_scalar(ctx.python_venv is not None)}"
+            for capability in PYTHON_RECEIPT_CAPABILITIES
+        ),
         "  shared_native_library: true",
         f"  python_package: {_yaml_scalar(ctx.python_venv is not None)}",
         "  cmake_package: true",
@@ -826,7 +845,7 @@ def run_test_target(ctx: Context, spec: OperationSpec) -> None:
             ctx.build_type,
             "--target",
             spec.target,
-            "--parallel",
+            *build_parallel_args(),
         ],
         cwd=ctx.repo_root,
     )
@@ -922,7 +941,7 @@ def package_test(ctx: Context) -> None:
             str(build_dir),
             "--config",
             ctx.build_type,
-            "--parallel",
+            *build_parallel_args(),
         ],
         cwd=ctx.repo_root,
     )
