@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -140,6 +141,8 @@ bool ActionServicesServer::initialize_services_impl(
     }
 
     std::vector<ActionInstance> initialized_actions;
+    std::map<hakoniwa::pdu::Endpoint*,
+             std::shared_ptr<TransportDisconnectState>> transport_states;
     const auto& action_entries = root.at("actions");
     for (std::size_t index = 0; index < configuration.actions.size(); ++index) {
         const auto& definition = configuration.actions[index];
@@ -169,6 +172,25 @@ bool ActionServicesServer::initialize_services_impl(
                 << std::endl;
             return false;
         }
+        // Direct endpoints are owned by a Mux, which installs and processes
+        // the disconnect callback itself. Container endpoints are owned by
+        // this Services instance.
+        std::shared_ptr<TransportDisconnectState> transport_state;
+        if (!endpoint_override) {
+            transport_state = transport_states[pdu_endpoint.get()];
+        }
+        if (!endpoint_override && !transport_state) {
+            transport_state = std::make_shared<TransportDisconnectState>();
+            transport_states[pdu_endpoint.get()] = transport_state;
+            std::weak_ptr<TransportDisconnectState> weak_state =
+                transport_state;
+            pdu_endpoint->set_on_disconnected_callback(
+                [weak_state](const auto&) {
+                    if (auto state = weak_state.lock()) {
+                        state->generation.fetch_add(1);
+                    }
+                });
+        }
 
         if (impl_type_ != "ActionServerEndpointImpl") {
             std::cerr
@@ -195,6 +217,8 @@ bool ActionServicesServer::initialize_services_impl(
             definition.name,
             std::move(action_endpoint),
             {},
+            transport_state,
+            0,
         });
     }
 
@@ -232,32 +256,64 @@ void ActionServicesServer::clear_all_instances()
     }
 }
 
+void ActionServicesServer::handle_transport_disconnected_locked(
+    ActionInstance& action)
+{
+    // Transport packet bindings and slots belong to the dead session and are
+    // released immediately. Semantic Goal instances remain until the
+    // Application handles the Runtime Cancel below.
+    if (action.endpoint) {
+        action.endpoint->reset_contexts();
+    }
+    for (auto& goal : action.goals) {
+        goal.transport_available = false;
+        const auto already_pending = std::any_of(
+            pending_runtime_events_.begin(),
+            pending_runtime_events_.end(),
+            [&action, &goal](const ServerEvent& event) {
+                return event.type == ServerEventType::RUNTIME_CANCEL_REQUEST
+                    && event.action_name == action.action_name
+                    && event.goal.goal_id == goal.goal.goal_id;
+            });
+        if (already_pending) {
+            continue;
+        }
+
+        ServerEvent event;
+        event.type = ServerEventType::RUNTIME_CANCEL_REQUEST;
+        event.action_name = action.action_name;
+        event.goal = goal.goal;
+        event.runtime_cancel_cause =
+            RuntimeCancelCause::TRANSPORT_DISCONNECTED;
+        pending_runtime_events_.push_back(std::move(event));
+    }
+    std::cerr
+        << "ERROR: Action Server transport disconnected for Action '"
+        << action.action_name
+        << "'; packet bindings and slot ownership were released."
+        << std::endl;
+}
+
+void ActionServicesServer::process_transport_disconnects_locked()
+{
+    for (auto& action : actions_) {
+        if (!action.transport_state) {
+            continue;
+        }
+        const auto generation = action.transport_state->generation.load();
+        if (generation == action.handled_disconnect_generation) {
+            continue;
+        }
+        action.handled_disconnect_generation = generation;
+        handle_transport_disconnected_locked(action);
+    }
+}
+
 void ActionServicesServer::notify_transport_disconnected()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& action : actions_) {
-        for (const auto& goal : action.goals) {
-            const auto already_pending = std::any_of(
-                pending_runtime_events_.begin(),
-                pending_runtime_events_.end(),
-                [&action, &goal](const ServerEvent& event) {
-                    return event.type
-                            == ServerEventType::RUNTIME_CANCEL_REQUEST
-                        && event.action_name == action.action_name
-                        && event.goal.goal_id == goal.goal.goal_id;
-                });
-            if (already_pending) {
-                continue;
-            }
-
-            ServerEvent event;
-            event.type = ServerEventType::RUNTIME_CANCEL_REQUEST;
-            event.action_name = action.action_name;
-            event.goal = goal.goal;
-            event.runtime_cancel_cause =
-                RuntimeCancelCause::TRANSPORT_DISCONNECTED;
-            pending_runtime_events_.push_back(std::move(event));
-        }
+    for (auto& action : actions_) {
+        handle_transport_disconnected_locked(action);
     }
 }
 
@@ -334,6 +390,7 @@ ServerEventType ActionServicesServer::poll(
     event_out = ServerEvent{};
 
     std::lock_guard<std::mutex> lock(mutex_);
+    process_transport_disconnects_locked();
     while (!pending_runtime_events_.empty()) {
         auto event = std::move(pending_runtime_events_.front());
         pending_runtime_events_.pop_front();
@@ -425,7 +482,7 @@ bool ActionServicesServer::accept_goal(
     // Services mutex keeps this staged entry invisible to other operations;
     // a failed send rolls it back. This avoids a post-send allocation failure
     // leaving an accepted Endpoint binding without Goal state.
-    action->goals.push_back(GoalInstance{goal, ServerGoalContext{}});
+    action->goals.push_back(GoalInstance{goal, ServerGoalContext{}, true});
     if (!action->endpoint->accept_goal(goal)) {
         action->goals.pop_back();
         return false;
@@ -556,7 +613,8 @@ bool ActionServicesServer::accept_cancel(
 
     const bool endpoint_accepted = cancel_origin == CancelOrigin::CLIENT
         ? action->endpoint->accept_cancel(goal)
-        : action->endpoint->accept_cancel_locally(goal);
+        : (!goal_instance->transport_available
+            || action->endpoint->accept_cancel_locally(goal));
     if (!endpoint_accepted) {
         std::cerr
             << "ERROR: Failed to commit the accepted Cancel decision for "
@@ -687,6 +745,14 @@ bool ActionServicesServer::send_feedback(
         return false;
     }
 
+    if (!goal_instance->transport_available) {
+        std::cerr
+            << "ERROR: Cannot send Action Feedback because the owning "
+            << "transport session is disconnected."
+            << std::endl;
+        return false;
+    }
+
     const auto transition = transition_server_goal(
         goal_instance->context,
         ServerGoalEvent::PUBLISH_FEEDBACK);
@@ -775,8 +841,10 @@ bool ActionServicesServer::complete_goal_locked(
         return false;
     }
 
-    if (local_only) {
-        if (!action.endpoint->complete_locally(
+    const bool transport_is_unavailable = !goal_instance.transport_available;
+    if (local_only || transport_is_unavailable) {
+        if (!transport_is_unavailable
+            && !action.endpoint->complete_locally(
                 goal_instance.goal, status, result_pdu)) {
             std::cerr
                 << "WARNING: Endpoint rejected local terminal completion "

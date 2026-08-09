@@ -301,6 +301,62 @@ TEST(ActionServicesClientGoalInstanceContract, ClearResetsGoalsAndEndpointContex
     EXPECT_EQ(endpoint->reset_contexts_calls, 1);
 }
 
+TEST(ActionServicesClientGoalInstanceContract,
+     DisconnectReleasesContextsAndReportsActiveGoalError)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    const auto goal_id = test_goal_id(0x31);
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    endpoint->push_event(
+        goal_response(goal_id, action::Decision::ACCEPTED));
+
+    std::string action_name;
+    action::ClientEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::GOAL_RESPONSE);
+    ASSERT_EQ(
+        action::ActionServicesClientTestPeer::goal_count(services, "demo"),
+        1U);
+
+    services.notify_transport_disconnected();
+
+    EXPECT_EQ(endpoint->reset_contexts_calls, 1);
+    EXPECT_EQ(
+        action::ActionServicesClientTestPeer::goal_count(services, "demo"),
+        0U);
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::ERROR);
+    EXPECT_EQ(action_name, "demo");
+    EXPECT_EQ(event.goal.goal_id, goal_id);
+}
+
+TEST(ActionServicesClientGoalInstanceContract,
+     DisconnectReportsGoalStillAwaitingGoalResponse)
+{
+    auto services = client();
+    auto endpoint = std::make_shared<FakeActionClientEndpoint>("demo");
+    const auto goal_id = test_goal_id(0x33);
+    action::ActionServicesClientTestPeer::add_action(
+        services, "demo", endpoint);
+    action::ClientGoalHandle goal;
+    ASSERT_TRUE(services.send_goal("demo", {0x47}, goal_id, goal));
+
+    services.notify_transport_disconnected();
+
+    EXPECT_EQ(endpoint->reset_contexts_calls, 1);
+    std::string action_name;
+    action::ClientEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ClientEventType::ERROR);
+    EXPECT_EQ(action_name, "demo");
+    EXPECT_EQ(event.goal.goal_id, goal_id);
+}
+
 TEST(ActionServicesClientGoalInstanceContract, InitializesConfiguredClientEndpoint)
 {
     auto container = std::make_shared<hakoniwa::pdu::EndpointContainer>(

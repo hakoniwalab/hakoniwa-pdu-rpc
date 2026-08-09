@@ -211,7 +211,9 @@ accepted Goal terminal completion
   -> slot release
 ```
 
-Goal Response timeoutはslot解放条件ではありません。Clientが応答待ちを諦めた時点でもServerがGoalを処理中またはaccept済みの可能性があるため、Client Runtimeは該当slotをquarantineし、transport stop／disconnect後の明示resetまで別Goalへ再利用しません。
+Goal Response timeoutはslot解放条件ではありません。Clientが応答待ちを諦めた時点でもServerがGoalを処理中またはaccept済みの可能性があるため、Client Runtimeは該当slotをquarantineし、transport stopまたはconnection disconnectが確定してEndpoint Contextをresetするまで別Goalへ再利用しません。
+
+connection disconnectが確定した時点では、旧sessionから遅延packetが届く可能性はありません。Runtimeはそのsessionに属するpacket binding、slot ownership、未処理packetを直ちに解放します。これはActionの意味論的Goal Contextの解放とは別です。ServerはGoal ContextをRuntime Cancel完了まで保持できますが、切断済みTransportのslot ownershipを保持してはなりません。Clientは管理中GoalをTransport ErrorとしてApplicationへ通知し、Goal Contextを解放します。通信切断を`SUCCEEDED`、`CANCELED`、`ABORTED`へ暗黙変換しません。
 
 Server Runtimeは`slot_index -> active goal_id`の所有関係も保持します。使用中slotで異なるGoal IDのGoal Requestを受信した場合はApplicationへ配送せず、Protocol上のGoal rejectとして応答します。
 

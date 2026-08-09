@@ -4,8 +4,10 @@
 #include "action_configuration.hpp"
 #include "hakoniwa/time_source/time_source_factory.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -126,6 +128,8 @@ bool ActionServicesClient::initialize_services(
     }
 
     std::vector<ActionInstance> initialized_actions;
+    std::map<hakoniwa::pdu::Endpoint*,
+             std::shared_ptr<TransportDisconnectState>> transport_states;
     const auto& action_entries = root.at("actions");
     for (std::size_t index = 0; index < configuration.actions.size(); ++index) {
         const auto& definition = configuration.actions[index];
@@ -147,6 +151,18 @@ bool ActionServicesClient::initialize_services(
                 << "'."
                 << std::endl;
             return false;
+        }
+        auto& transport_state = transport_states[pdu_endpoint.get()];
+        if (!transport_state) {
+            transport_state = std::make_shared<TransportDisconnectState>();
+            std::weak_ptr<TransportDisconnectState> weak_state =
+                transport_state;
+            pdu_endpoint->set_on_disconnected_callback(
+                [weak_state](const auto&) {
+                    if (auto state = weak_state.lock()) {
+                        state->generation.fetch_add(1);
+                    }
+                });
         }
 
         if (impl_type_ != "ActionClientEndpointImpl") {
@@ -175,6 +191,9 @@ bool ActionServicesClient::initialize_services(
             definition.name,
             std::move(action_endpoint),
             {},
+            {},
+            transport_state,
+            0,
         });
     }
 
@@ -193,6 +212,7 @@ bool ActionServicesClient::start_all_services()
 void ActionServicesClient::stop_all_services()
 {
     std::lock_guard<std::mutex> lock(mutex_);
+    pending_runtime_events_.clear();
     for (auto& action : actions_) {
         if (action.endpoint) {
             action.endpoint->clear_pending_events();
@@ -203,11 +223,65 @@ void ActionServicesClient::stop_all_services()
 void ActionServicesClient::clear_all_instances()
 {
     std::lock_guard<std::mutex> lock(mutex_);
+    pending_runtime_events_.clear();
     for (auto& action : actions_) {
         action.goals.clear();
+        action.pending_goals.clear();
         if (action.endpoint) {
             action.endpoint->reset_contexts();
         }
+    }
+}
+
+void ActionServicesClient::handle_transport_disconnected_locked(
+    ActionInstance& action)
+{
+    for (const auto& goal : action.pending_goals) {
+        ClientEvent event;
+        event.type = ClientEventType::ERROR;
+        event.action_name = action.action_name;
+        event.goal = goal;
+        pending_runtime_events_.push_back(std::move(event));
+    }
+    for (const auto& goal : action.goals) {
+        ClientEvent event;
+        event.type = ClientEventType::ERROR;
+        event.action_name = action.action_name;
+        event.goal = goal.goal;
+        pending_runtime_events_.push_back(std::move(event));
+    }
+    action.pending_goals.clear();
+    action.goals.clear();
+    if (action.endpoint) {
+        action.endpoint->reset_contexts();
+    }
+    std::cerr
+        << "ERROR: Action Client transport disconnected for Action '"
+        << action.action_name
+        << "'; active Goal contexts and slot ownership were released."
+        << std::endl;
+}
+
+void ActionServicesClient::process_transport_disconnects_locked()
+{
+    for (auto& action : actions_) {
+        if (!action.transport_state) {
+            continue;
+        }
+        const auto generation = action.transport_state->generation.load();
+        if (generation == action.handled_disconnect_generation) {
+            continue;
+        }
+        action.handled_disconnect_generation = generation;
+        handle_transport_disconnected_locked(action);
+    }
+}
+
+void ActionServicesClient::notify_transport_disconnected()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& action : actions_) {
+        handle_transport_disconnected_locked(action);
     }
 }
 
@@ -267,11 +341,15 @@ GoalSendResult ActionServicesClient::send_goal_with_result(
 
     // The Endpoint owns the pre-accept Goal Response wait. A semantic
     // GoalInstance is created only when poll() observes ACCEPTED.
-    return action->endpoint->send_goal_with_result(
+    const auto result = action->endpoint->send_goal_with_result(
         goal_pdu,
         goal_id,
         goal_handle_out,
         timeout_usec);
+    if (result == GoalSendResult::SUCCESS) {
+        action->pending_goals.push_back(goal_handle_out);
+    }
+    return result;
 }
 
 bool ActionServicesClient::send_cancel(
@@ -388,6 +466,15 @@ ClientEventType ActionServicesClient::handle_goal_response_locked(
     ClientEvent& event,
     ClientEvent& event_out)
 {
+    action.pending_goals.erase(
+        std::remove_if(
+            action.pending_goals.begin(),
+            action.pending_goals.end(),
+            [&event](const ClientGoalHandle& pending) {
+                return pending.goal_id == event.goal.goal_id;
+            }),
+        action.pending_goals.end());
+
     if (!event.goal.valid()
         || (event.decision != Decision::ACCEPTED
             && event.decision != Decision::REJECTED)) {
@@ -627,6 +714,13 @@ ClientEventType ActionServicesClient::poll(
     event_out = ClientEvent{};
 
     std::lock_guard<std::mutex> lock(mutex_);
+    process_transport_disconnects_locked();
+    if (!pending_runtime_events_.empty()) {
+        event_out = std::move(pending_runtime_events_.front());
+        pending_runtime_events_.pop_front();
+        action_name = event_out.action_name;
+        return event_out.type;
+    }
     for (auto& action : actions_) {
         if (!action.endpoint) {
             continue;

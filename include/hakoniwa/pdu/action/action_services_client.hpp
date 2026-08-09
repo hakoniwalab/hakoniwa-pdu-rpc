@@ -8,6 +8,8 @@
 
 #include <memory>
 #include <mutex>
+#include <atomic>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -30,6 +32,9 @@ public:
     bool start_all_services();
     void stop_all_services();
     void clear_all_instances();
+    // Called automatically from the owned Endpoint disconnect callback. It is
+    // public for transport owners that manage the callback themselves.
+    void notify_transport_disconnected();
 
     // The upper application owns GoalId generation. The Runtime preserves the
     // supplied non-zero ID and rejects active collisions synchronously.
@@ -59,11 +64,21 @@ private:
         ClientGoalContext context;
     };
 
+    struct TransportDisconnectState {
+        std::atomic<std::uint64_t> generation{0};
+    };
+
     // One configured Action Client Endpoint and its accepted Goals.
     struct ActionInstance {
         std::string action_name;
         std::shared_ptr<IActionClientEndpoint> endpoint;
         std::vector<GoalInstance> goals;
+        // Goal Requests submitted to the Endpoint but not accepted/rejected
+        // yet. Endpoint owns their protocol state; Services keeps only the
+        // identity required to report a confirmed transport disconnect.
+        std::vector<ClientGoalHandle> pending_goals;
+        std::shared_ptr<TransportDisconnectState> transport_state;
+        std::uint64_t handled_disconnect_generation{0};
     };
 
     ActionInstance* get_action_locked(const std::string& action_name);
@@ -76,6 +91,8 @@ private:
     bool remove_goal_locked(
         ActionInstance& action,
         const GoalId& goal_id);
+    void handle_transport_disconnected_locked(ActionInstance& action);
+    void process_transport_disconnects_locked();
 
     ClientEventType handle_goal_response_locked(
         ActionInstance& action,
@@ -101,6 +118,7 @@ private:
     std::uint64_t delta_time_usec_;
 
     std::vector<ActionInstance> actions_;
+    std::deque<ClientEvent> pending_runtime_events_;
     mutable std::mutex mutex_;
     std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
     std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container_;

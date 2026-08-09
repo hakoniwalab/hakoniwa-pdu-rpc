@@ -8,6 +8,7 @@
 #include "hakoniwa/time_source/time_source.hpp"
 
 #include <deque>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -80,6 +81,14 @@ private:
     struct GoalInstance {
         ServerGoalHandle goal;
         ServerGoalContext context;
+        // False after the owning transport session disconnects. The semantic
+        // Goal remains until Runtime Cancel is handled, but no Endpoint I/O or
+        // packet binding is available any longer.
+        bool transport_available{true};
+    };
+
+    struct TransportDisconnectState {
+        std::atomic<std::uint64_t> generation{0};
     };
 
     // One configured Action and its accepted Goal instances. slotCount bounds
@@ -89,6 +98,8 @@ private:
         std::string action_name;
         std::shared_ptr<IActionServerEndpoint> endpoint;
         std::vector<GoalInstance> goals;
+        std::shared_ptr<TransportDisconnectState> transport_state;
+        std::uint64_t handled_disconnect_generation{0};
     };
 
     ActionInstance* get_action_locked(const std::string& action_name);
@@ -101,6 +112,8 @@ private:
     bool remove_goal_locked(
         ActionInstance& action,
         const GoalId& goal_id);
+    void handle_transport_disconnected_locked(ActionInstance& action);
+    void process_transport_disconnects_locked();
     ServerEventType handle_cancel_event_locked(
         ActionInstance& action,
         ServerEventType event_type,

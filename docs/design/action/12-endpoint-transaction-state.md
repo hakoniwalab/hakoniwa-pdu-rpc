@@ -180,7 +180,18 @@ state_mutex lock
 state_mutex unlock
 ```
 
-Resultはterminal commitであるため、Goal／Cancel Responseとは異なり、送信失敗後に元状態へ戻しません。`RESULT_COMMITTED`とslot ownershipをstop／resetまたはRuntime破棄まで保持します。
+Resultはterminal commitであるため、Goal／Cancel Responseとは異なり、送信失敗後に元状態へ戻しません。接続状態が不明な間は`RESULT_COMMITTED`とslot ownershipを保持します。connection disconnectが確定した場合は旧sessionのpacket bindingとslot ownershipをresetし、意味論的Goal Contextだけを上位Runtimeへ残します。
+
+### 6.1 connection disconnect
+
+単発のsend失敗とconnection disconnectの確定を区別します。send失敗だけでは配送結果が不明なためslotをquarantineします。Transportがdisconnect callbackを通知した場合は、旧sessionから追加packetが届かないため、次を一つのEndpoint Context resetとして実施します。
+
+- `packet_bindings_`をclearする。
+- `slot_owners_`を全解放する。
+- pending packet／event queueをclearする。
+- Client Servicesは管理中Goalへ`ERROR`を通知してGoal Contextを解放する。
+- Server ServicesはGoal Contextを保持し、`RUNTIME_CANCEL_REQUESTED`を通知する。
+- ServerのRuntime Cancel判断とlocal completionは切断済みEndpointへwire送信しない。
 
 ## 7. inbound Request
 

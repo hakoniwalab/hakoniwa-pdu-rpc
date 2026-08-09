@@ -282,6 +282,47 @@ TEST(ActionServicesServerGoalInstanceContract, ClearResetsGoalsAndEndpointContex
     EXPECT_EQ(endpoint->reset_contexts_calls, 1);
 }
 
+TEST(ActionServicesServerGoalInstanceContract,
+     DisconnectReleasesSlotBeforeRuntimeCancelCompletion)
+{
+    auto services = server();
+    auto endpoint = std::make_shared<FakeActionServerEndpoint>("demo");
+    const auto goal = test_goal(0x32);
+    action::ActionServicesServerTestPeer::add_action(
+        services, "demo", endpoint);
+    ASSERT_TRUE(services.accept_goal("demo", goal));
+
+    services.notify_transport_disconnected();
+
+    EXPECT_EQ(endpoint->reset_contexts_calls, 1);
+    EXPECT_EQ(
+        action::ActionServicesServerTestPeer::goal_count(services, "demo"),
+        1U);
+
+    std::string action_name;
+    action::ServerEvent event;
+    ASSERT_EQ(
+        services.poll(action_name, event),
+        action::ServerEventType::RUNTIME_CANCEL_REQUEST);
+    EXPECT_EQ(event.goal.goal_id, goal.goal_id);
+    EXPECT_EQ(
+        event.runtime_cancel_cause,
+        action::RuntimeCancelCause::TRANSPORT_DISCONNECTED);
+
+    ASSERT_TRUE(services.accept_cancel(action_name, event.goal));
+    EXPECT_EQ(endpoint->accept_cancel_locally_calls, 0);
+    ASSERT_TRUE(services.complete(
+        action_name,
+        event.goal,
+        action::TerminalStatus::CANCELED,
+        {0x52}));
+    EXPECT_EQ(endpoint->complete_calls, 0);
+    EXPECT_EQ(endpoint->complete_locally_calls, 0);
+    EXPECT_EQ(
+        action::ActionServicesServerTestPeer::goal_count(services, "demo"),
+        0U);
+}
+
 TEST(ActionServicesServerGoalInstanceContract, InitializesConfiguredServerEndpoint)
 {
     auto container = std::make_shared<hakoniwa::pdu::EndpointContainer>(

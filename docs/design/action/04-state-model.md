@@ -242,14 +242,14 @@ Client起因Cancelの判断待ち中にTransportが切断した場合、Wire Res
 | `FEEDBACK_SEND_FAILED` | 同期APIを失敗させ、診断ログを残す。自動retryせず`SAME` | 同左。`SAME` | `INVARIANT_VIOLATION`: Result確定後は送信開始しない |
 | `RESULT_SEND_COMPLETED` | `INVARIANT_VIOLATION`: Result未確定 | `INVARIANT_VIOLATION`: Result未確定 | `ALLOW`: 保持責務完了後に`RELEASE` |
 | `RESULT_SEND_FAILED` | `INVARIANT_VIOLATION`: Result未確定 | `INVARIANT_VIOLATION`: Result未確定 | `NOP`: `FINISHING`とslot ownershipをstop／resetまで保持 |
-| `TRANSPORT_DISCONNECTED` | Muxでは`RUNTIME_CANCEL_REQUESTED(cause=TRANSPORT_DISCONNECTED)`を発生。`SAME` | 停止処理を継続し、Client応答は送信しない。`SAME` | `FINISHING`をstop／resetまで保持。`SAME` |
+| `TRANSPORT_DISCONNECTED` | packet bindingとslotを解放し、Server Goal Contextには`RUNTIME_CANCEL_REQUESTED(cause=TRANSPORT_DISCONNECTED)`を発生。`SAME` | packet bindingとslotを解放して停止処理を継続し、Client応答は送信しない。`SAME` | packet bindingとslotを解放し、意味論的Goal Contextだけをlocal completionまで保持。`SAME` |
 | `RUNTIME_CANCEL_REQUESTED` | `DEFER`: Runtime起因CancelとしてApplicationへ通知。判断までは`SAME` | `IDEMPOTENT`: すでに停止処理中。`SAME` | `IGNORE`: terminal結果を変更しない。`SAME` |
 | `APPLICATION_RESPONSE_TIMEOUT` | `NOP`: terminal statusを生成せずContextを維持 | `NOP` | `NOP` |
 | `SERVER_SHUTDOWN_REQUESTED` | `NOP`: `stop()`によるContext resetまで状態を維持 | `NOP` | `NOP` |
 
 ### 12.1 Runtime起因Cancel
 
-`TRANSPORT_DISCONNECTED`は、通信切断を観測したイベントです。このイベント自体がGoalを`CANCELED`へ変更することはありません。
+`TRANSPORT_DISCONNECTED`は、通信切断を観測したイベントです。このイベント自体がGoalを`CANCELED`へ変更することはありません。一方、切断済みsessionのpacket bindingとslot ownershipは即時解放します。Runtime Cancelを完了するまで保持するのはServerの意味論的Goal Contextだけです。
 
 ```text
 TRANSPORT_DISCONNECTED
