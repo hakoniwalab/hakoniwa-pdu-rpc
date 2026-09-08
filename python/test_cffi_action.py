@@ -93,6 +93,26 @@ class ActionPair:
         self.server.close()
 
 
+def test_action_session_survives_idle_between_goal_and_feedback():
+    with ActionPair() as runtime:
+        request = runtime.client.create_goal_buffer(ACTION_NAME)
+        goal = runtime.client.send_goal(ACTION_NAME, request, goal_id(0x70))
+        incoming = wait_server(runtime.server, ActionServerEvent.GOAL_REQUEST)
+        assert incoming.goal is not None
+        runtime.server.accept_goal(ACTION_NAME, incoming.goal)
+        accepted = wait_client(runtime.client, ActionClientEvent.GOAL_RESPONSE)
+        assert accepted.decision == ActionDecision.ACCEPTED
+
+        # A quiet Action session is valid. A transport read deadline used to
+        # terminate this connection after 1000 ms, losing the accepted Goal.
+        time.sleep(1.2)
+        feedback = runtime.server.create_feedback_buffer(ACTION_NAME)
+        runtime.server.send_feedback(ACTION_NAME, incoming.goal, feedback)
+        delivered = wait_client(runtime.client, ActionClientEvent.FEEDBACK)
+        assert delivered.goal == goal
+        assert delivered.feedback_sequence == 0
+
+
 def test_action_goal_feedback_and_result_round_trip():
     with ActionPair() as runtime:
         request = runtime.client.create_goal_buffer(ACTION_NAME)
