@@ -928,3 +928,23 @@ A hybrid architecture is also possible, but it intentionally introduces two midd
 - Examples: `examples/README.md`
 - Minimal configuration: `config/sample/minimal/README.md`
 - Service schema: `config/schema/service-schema.json`
+
+
+## Separate generated build state
+
+`tools/hako.py` accepts `--state-dir <directory>` on each operation. Without
+this option, generated state stays in `<repository>/.hako` for compatibility.
+An explicit path may be outside the repository; relative paths use the calling
+shell's current directory, and `~` and symlinks are resolved.
+
+Use the same state directory for every operation in a build/install sequence.
+Resolved configuration and the configuration copied into the Component Receipt
+come from that directory. Existing repository-local state is not moved or deleted.
+Build and install directories remain separate options/manifest settings and must
+also be distinct when sharing sources between environments.
+
+Business Pack supplies `<HAKONIWA_WORK_DIR>/foundation/state/<component>` explicitly;
+standalone invocations should supply their own `--state-dir`.
+
+`package-test` uses `<state-dir>/package-consumer-build` for its temporary consumer
+build, so it does not clear another environment's repository-local consumer build.

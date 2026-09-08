@@ -555,5 +555,79 @@ artifacts:
             )
 
 
+class StateDirectoryTests(unittest.TestCase):
+    def test_package_consumer_build_uses_selected_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            ctx = self.context(root, root / "external-state")
+            ctx.endpoint_root = root / "endpoint"
+            old = root / ".hako/package-consumer-build/sentinel"
+            old.parent.mkdir(parents=True)
+            old.write_text("keep")
+            with patch.object(HAKO, "build"), patch.object(HAKO, "install"), patch.object(HAKO, "run") as run:
+                HAKO.package_test(ctx)
+            configure = run.call_args_list[0].args[0]
+            self.assertEqual(Path(configure[configure.index("-B") + 1]),
+                             ctx.hako_state_dir / "package-consumer-build")
+            self.assertEqual(old.read_text(), "keep")
+
+    def context(self, root, state=None):
+        args = HAKO.create_parser().parse_args(["install"] + (["--state-dir", str(state)] if state is not None else []))
+        cfg = HAKO.resolve_config(HAKO.load_simple_yaml(Path(__file__).resolve().parents[1] / "hakoniwa-build.yaml"))
+        return HAKO.Context(args, cfg, root / "hakoniwa-build.yaml", root)
+
+    def write(self, ctx):
+        return HAKO.write_resolved(ctx, "install")
+
+    def receipt(self, ctx, root):
+        from unittest.mock import patch
+        ctx.install_dir = root / "install"
+        ctx.endpoint_root = root / "endpoint"
+        dependency = {"version": "1", "source_revision": "test", "build_limits": {}}
+        with patch.object(HAKO, "_rpc_artifacts", return_value=[(Path("lib/cmake/hakoniwa_pdu_rpc"), "cmake-package")]), patch.object(HAKO, "_read_dependency_receipt", return_value=dependency), patch.object(HAKO, "_command_output", return_value="test-revision"):
+            receipt = HAKO.write_receipt(ctx)
+        return receipt.parent / "resolved" / "hakoniwa-pdu-rpc.yaml"
+
+    def test_default_state_remains_repository_local(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            ctx = self.context(root)
+            self.assertEqual(self.write(ctx), root / ".hako/resolved-build.yaml")
+
+    def test_two_states_and_receipts_do_not_use_legacy_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            legacy = root / ".hako/resolved-build.yaml"
+            legacy.parent.mkdir()
+            legacy.write_text("legacy sentinel", encoding="utf-8")
+            contexts = [self.context(root, root / name) for name in ("state-a", "state-b")]
+            contexts[0].build_dir = root / "build-a"
+            contexts[1].build_dir = root / "build-b"
+            first = self.write(contexts[0])
+            before = first.read_bytes()
+            second = self.write(contexts[1])
+            self.assertEqual(first.read_bytes(), before)
+            self.assertNotEqual(first.read_bytes(), second.read_bytes())
+            for ctx in (contexts[0], contexts[1], contexts[0]):
+                self.assertEqual(self.receipt(ctx, root).read_bytes(),
+                                 (ctx.hako_state_dir / "resolved-build.yaml").read_bytes())
+            self.assertEqual(legacy.read_text(), "legacy sentinel")
+
+    def test_relative_state_is_resolved_from_invocation_directory(self):
+        import os
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            repo = root / "repo"
+            repo.mkdir()
+            previous = Path.cwd()
+            try:
+                os.chdir(root)
+                ctx = self.context(repo, Path("relative-state"))
+            finally:
+                os.chdir(previous)
+            self.assertEqual(ctx.hako_state_dir, root / "relative-state")
+            self.assertEqual(self.write(ctx), root / "relative-state/resolved-build.yaml")
+
+
 if __name__ == "__main__":
     unittest.main()

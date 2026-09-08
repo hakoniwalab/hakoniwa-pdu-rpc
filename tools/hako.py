@@ -362,6 +362,8 @@ class Context:
         root: Path | None = None,
     ) -> None:
         self.repo_root = root or repo_root()
+        state_dir = getattr(args, "state_dir", None)
+        self.state_dir = Path(state_dir).expanduser().resolve() if state_dir else None
         self.manifest_path = manifest_path
         self.cfg = cfg
         self.build_dir = _path_from(
@@ -394,6 +396,10 @@ class Context:
             if python_venv is not None
             else None
         )
+
+    @property
+    def hako_state_dir(self) -> Path:
+        return self.state_dir or self.repo_root / ".hako"
 
     @property
     def vcpkg_triplet(self) -> str:
@@ -565,7 +571,7 @@ def _atomic_write(path: Path, content: str) -> None:
 
 
 def write_resolved(ctx: Context, operation: str) -> Path:
-    out_dir = ctx.repo_root / ".hako"
+    out_dir = ctx.hako_state_dir
     record = resolved_record(ctx, operation)
     resolved_path = out_dir / "resolved-build.yaml"
     _atomic_write(resolved_path, dump_yaml(record))
@@ -739,7 +745,7 @@ def write_receipt(ctx: Context) -> Path:
     )
     (ctx.install_dir / resolved_relative).parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(
-        ctx.repo_root / ".hako" / "resolved-build.yaml",
+        ctx.hako_state_dir / "resolved-build.yaml",
         ctx.install_dir / resolved_relative,
     )
 
@@ -911,7 +917,7 @@ def package_test(ctx: Context) -> None:
     install(ctx)
 
     source_dir = ctx.repo_root / "test" / "package_consumer"
-    build_dir = ctx.repo_root / ".hako" / "package-consumer-build"
+    build_dir = ctx.hako_state_dir / "package-consumer-build"
     if build_dir.exists():
         shutil.rmtree(build_dir)
 
@@ -991,6 +997,7 @@ def create_parser() -> argparse.ArgumentParser:
         help="optional Foundation Python venv receiving hakoniwa-pdu-rpc",
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--state-dir", default=None, help="generated state directory (default: repository root/.hako; relative to cwd)")
     return parser
 
 
