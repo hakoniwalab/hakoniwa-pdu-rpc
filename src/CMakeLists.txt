@@ -38,6 +38,12 @@ set(HAKO_PDU_RPC_SOURCES
 
 function(hako_pdu_rpc_configure_target target)
   target_compile_features(${target} PUBLIC cxx_std_20)
+
+  # Decode UTF-8 sources consistently instead of depending on the host code page.
+  if(MSVC)
+    target_compile_options(${target} PRIVATE /utf-8)
+  endif()
+
   target_include_directories(${target}
     PUBLIC
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
