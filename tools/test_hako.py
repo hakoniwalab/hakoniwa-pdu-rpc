@@ -381,6 +381,30 @@ class OperationCompatibilityTests(unittest.TestCase):
                 )
 
 
+class PythonVersionTests(unittest.TestCase):
+    def test_doctor_accepts_python_310_and_rejects_older_versions(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            endpoint = root / "endpoint"
+            write_endpoint_package(endpoint)
+            (root / "hakoniwa-pdu-registry" / "pdu" / "types").mkdir(parents=True)
+            ctx = SimpleNamespace(
+                repo_root=root,
+                endpoint_root=endpoint,
+                endpoint_source="test",
+                platform_name="linux",
+                python_venv=None,
+            )
+            with patch.object(HAKO.shutil, "which", return_value="/usr/bin/tool"):
+                for version in ((3, 9, 18), (3, 10, 0), (3, 12, 0)):
+                    with self.subTest(version=version):
+                        with patch.object(HAKO.sys, "version_info", version):
+                            errors = HAKO.doctor(ctx)
+                        if version < (3, 10):
+                            self.assertEqual(errors, ["Python 3.10 or newer is required"])
+                        else:
+                            self.assertEqual(errors, [])
+
 class FoundationInstallTests(unittest.TestCase):
     def test_python_receipt_capabilities_cover_public_runtime_surfaces(self):
         self.assertEqual(
