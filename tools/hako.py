@@ -416,8 +416,8 @@ class Context:
 
 def doctor(ctx: Context) -> list[str]:
     errors: list[str] = []
-    if sys.version_info < (3, 12):
-        errors.append("Python 3.12 or newer is required")
+    if sys.version_info < (3, 10):
+        errors.append("Python 3.10 or newer is required")
     for executable in ("cmake", "git"):
         if not shutil.which(executable):
             errors.append(f"{executable} was not found on PATH")
