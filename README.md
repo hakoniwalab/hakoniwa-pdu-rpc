@@ -248,11 +248,20 @@ git submodule update --init --recursive
 
 Required:
 
-- Python 3.12 or newer for `tools/hako.py` and the Python binding.
+- Python 3.10 or newer for `tools/hako.py` and the Python CFFI binding.
 - C++20 compiler.
 - CMake 3.16 or newer.
 - Installed `hakoniwa-pdu-endpoint` CMake package.
 - `hakoniwa-pdu-registry` submodule from this repository.
+
+The PDU-RPC Python bindings use CFFI and do not import `hakopy`. For
+Core-free Endpoint transports (for example, TCP), their Python version is
+independent of the Python version used to build Hakoniwa Core PRO.
+Deployments that additionally import the compiled `hakopy` extension for
+Core/SHM access must use a compatible CPython interpreter and extension
+ABI. Validate this at the Core/SHM integration boundary; installing a
+different Python version alongside a ROS environment does not make an
+incompatible `hakopy` extension importable.
 
 `nlohmann_json` is resolved by the project and is included in the installed package contract.
 
