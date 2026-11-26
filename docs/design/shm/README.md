@@ -185,9 +185,7 @@ hakoniwa-pdu-registry revision.
 
 ## 8. Open points
 
-| # | Question |
-|---|---|
-| O3 | Progress (`get_progress`) and actions over SHM |
+No open points remain for stages S1–S5.
 
 Decided on 2026-11-26:
 
@@ -203,6 +201,15 @@ Decided on 2026-11-26:
   it is a client. One process per definition file; the launcher starts it next to
   hakoniwa-pdu-bridge-core (topics) with one more asset entry.
 - The bridge has no time of its own and never times out (section 6).
+- (O3) **Out of scope: actions and progress.** core-pro has service progress
+  (DOING with a percentage) but no actions; PDU-RPC has actions (goal,
+  feedback, result) but its services carry no progress and treat long work as
+  an action, not as a slow service. So SHM endpoints and `rpc-bridge` carry
+  services only: the SHM client asks for no progress (poll interval 0) and treats
+  an interim DOING only as "not finished", without surfacing it. Actions stay on
+  the existing transports (tcp). When a Hakoniwa service needs action-like
+  behaviour (for example "send a trajectory and report until arrival"), design
+  it then: actions in core-pro, or another shape on the Robot Runtime side.
 
 ## 9. Stages
 
