@@ -164,25 +164,40 @@ once in `clients[].client_endpoint` (where it calls the real server):
 
 ```json
 {
+  "pduMetaDataSize": 24,
   "services": [
     {
       "name": "CarService/AckermannStep/Car-1",
       "type": "hako_srv_msgs/AckermannStep",
       "maxClients": 1,
       "pduSize": { "server": { "baseSize": 320, "heapSize": 0 },
-                   "client": { "baseSize": 320, "heapSize": 0 } },
+                   "client": { "baseSize": 408, "heapSize": 0 } },
       "server_endpoints": [ { "nodeId": "rpc-bridge", "endpointId": "tcp-from-docker" } ],
       "clients": [
-        { "name": "rpc-bridge-Car-1",
-          "client_endpoint": { "nodeId": "rpc-bridge", "endpointId": "shm-to-core" } }
+        { "name": "hakoniwa_pdu_ros_car_1_0", "requestChannelId": 0, "responseChannelId": 1,
+          "client_endpoint": { "nodeId": "pdu-ros", "endpointId": "tcp-to-host" } },
+        { "name": "BridgeClient",
+          "client_endpoint": { "nodeId": "rpc-bridge", "protocol": "shm",
+                               "assetName": "RpcBridgeShm", "deltaTimeUsec": 1000,
+                               "coreConfig": "/path/to/cpp_core_config.json" } }
       ]
     }
   ]
 }
 ```
 
-`tcp-from-docker` is a tcp endpoint, `shm-to-core` an shm endpoint; swapping
-them gives the reverse direction. The bridge itself knows no protocol and no
+Run it as `rpc-bridge --rpc-config <this file> --node rpc-bridge`. The first
+client entry is the caller (the ROS side, with its request and response channel
+ids); the second is the bridge's own shm client in the §5 form. The tcp side is
+an ordinary pdu-endpoint: the bridge looks `tcp-from-docker` up in the
+`endpoints.json` next to the RPC definition file (`protocol: tcp`,
+`direction: inout`, `role: server`; when a configuration generated for the ROS
+side is reused, add `role: server` to the bridge's tcp endpoint). Core-pro and
+the bridge read the same RPC definition; `maxClients: 1` counts the bridge's one
+registered Core client.
+
+The reverse direction (shm in, tcp out) uses the same wiring with the two sides
+swapped, once the shm server endpoint exists (S5 in §10). The bridge itself knows no protocol and no
 time. Unlike hakoniwa-pdu-bridge-core, whose transfer policies (ticker,
 throttle) are timed and therefore need a time source (Hakoniwa time or real
 time), the RPC bridge is event-driven: a request, reply or cancel arrives and is
