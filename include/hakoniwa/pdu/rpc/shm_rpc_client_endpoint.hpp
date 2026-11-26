@@ -26,16 +26,18 @@ public:
 private:
     friend class ShmRpcAsset;
 
+    enum class CancelState { none, pending, sent };
+
     void asset_step(CoreProServiceApi& api);
     bool asset_started(CoreProServiceApi& api);
-    void asset_stopped();
+    void asset_fail_request();
 
     std::shared_ptr<ShmRpcAsset> asset_;
     std::mutex mutex_; // one hand-off box: copied data only while held
     PduData outbox_;
     PduData inbox_;
     bool request_queued_{false};
-    bool cancel_queued_{false};
+    CancelState cancel_state_{CancelState::none};
     bool in_flight_{false};
     bool response_ready_{false};
     bool timeout_reported_{false};

@@ -72,9 +72,9 @@ public:
 
     bool cancel(int) override
     {
-        cancels++;
+        const int attempt = ++cancels;
         notify();
-        return true;
+        return attempt > cancel_failures;
     }
 
     CoreProClientEvent poll(int) override
@@ -118,6 +118,7 @@ public:
 
     std::atomic<int> calls{0};
     std::atomic<int> cancels{0};
+    std::atomic<int> cancel_failures{0};
     std::atomic<int> steps{0};
     std::atomic<int> pdu_checks{0};
     std::atomic<int> create_calls{0};
@@ -244,8 +245,13 @@ TEST_F(ShmEndpointTest, TimeoutThenCancel)
     }
     EXPECT_EQ(event, ClientEventType::RESPONSE_TIMEOUT);
     EXPECT_EQ(endpoint_->poll(response), ClientEventType::NONE);
+    fake_->cancel_failures = 2;
     ASSERT_TRUE(endpoint_->send_cancel_request());
-    wait_for([this] { return fake_->cancels == 1; });
+    ASSERT_TRUE(fake_->wait_for([this] { return fake_->cancels >= 3; }));
+    EXPECT_FALSE(endpoint_->send_cancel_request());
+    const int steps = fake_->steps;
+    wait_for([this, steps] { return fake_->steps >= steps + 2; });
+    EXPECT_EQ(fake_->cancels.load(), 3);
     fake_->set_response(
         CoreProClientEvent::cancel_done,
         response_pdu(HAKO_SERVICE_RESULT_CODE_CANCELED));

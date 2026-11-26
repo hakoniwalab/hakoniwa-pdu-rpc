@@ -58,7 +58,7 @@ void ShmRpcAsset::run()
             for (auto& client : clients) clients_ready &= client->asset_started(*api_);
             if (!clients_ready || !api_->start_feedback(asset_name_)) break;
         } else if (event == CoreProAssetEvent::stop || event == CoreProAssetEvent::reset) {
-            for (auto& client : clients) client->asset_stopped();
+            for (auto& client : clients) client->asset_fail_request();
             if (event == CoreProAssetEvent::stop) api_->stop_feedback(asset_name_);
             else api_->reset_feedback(asset_name_);
         } else if (api_->running()) {

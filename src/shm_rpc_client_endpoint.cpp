@@ -52,8 +52,8 @@ bool ShmRpcClientEndpoint::call(const PduData& pdu, uint64_t timeout)
 bool ShmRpcClientEndpoint::send_cancel_request()
 {
     std::lock_guard lock(mutex_);
-    if (!in_flight_ || cancel_queued_) return false;
-    cancel_queued_ = true;
+    if (!in_flight_ || response_ready_ || cancel_state_ != CancelState::none) return false;
+    cancel_state_ = CancelState::pending;
     return true;
 }
 void ShmRpcClientEndpoint::create_request_buffer(Hako_uint8 opcode, bool is_cancel, PduData& pdu)
@@ -78,7 +78,6 @@ ClientEventType ShmRpcClientEndpoint::poll(RpcResponse& response)
         response.pdu = std::move(inbox_);
         response_ready_ = false;
         in_flight_ = false;
-        cancel_queued_ = false;
         timeout_reported_ = false;
         hako::pdu::PduConvertor<
             HakoCpp_ServiceResponseHeader,
@@ -113,15 +112,21 @@ void ShmRpcClientEndpoint::asset_step(CoreProServiceApi& api)
             request_queued_ = false;
             send = true;
         }
-        if (cancel_queued_) {
-            cancel_queued_ = false;
-            cancel = true;
-        }
+        cancel = cancel_state_ == CancelState::pending;
     }
-    if (send) api.call(core_client_, request);
-    if (cancel) api.cancel(core_client_);
+    if (send && !api.call(core_client_, request)) {
+        asset_fail_request();
+        return;
+    }
     const auto event = api.poll(core_client_);
-    if (event != CoreProClientEvent::response_in && event != CoreProClientEvent::cancel_done) return;
+    if (event != CoreProClientEvent::response_in && event != CoreProClientEvent::cancel_done) {
+        // The cancel shares the request channel. Retry on the next step if its PDU is still unread.
+        if (cancel && api.cancel(core_client_)) {
+            std::lock_guard lock(mutex_);
+            cancel_state_ = CancelState::sent;
+        }
+        return;
+    }
     PduData reply;
     if (!api.response(core_client_, reply)) return;
     HakoCpp_ServiceResponseHeader header{};
@@ -140,6 +145,7 @@ void ShmRpcClientEndpoint::asset_step(CoreProServiceApi& api)
             header, reinterpret_cast<char*>(reply.data()), reply.size());
         inbox_ = std::move(reply);
         response_ready_ = true;
+        cancel_state_ = CancelState::none;
     }
 }
 bool ShmRpcClientEndpoint::asset_started(CoreProServiceApi& api)
@@ -148,9 +154,11 @@ bool ShmRpcClientEndpoint::asset_started(CoreProServiceApi& api)
     core_client_ = api.create_client(asset_->asset_name(), service_name_, client_name_);
     return core_client_ >= 0;
 }
-void ShmRpcClientEndpoint::asset_stopped()
+void ShmRpcClientEndpoint::asset_fail_request()
 {
     std::lock_guard lock(mutex_);
+    request_queued_ = false;
+    cancel_state_ = CancelState::none;
     if (!in_flight_) return;
     HakoCpp_ServiceResponseHeader header{};
     header.request_id = active_request_id_;
