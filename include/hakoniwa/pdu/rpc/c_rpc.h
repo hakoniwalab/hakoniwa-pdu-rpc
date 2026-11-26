@@ -60,6 +60,7 @@ typedef struct {
  */
 void hako_pdu_rpc_buffer_free(uint8_t* buffer);
 
+/* endpoint_config_path may be NULL or empty when all selected channels are SHM. */
 hako_pdu_rpc_client_handle_t* hako_pdu_rpc_client_create(const char* node_id, const char* client_name, const char* service_config_path, const char* endpoint_config_path, uint64_t delta_time_usec, const char* time_source_type);
 void hako_pdu_rpc_client_destroy(hako_pdu_rpc_client_handle_t* handle);
 hako_pdu_rpc_error_t hako_pdu_rpc_client_start(hako_pdu_rpc_client_handle_t* handle);

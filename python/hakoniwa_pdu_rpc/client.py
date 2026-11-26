@@ -33,7 +33,7 @@ class RpcClient:
         node_id: str,
         client_name: str,
         service_config_path: str | Path,
-        endpoint_config_path: str | Path,
+        endpoint_config_path: str | Path | None = None,
         delta_time_usec: int = 1000,
         time_source_type: str = "real",
     ):

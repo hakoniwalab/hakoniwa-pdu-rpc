@@ -92,6 +92,7 @@ public:
             std::cerr << "ERROR: Failed to convert request C++ type to PDU." << std::endl;
             return false;
         }
+        request_pdu.resize(static_cast<size_t>(size));
         return true;
     }
 
@@ -167,6 +168,7 @@ private:
             std::cerr << "ERROR: Failed to convert response C++ type to PDU." << std::endl;
             return false;
         }
+        response_pdu.resize(static_cast<size_t>(size));
         return true;
     }
 };

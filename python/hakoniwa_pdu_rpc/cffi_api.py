@@ -325,7 +325,7 @@ class RpcClient:
         node_id: str,
         client_name: str,
         service_config_path: str | Path,
-        endpoint_config_path: str | Path,
+        endpoint_config_path: str | Path | None = None,
         delta_time_usec: int = 1000,
         time_source_type: str = "real",
     ):
@@ -335,7 +335,7 @@ class RpcClient:
             b.encode(node_id),
             b.encode(client_name),
             b.encode(service_config_path),
-            b.encode(endpoint_config_path),
+            b.ffi.NULL if endpoint_config_path is None else b.encode(endpoint_config_path),
             delta_time_usec,
             b.encode(time_source_type),
         )
