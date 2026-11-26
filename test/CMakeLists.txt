@@ -44,6 +44,17 @@ endif()
 if(HAKO_PDU_RPC_ENABLE_SHM AND UNIX)
   find_package(Threads REQUIRED)
 
+  get_target_property(_hako_shakoc_type hakoniwa-core::shakoc TYPE)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_READELF AND _hako_shakoc_type STREQUAL "SHARED_LIBRARY")
+    foreach(target IN ITEMS hakoniwa_pdu_rpc_shared rpc-bridge)
+      add_test(NAME ${target}_shm_core_linkage
+        COMMAND ${CMAKE_COMMAND}
+          "-DREADELF=${CMAKE_READELF}"
+          "-DBINARY=$<TARGET_FILE:${target}>"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/shm_core_linkage.cmake")
+    endforeach()
+  endif()
+
   add_executable(hakoniwa_pdu_shm_integration_conductor shm_integration_conductor.cpp)
   target_link_libraries(hakoniwa_pdu_shm_integration_conductor PRIVATE hakoniwa-core::conductor Threads::Threads)
 
