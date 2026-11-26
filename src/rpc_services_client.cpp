@@ -140,7 +140,8 @@ bool RpcServicesClient::initialize_services(std::shared_ptr<hakoniwa::pdu::Endpo
                         return false;
                     }
                     shm_asset_ = std::make_shared<ShmRpcAsset>(
-                        asset_name, core_config, delta, shm_api_ ? shm_api_ : make_core_pro_service_api());
+                        asset_name, core_config, config_path_, delta,
+                        shm_api_ ? shm_api_ : make_core_pro_service_api());
                 }
                 rpc_client_endpoint = std::make_shared<ShmRpcClientEndpoint>(
                     service_name, client_name_, delta_time_usec_, shm_asset_);

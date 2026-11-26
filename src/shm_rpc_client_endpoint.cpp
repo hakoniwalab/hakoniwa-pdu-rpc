@@ -37,8 +37,16 @@ bool ShmRpcClientEndpoint::call(const PduData& pdu, uint64_t timeout)
     request_queued_ = true;
     in_flight_ = true;
     timeout_usec_ = timeout;
+    timeout_reported_ = false;
     started_ = std::chrono::steady_clock::now();
-    active_request_id_ = next_request_id_;
+    if (pdu.size() >= 272) {
+        HakoCpp_ServiceRequestHeader header{};
+        hako::pdu::PduConvertor<
+            HakoCpp_ServiceRequestHeader,
+            hako::pdu::msgs::hako_srv_msgs::ServiceRequestHeader> {}.pdu2cpp(
+            reinterpret_cast<char*>(outbox_.data()), header);
+        active_request_id_ = header.request_id;
+    }
     return true;
 }
 bool ShmRpcClientEndpoint::send_cancel_request()
@@ -50,7 +58,9 @@ bool ShmRpcClientEndpoint::send_cancel_request()
 }
 void ShmRpcClientEndpoint::create_request_buffer(Hako_uint8 opcode, bool is_cancel, PduData& pdu)
 {
-    pdu.resize(sizeof(HakoCpp_ServiceRequestHeader));
+    // Generated core-pro PDU converters need room for their wire metadata and
+    // fixed string fields; sizeof the C++ header (80 bytes) is not a wire size.
+    pdu.resize(512);
     HakoCpp_ServiceRequestHeader header{};
     header.request_id = is_cancel ? active_request_id_ : ++next_request_id_;
     header.client_name = client_name_;
@@ -64,20 +74,27 @@ void ShmRpcClientEndpoint::create_request_buffer(Hako_uint8 opcode, bool is_canc
 ClientEventType ShmRpcClientEndpoint::poll(RpcResponse& response)
 {
     std::lock_guard lock(mutex_);
-    if (in_flight_ && timeout_usec_ &&
+    if (response_ready_) {
+        response.pdu = std::move(inbox_);
+        response_ready_ = false;
+        in_flight_ = false;
+        cancel_queued_ = false;
+        timeout_reported_ = false;
+        hako::pdu::PduConvertor<
+            HakoCpp_ServiceResponseHeader,
+            hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader> {}.pdu2cpp(
+            reinterpret_cast<char*>(response.pdu.data()), response.header);
+        return response.header.result_code == HAKO_SERVICE_RESULT_CODE_CANCELED
+            ? ClientEventType::RESPONSE_CANCEL
+            : ClientEventType::RESPONSE_IN;
+    }
+    if (in_flight_ && timeout_usec_ && !timeout_reported_ &&
             std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started_).count() >
-            timeout_usec_) return ClientEventType::RESPONSE_TIMEOUT;
-    if (!response_ready_) return ClientEventType::NONE;
-    response.pdu = std::move(inbox_);
-    response_ready_ = false;
-    in_flight_ = false;
-    cancel_queued_ = false;
-    hako::pdu::PduConvertor<
-        HakoCpp_ServiceResponseHeader,
-        hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader> {}.pdu2cpp(
-        reinterpret_cast<char*>(response.pdu.data()), response.header);
-    return response.header.result_code == HAKO_SERVICE_RESULT_CODE_CANCELED ? ClientEventType::RESPONSE_CANCEL :
-           ClientEventType::RESPONSE_IN;
+            timeout_usec_) {
+        timeout_reported_ = true;
+        return ClientEventType::RESPONSE_TIMEOUT;
+    }
+    return ClientEventType::NONE;
 }
 void ShmRpcClientEndpoint::clear_pending_responses()
 {
@@ -91,7 +108,6 @@ void ShmRpcClientEndpoint::asset_step(CoreProServiceApi& api)
     bool send = false, cancel = false;
     {
         std::lock_guard lock(mutex_);
-        if (core_client_ < 0) core_client_ = api.create_client(asset_->asset_name(), service_name_, client_name_);
         if (request_queued_) {
             request = outbox_;
             request_queued_ = false;
@@ -102,7 +118,6 @@ void ShmRpcClientEndpoint::asset_step(CoreProServiceApi& api)
             cancel = true;
         }
     }
-    if (core_client_ < 0) return;
     if (send) api.call(core_client_, request);
     if (cancel) api.cancel(core_client_);
     const auto event = api.poll(core_client_);
@@ -118,8 +133,41 @@ void ShmRpcClientEndpoint::asset_step(CoreProServiceApi& api)
     if (header.result_code == HAKO_SERVICE_RESULT_CODE_BUSY || header.status == HAKO_SERVICE_STATUS_DOING) return;
     std::lock_guard lock(mutex_);
     if (in_flight_) {
+        header.request_id = active_request_id_;
+        hako::pdu::PduConvertor<
+            HakoCpp_ServiceResponseHeader,
+            hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader> {}.cpp2pdu(
+            header, reinterpret_cast<char*>(reply.data()), reply.size());
         inbox_ = std::move(reply);
         response_ready_ = true;
     }
+}
+bool ShmRpcClientEndpoint::asset_started(CoreProServiceApi& api)
+{
+    std::lock_guard lock(mutex_);
+    core_client_ = api.create_client(asset_->asset_name(), service_name_, client_name_);
+    return core_client_ >= 0;
+}
+void ShmRpcClientEndpoint::asset_stopped()
+{
+    std::lock_guard lock(mutex_);
+    if (!in_flight_) return;
+    HakoCpp_ServiceResponseHeader header{};
+    header.request_id = active_request_id_;
+    header.service_name = service_name_;
+    header.client_name = client_name_;
+    header.status = HAKO_SERVICE_STATUS_DONE;
+    header.result_code = HAKO_SERVICE_RESULT_CODE_ERROR;
+    inbox_.resize(512);
+    const int size = hako::pdu::PduConvertor<
+        HakoCpp_ServiceResponseHeader,
+        hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader> {}.cpp2pdu(
+        header, reinterpret_cast<char*>(inbox_.data()), inbox_.size());
+    if (size < 0) {
+        inbox_.clear();
+        return;
+    }
+    inbox_.resize(static_cast<std::size_t>(size));
+    response_ready_ = true;
 }
 } // namespace hakoniwa::pdu::rpc

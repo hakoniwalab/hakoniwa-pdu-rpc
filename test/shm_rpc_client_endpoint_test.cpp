@@ -22,16 +22,41 @@ namespace
 class FakeCore final : public CoreProServiceApi
 {
 public:
-    bool start_asset(const std::string&, const std::string&, uint64_t) override
+    bool initialize_asset(const std::string&, const std::string&, const std::string&) override
     {
+        started_ = true;
         notify();
         return true;
     }
 
+    CoreProAssetEvent asset_event(const std::string&) override
+    {
+        return started_.exchange(false) ? CoreProAssetEvent::start : CoreProAssetEvent::none;
+    }
+
+    bool pdu_created() override
+    {
+        pdu_checks++;
+        notify();
+        return true;
+    }
+
+    bool start_feedback(const std::string&) override { return true; }
+    bool stop_feedback(const std::string&) override { return true; }
+    bool reset_feedback(const std::string&) override { return true; }
+    bool running() override { return true; }
+    void advance_time(const std::string&, uint64_t) override
+    {
+        steps++;
+        notify();
+    }
+
     int create_client(const std::string&, const std::string&, const std::string&) override
     {
+        create_calls++;
+        create_saw_pdu_check = pdu_checks > 0;
         notify();
-        return 0;
+        return create_result;
     }
 
     bool call(int, const std::vector<uint8_t>&) override
@@ -61,13 +86,6 @@ public:
     {
         std::lock_guard lock(mutex_);
         out = reply_;
-        return true;
-    }
-
-    bool step(uint64_t) override
-    {
-        steps++;
-        notify();
         return true;
     }
 
@@ -101,6 +119,10 @@ public:
     std::atomic<int> calls{0};
     std::atomic<int> cancels{0};
     std::atomic<int> steps{0};
+    std::atomic<int> pdu_checks{0};
+    std::atomic<int> create_calls{0};
+    std::atomic<int> create_result{0};
+    std::atomic<bool> create_saw_pdu_check{false};
 
 private:
     void notify()
@@ -111,6 +133,7 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable condition_;
     std::atomic<CoreProClientEvent> event_{CoreProClientEvent::none};
+    std::atomic<bool> started_{false};
     std::thread::id call_thread_{};
     std::vector<uint8_t> reply_;
 };
@@ -139,7 +162,7 @@ protected:
     void SetUp() override
     {
         fake_ = std::make_shared<FakeCore>();
-        asset_ = std::make_shared<ShmRpcAsset>("asset", "config", 1, fake_);
+        asset_ = std::make_shared<ShmRpcAsset>("asset", "core", "config", 1, fake_);
         endpoint_ = std::make_shared<ShmRpcClientEndpoint>("svc", "client", 1, asset_);
         ASSERT_TRUE(endpoint_->initialize(nlohmann::json{{"name", "svc"}}, 0));
     }
@@ -166,6 +189,7 @@ protected:
 
 TEST_F(ShmEndpointTest, ReplyOk)
 {
+    wait_for([this] { return fake_->create_saw_pdu_check.load(); });
     ASSERT_TRUE(endpoint_->call({1}, 0));
     wait_for([this] { return fake_->calls == 1; });
     send_reply(HAKO_SERVICE_RESULT_CODE_OK);
@@ -213,13 +237,21 @@ TEST_F(ShmEndpointTest, TimeoutThenCancel)
 
     RpcResponse response;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
-    while (endpoint_->poll(response) != ClientEventType::RESPONSE_TIMEOUT &&
+    ClientEventType event = ClientEventType::NONE;
+    while ((event = endpoint_->poll(response)) != ClientEventType::RESPONSE_TIMEOUT &&
             std::chrono::steady_clock::now() < deadline) {
         std::this_thread::yield();
     }
-    EXPECT_EQ(endpoint_->poll(response), ClientEventType::RESPONSE_TIMEOUT);
+    EXPECT_EQ(event, ClientEventType::RESPONSE_TIMEOUT);
+    EXPECT_EQ(endpoint_->poll(response), ClientEventType::NONE);
     ASSERT_TRUE(endpoint_->send_cancel_request());
     wait_for([this] { return fake_->cancels == 1; });
+    fake_->set_response(
+        CoreProClientEvent::cancel_done,
+        response_pdu(HAKO_SERVICE_RESULT_CODE_CANCELED));
+    wait_for([this, &response] {
+        return endpoint_->poll(response) == ClientEventType::RESPONSE_CANCEL;
+    });
 }
 
 TEST_F(ShmEndpointTest, SecondCallRefusedBeforeCorePro)
@@ -264,6 +296,23 @@ TEST_F(ShmEndpointTest, DoingNoticeDoesNotFinish)
     RpcResponse response;
     EXPECT_EQ(endpoint_->poll(response), ClientEventType::NONE);
 }
+
+TEST(ShmAssetStartTest, CreateFailureIsFatalAndNotRetried)
+{
+    auto fake = std::make_shared<FakeCore>();
+    fake->create_result = -1;
+    auto asset = std::make_shared<ShmRpcAsset>("asset", "core", "config", 1, fake);
+    auto endpoint = std::make_shared<ShmRpcClientEndpoint>("svc", "client", 1, asset);
+
+    ASSERT_TRUE(endpoint->initialize(nlohmann::json{{"name", "svc"}}, 0));
+    ASSERT_TRUE(fake->wait_for([&fake] { return fake->create_calls == 1; }));
+    asset->stop();
+
+    EXPECT_EQ(fake->pdu_checks.load(), 1);
+    EXPECT_TRUE(fake->create_saw_pdu_check.load());
+    EXPECT_EQ(fake->create_calls.load(), 1);
+    EXPECT_EQ(fake->steps.load(), 0);
+}
 #endif
 
 TEST(ShmDisabledRefusesProtocol, ShmDisabledRefusesProtocol)
@@ -272,7 +321,7 @@ TEST(ShmDisabledRefusesProtocol, ShmDisabledRefusesProtocol)
     GTEST_SKIP() << "This refusal is specific to an OFF build.";
 #else
     auto fake = std::make_shared<FakeCore>();
-    auto asset = std::make_shared<ShmRpcAsset>("asset", "config", 1, fake);
+    auto asset = std::make_shared<ShmRpcAsset>("asset", "core", "config", 1, fake);
     auto endpoint = std::make_shared<ShmRpcClientEndpoint>("svc", "client", 1, asset);
     EXPECT_FALSE(endpoint->initialize(nlohmann::json{{"name", "svc"}}, 0));
 #endif

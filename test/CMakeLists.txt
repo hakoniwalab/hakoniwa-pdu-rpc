@@ -33,6 +33,52 @@ endif()
 add_test(NAME hakoniwa_pdu_shm_rpc_client_test COMMAND hakoniwa_pdu_shm_rpc_client_test)
 set_tests_properties(hakoniwa_pdu_shm_rpc_client_test PROPERTIES TIMEOUT 30)
 
+if(HAKO_PDU_RPC_ENABLE_SHM AND UNIX)
+  find_package(Threads REQUIRED)
+  get_target_property(_hako_shakoc_location hakoniwa-core::shakoc IMPORTED_LOCATION_NOCONFIG)
+  get_filename_component(_hako_core_libdir "${_hako_shakoc_location}" DIRECTORY)
+  get_filename_component(_hako_core_prefix "${_hako_core_libdir}" DIRECTORY)
+
+  add_executable(hakoniwa_pdu_shm_integration_conductor shm_integration_conductor.cpp)
+  target_link_libraries(hakoniwa_pdu_shm_integration_conductor PRIVATE hakoniwa-core::conductor Threads::Threads)
+
+  add_executable(hakoniwa_pdu_shm_integration_server shm_integration_server.cpp)
+  target_link_libraries(hakoniwa_pdu_shm_integration_server PRIVATE hakoniwa-core::shakoc Threads::Threads)
+
+  add_executable(hakoniwa_pdu_shm_integration_client shm_integration_client.cpp)
+  target_link_libraries(hakoniwa_pdu_shm_integration_client PRIVATE
+    ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY}
+    hakoniwa-core::shakoc
+    Threads::Threads)
+
+  add_executable(hakoniwa_pdu_shm_integration_direct_client shm_integration_direct_client.cpp)
+  target_link_libraries(hakoniwa_pdu_shm_integration_direct_client PRIVATE hakoniwa-core::shakoc Threads::Threads)
+
+  function(hako_add_shm_core_pro_test name scenario timeout)
+    add_test(NAME ${name}
+      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/shm_core_pro_integration.bash
+        $<TARGET_FILE:hakoniwa_pdu_shm_integration_conductor>
+        $<TARGET_FILE:hakoniwa_pdu_shm_integration_server>
+        $<TARGET_FILE:hakoniwa_pdu_shm_integration_client>
+        $<TARGET_FILE:hakoniwa_pdu_shm_integration_direct_client>
+        ${_hako_core_prefix}
+        ${scenario})
+    set_tests_properties(${name} PROPERTIES
+      TIMEOUT ${timeout}
+      RUN_SERIAL TRUE
+      LABELS "integration;shm")
+  endfunction()
+
+  hako_add_shm_core_pro_test(hakoniwa_pdu_shm_core_pro_ok ok 90)
+  hako_add_shm_core_pro_test(hakoniwa_pdu_shm_core_pro_s2a_compare compare 120)
+  hako_add_shm_core_pro_test(hakoniwa_pdu_shm_core_pro_s2b_500_calls calls500 180)
+  hako_add_shm_core_pro_test(hakoniwa_pdu_shm_core_pro_s2c_busy busy 120)
+  hako_add_shm_core_pro_test(hakoniwa_pdu_shm_core_pro_s2d_timeout_cancel timeout 120)
+  hako_add_shm_core_pro_test(hakoniwa_pdu_shm_core_pro_s2e_time_advance time 120)
+  hako_add_shm_core_pro_test(hakoniwa_pdu_shm_core_pro_s2f_shared_asset multi 120)
+  hako_add_shm_core_pro_test(hakoniwa_pdu_shm_core_pro_s2g_restart restart 150)
+endif()
+
 function(hako_pdu_rpc_stage_windows_test_dlls target)
   if(NOT WIN32)
     return()

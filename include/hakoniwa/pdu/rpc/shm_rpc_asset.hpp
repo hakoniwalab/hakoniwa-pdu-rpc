@@ -18,6 +18,7 @@ public:
     ShmRpcAsset(
         std::string asset_name,
         std::string core_config,
+        std::string service_config,
         uint64_t delta_usec,
         std::shared_ptr<CoreProServiceApi> api = make_core_pro_service_api());
     ~ShmRpcAsset();
@@ -35,6 +36,7 @@ private:
 
     std::string asset_name_;
     std::string core_config_;
+    std::string service_config_;
     uint64_t delta_usec_;
     std::shared_ptr<CoreProServiceApi> api_;
     std::atomic<bool> running_{false};

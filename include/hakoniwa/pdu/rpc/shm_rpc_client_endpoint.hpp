@@ -27,6 +27,8 @@ private:
     friend class ShmRpcAsset;
 
     void asset_step(CoreProServiceApi& api);
+    bool asset_started(CoreProServiceApi& api);
+    void asset_stopped();
 
     std::shared_ptr<ShmRpcAsset> asset_;
     std::mutex mutex_; // one hand-off box: copied data only while held
@@ -36,6 +38,7 @@ private:
     bool cancel_queued_{false};
     bool in_flight_{false};
     bool response_ready_{false};
+    bool timeout_reported_{false};
     int core_client_{-1};
     uint64_t next_request_id_{0};
     uint64_t active_request_id_{0};
