@@ -117,11 +117,18 @@ An SHM endpoint is configured like the others; its comm file says `"protocol":
 - `coreConfig`: core-pro's configuration (if not taken from the environment,
   e.g. `HAKO_CONFIG_PATH`).
 
-Service definitions (names, types, `maxClients`, `pduSize`) come from the RPC
-definition file as today (section 6). Their shape matches core-pro's
-`service.json` (`name`, `type`, `maxClients`, `pduSize.server/client.baseSize/heapSize`).
-Whether core-pro's `service.json` can be generated from, or replaced by, the
-same file is open point O1.
+**One RPC definition file** (decided 2026-11-26). core-pro's service loader
+(`hako_pro_data_service.cpp`) reads only `pduMetaDataSize` and
+`services[].name / type / maxClients / pduSize` and ignores every other key, so
+the PDU-RPC RPC definition file is a superset of core-pro's `service.json`. The
+SHM endpoints pass the same file they loaded to `hako_asset_service_initialize`;
+no separate core-pro service file is needed. Robot Runtime's
+`tools/gen_rpc_service_config.py` can emit the PDU-RPC file by adding the wiring
+(`server_endpoints`, `clients`).
+
+`maxClients` means the number of client channel pairs core-pro creates. With a
+bridge, core-pro sees the bridge as one client: wire each bridged service so
+that the bridge's shm client endpoint is the service's core-pro client.
 
 ## 6. RPC bridge (wired by the RPC definition file)
 
@@ -150,7 +157,12 @@ once in `clients[].client_endpoint` (where it calls the real server):
 
 `tcp-from-docker` is a tcp endpoint, `shm-to-core` an shm endpoint; swapping
 them gives the reverse direction. The bridge itself knows no protocol and no
-time; it only applies the forwarding rules:
+time. Unlike hakoniwa-pdu-bridge-core, whose transfer policies (ticker,
+throttle) are timed and therefore need a time source (Hakoniwa time or real
+time), the RPC bridge is event-driven: a request, reply or cancel arrives and is
+forwarded. Every clock stays inside an endpoint (tcp: the existing
+`ITimeSource`; shm: the asset thread's Hakoniwa time); the bridge's poll loop
+only paces itself. It applies the forwarding rules:
 
 | Rule | Bridge behaviour |
 |---|---|
@@ -158,7 +170,7 @@ time; it only applies the forwarding rules:
 | Request identity | the bridge keeps the mapping from the incoming request to the outgoing one and sends the reply back to the right caller |
 | Cancel | a cancel received on the server side is forwarded; the cancel result goes back as DONE / CANCELED |
 | One outstanding request per client | a second request while one is in progress is answered BUSY on the server side, not forwarded |
-| Timeouts | owned by the original caller; the bridge adds none |
+| Timeouts | owned by the original caller, in the caller's clock (real time for ROS). The bridge **never times out on its own** and forwards requests to the other side **with no deadline**; passing the caller's timeout on would mix clocks (a real-time 2 s would become 2 s of Hakoniwa time on the shm side). When the caller times out it sends a cancel, which the bridge forwards |
 | Interim replies (BUSY, progress) | never end a request (hakoniwa-core-pro#123) |
 
 ## 7. Message mapping
@@ -175,14 +187,22 @@ hakoniwa-pdu-registry revision.
 
 | # | Question |
 |---|---|
-| O1 | Can core-pro's `service.json` be generated from (or replaced by) the RPC definition file? Today Robot Runtime generates it with `tools/gen_rpc_service_config.py` |
-| O2 | The bridge executable's name and launch (one process per RPC definition file), and how it is started next to hakoniwa-pdu-bridge-core (topics) by the launcher |
 | O3 | Progress (`get_progress`) and actions over SHM |
 
-Decided on 2026-11-26 (rev. 2): asset thread = `hako_asset_usleep` loop;
-core-pro linked dynamically by a build option (no `dlopen`); the bridge is a
-generic RPC bridge in hakoniwa-pdu-rpc wired by the RPC definition file, not a
-part of hakoniwa-pdu-bridge-core (its topic transfer policies do not fit RPC).
+Decided on 2026-11-26:
+
+- Asset thread = `hako_asset_usleep` loop; core-pro linked dynamically by a build
+  option (no `dlopen`).
+- The bridge is a generic RPC bridge in hakoniwa-pdu-rpc wired by the RPC
+  definition file, not a part of hakoniwa-pdu-bridge-core (its topic transfer
+  policies do not fit RPC).
+- (O1) One RPC definition file for PDU-RPC and core-pro (section 5).
+- (O2) The bridge executable is **`rpc-bridge`** in hakoniwa-pdu-rpc, started as
+  `rpc-bridge --rpc-config <RPC definition file> --node <bridge node id>`. It
+  pairs, per service, the endpoint where that node is a server with the one where
+  it is a client. One process per definition file; the launcher starts it next to
+  hakoniwa-pdu-bridge-core (topics) with one more asset entry.
+- The bridge has no time of its own and never times out (section 6).
 
 ## 9. Stages
 
