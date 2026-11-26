@@ -11,7 +11,12 @@ ShmRpcClientEndpoint::ShmRpcClientEndpoint(const std::string& service, const std
         std::shared_ptr<ShmRpcAsset> asset)
     : IRpcClientEndpoint(service, client, delta), asset_(std::move(asset)) {}
 
-bool ShmRpcClientEndpoint::initialize(const nlohmann::json& config, int)
+bool ShmRpcClientEndpoint::initialize(const nlohmann::json& config, int metadata_size)
+{
+    return initialize_without_start(config, metadata_size) && asset_->start();
+}
+
+bool ShmRpcClientEndpoint::initialize_without_start(const nlohmann::json& config, int)
 {
 #ifndef HAKO_PDU_RPC_ENABLE_SHM
     (void)config;
@@ -28,7 +33,7 @@ bool ShmRpcClientEndpoint::initialize(const nlohmann::json& config, int)
         response_packet_size_ = HAKO_PDU_META_DATA_SIZE() + HAKO_ALIGN_SIZE(base_size, HAKO_ALIGNMENT_SIZE);
     }
     asset_->add_client(shared_from_this());
-    return asset_->start();
+    return true;
 #endif
 }
 bool ShmRpcClientEndpoint::call(const PduData& pdu, uint64_t timeout)

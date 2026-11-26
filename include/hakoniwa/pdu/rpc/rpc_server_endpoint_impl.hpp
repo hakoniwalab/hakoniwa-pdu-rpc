@@ -95,6 +95,9 @@ private:
     static std::vector<std::shared_ptr<RpcServerEndpointImpl>> instances_;
 
 
+    void reject_request(HakoCpp_ServiceRequestHeader header, Hako_int32 result_code);
+    void send_pdu(const std::string& client_name, const PduData& pdu);
+
     bool validate_header(HakoCpp_ServiceRequestHeader& header);
     bool ensure_dynamic_client(const std::string& client_name);
     ServerEventType handle_request_in(RpcRequest& request);

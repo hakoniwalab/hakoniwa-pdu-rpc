@@ -115,3 +115,10 @@ install(
     PATTERN "*.h"
     PATTERN "*.hpp"
 )
+
+if(HAKO_PDU_RPC_ENABLE_SHM)
+  find_package(Threads REQUIRED)
+  add_executable(rpc-bridge rpc_bridge_main.cpp rpc_bridge.cpp)
+  target_link_libraries(rpc-bridge PRIVATE hakoniwa_pdu_rpc::rpc Threads::Threads)
+  install(TARGETS rpc-bridge RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+endif()

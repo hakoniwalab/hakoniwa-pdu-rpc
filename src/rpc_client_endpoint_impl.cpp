@@ -147,10 +147,14 @@ bool RpcClientEndpointImpl::call(const PduData& pdu, uint64_t timeout_usec) {
         std::cerr << "ERROR: Client is busy" << std::endl;
         return false;
     }
+    if (timeout_usec > 0 && !time_source_) {
+        std::cerr << "ERROR: A time source is required for an RPC timeout" << std::endl;
+        return false;
+    }
     client_state_.state = CLIENT_STATE_RUNNING;
     client_state_.request_id = this->current_request_id_;
     this->current_timeout_usec_ = timeout_usec;
-    this->request_start_time_usec_ = time_source_->get_microseconds();
+    this->request_start_time_usec_ = timeout_usec > 0 ? time_source_->get_microseconds() : 0;
 
     // Check if send_request fails
     if (!send_request(pdu)) {
@@ -234,6 +238,10 @@ ClientEventType RpcClientEndpointImpl::handle_response_in(RpcResponse& response)
         return ClientEventType::NONE; // Or a dedicated error event
     }
     
+    if (is_interim_response(response.header.status, response.header.result_code)) {
+        return ClientEventType::NONE;
+    }
+
     switch (response.header.result_code) {
         case HAKO_SERVICE_RESULT_CODE_CANCELED:
             return handle_cancel_response(response);

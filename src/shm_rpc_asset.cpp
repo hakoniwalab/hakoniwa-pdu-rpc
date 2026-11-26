@@ -22,25 +22,31 @@ bool ShmRpcAsset::enabled() const
 }
 bool ShmRpcAsset::start()
 {
-    if (!api_ || running_.exchange(true)) return static_cast<bool>(api_);
-    thread_ = std::thread(&ShmRpcAsset::run, this);
-    return true;
+    if (!api_) return false;
+    if (thread_.joinable()) return running_;
+    std::promise<bool> initialized;
+    auto ready = initialized.get_future();
+    running_ = true;
+    thread_ = std::thread(&ShmRpcAsset::run, this, std::move(initialized));
+    if (ready.get()) return true;
+    stop();
+    return false;
 }
 void ShmRpcAsset::stop()
 {
-    if (running_.exchange(false) && thread_.joinable()) thread_.join();
+    running_ = false;
+    if (thread_.joinable()) thread_.join();
 }
 void ShmRpcAsset::add_client(const std::shared_ptr<ShmRpcClientEndpoint>& client)
 {
     std::lock_guard lock(clients_mutex_);
     clients_.push_back(client);
 }
-void ShmRpcAsset::run()
+void ShmRpcAsset::run(std::promise<bool> initialized)
 {
-    if (!api_->initialize_asset(asset_name_, core_config_, service_config_)) {
-        running_ = false;
-        return;
-    }
+    const bool registered = api_->initialize_asset(asset_name_, core_config_, service_config_);
+    initialized.set_value(registered);
+    if (!registered) return;
     while (running_) {
         const auto event = api_->asset_event(asset_name_);
         if (event == CoreProAssetEvent::error) break;
@@ -68,5 +74,6 @@ void ShmRpcAsset::run()
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     api_->stop_asset();
+    running_ = false;
 }
 } // namespace hakoniwa::pdu::rpc

@@ -33,6 +33,14 @@ endif()
 add_test(NAME hakoniwa_pdu_shm_rpc_client_test COMMAND hakoniwa_pdu_shm_rpc_client_test)
 set_tests_properties(hakoniwa_pdu_shm_rpc_client_test PROPERTIES TIMEOUT 30)
 
+if(HAKO_PDU_RPC_ENABLE_SHM)
+  add_executable(hakoniwa_pdu_rpc_bridge_test rpc_bridge_test.cpp ../src/rpc_bridge.cpp)
+  target_include_directories(hakoniwa_pdu_rpc_bridge_test PRIVATE ../src)
+  target_link_libraries(hakoniwa_pdu_rpc_bridge_test PRIVATE
+    ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+  add_test(NAME hakoniwa_pdu_rpc_bridge_test COMMAND hakoniwa_pdu_rpc_bridge_test)
+endif()
+
 if(HAKO_PDU_RPC_ENABLE_SHM AND UNIX)
   find_package(Threads REQUIRED)
 

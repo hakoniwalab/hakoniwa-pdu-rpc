@@ -4,7 +4,6 @@
 #include <iostream>
 #include <cstring>
 #include <algorithm>
-#include <algorithm>
 
 namespace hakoniwa::pdu::rpc {
 
@@ -189,13 +188,13 @@ ServerEventType RpcServerEndpointImpl::poll(RpcRequest& request)
     if (!validate_header(request.header)) {
         std::cerr << "ERROR: Invalid request header received and ignored" << std::endl;
         //ignore invalid request
-        send_error_reply(request.header, HAKO_SERVICE_RESULT_CODE_ERROR);
+        reject_request(request.header, HAKO_SERVICE_RESULT_CODE_ERROR);
         return ServerEventType::NONE;
     }
     // Check if client_name exists in server_states_ before accessing
     if (server_states_.count(request.header.client_name) == 0) {
         std::cerr << "ERROR: Unknown client_name in request header: " << request.header.client_name << std::endl;
-        send_error_reply(request.header, HAKO_SERVICE_RESULT_CODE_INVALID);
+        reject_request(request.header, HAKO_SERVICE_RESULT_CODE_INVALID);
         return ServerEventType::NONE;
     }
 
@@ -206,6 +205,34 @@ ServerEventType RpcServerEndpointImpl::poll(RpcRequest& request)
     else { // REQUEST
         //std::cout << "INFO: Received request for client: " << request.header.client_name << std::endl;
         return handle_request_in(request);
+    }
+}
+
+void RpcServerEndpointImpl::reject_request(
+    HakoCpp_ServiceRequestHeader header, Hako_int32 result_code)
+{
+    const auto client = server_states_.find(header.client_name);
+    if (client == server_states_.end()) return;
+
+    header.service_name = service_name_;
+    auto status = HAKO_SERVICE_STATUS_ERROR;
+    if (result_code == HAKO_SERVICE_RESULT_CODE_BUSY) {
+        status = client->second.state == SERVER_STATE_CANCELLING
+            ? HAKO_SERVICE_STATUS_CANCELING : HAKO_SERVICE_STATUS_DOING;
+    }
+    PduData pdu;
+    create_reply_buffer(header, status, result_code, pdu);
+    send_pdu(header.client_name, pdu);
+}
+
+void RpcServerEndpointImpl::send_pdu(const std::string& client_name, const PduData& pdu)
+{
+    const PduKey key{service_name_, client_name + "Res"};
+    std::span<const std::byte> data(reinterpret_cast<const std::byte*>(pdu.data()), pdu.size());
+    const auto error = endpoint_->send(key, data);
+    if (error != HAKO_PDU_ERR_OK) {
+        std::cerr << "ERROR: Failed to send reply to client_name: " << client_name
+                  << ", error: " << static_cast<int>(error) << std::endl;
     }
 }
 
@@ -221,19 +248,20 @@ void RpcServerEndpointImpl::send_reply(std::string client_name, const PduData& p
         return;
     }
     
-    server_states_[client_name].state = ServerState::SERVER_STATE_IDLE;
-    server_states_[client_name].request_id = 0;
-    //std::cout << "INFO: Reset state to IDLE for client: " << client_name << std::endl;
-
-    hakoniwa::pdu::PduKey pdu_key = {service_name_, client_name + "Res"};
-    std::span<const std::byte> data(reinterpret_cast<const std::byte*>(pdu.data()), pdu.size());
-    auto error = endpoint_->send(pdu_key,  data);
-    if (error != HAKO_PDU_ERR_OK) {
-        std::cerr << "ERROR: Failed to send reply to client_name: " << client_name << ", error: " << static_cast<int>(error) << std::endl;
+    bool interim = false;
+    if (pdu.size() >= HAKO_PDU_META_DATA_SIZE() + sizeof(Hako_ServiceResponseHeader)) {
+        HakoPduMetaDataType metadata{};
+        std::memcpy(&metadata, pdu.data(), sizeof(metadata));
+        if (metadata.base_off <= pdu.size() - sizeof(Hako_ServiceResponseHeader)) {
+            Hako_ServiceResponseHeader header{};
+            std::memcpy(&header, pdu.data() + metadata.base_off, sizeof(header));
+            interim = is_interim_response(header.status, header.result_code);
+        }
     }
-    else {
-        //std::cout << "INFO: Sent reply to client_name: " << client_name << std::endl;
+    if (!interim) {
+        server_states_[client_name] = {0, SERVER_STATE_IDLE};
     }
+    send_pdu(client_name, pdu);
 }
 
 void RpcServerEndpointImpl::send_cancel_reply(std::string client_name, const PduData& pdu) {
@@ -253,12 +281,7 @@ void RpcServerEndpointImpl::send_cancel_reply(std::string client_name, const Pdu
     server_states_[client_name].request_id = 0;
     std::cout << "INFO: Reset state to IDLE for client: " << client_name << " after cancellation" << std::endl;
 
-    hakoniwa::pdu::PduKey pdu_key = {service_name_, client_name + "Res"};
-    std::span<const std::byte> data(reinterpret_cast<const std::byte*>(pdu.data()), pdu.size());
-    auto error = endpoint_->send(pdu_key,  data);
-    if (error != HAKO_PDU_ERR_OK) {
-        std::cerr << "ERROR: Failed to send reply to client_name: " << client_name << ", error: " << static_cast<int>(error) << std::endl;
-    }
+    send_pdu(client_name, pdu);
     std::cout << "INFO: Sent cancel reply to client_name: " << client_name << std::endl;
 }
 
@@ -334,12 +357,12 @@ ServerEventType RpcServerEndpointImpl::handle_request_in(RpcRequest& request) {
     }
     else if (server_states_[request.header.client_name].state == ServerState::SERVER_STATE_RUNNING) {
         std::cerr << "WARNING: Received request while previous request is still running for client: " << request.header.client_name << std::endl;
-        send_error_reply(request.header, HAKO_SERVICE_RESULT_CODE_BUSY);
+        reject_request(request.header, HAKO_SERVICE_RESULT_CODE_BUSY);
         return ServerEventType::NONE;
     }
     else { // CANCELING
         std::cerr << "WARNING: Received request while previous request is cancelling for client: " << request.header.client_name << std::endl;
-        send_error_reply(request.header, HAKO_SERVICE_RESULT_CODE_BUSY);
+        reject_request(request.header, HAKO_SERVICE_RESULT_CODE_BUSY);
         return ServerEventType::NONE;
     }
 }
@@ -349,7 +372,7 @@ ServerEventType RpcServerEndpointImpl::handle_cancel_request(RpcRequest& request
         if (server_states_[request.header.client_name].request_id != request.header.request_id) {
             // Request ID does not match
             std::cerr << "WARNING: Received cancel request with mismatched request_id for client: " << request.header.client_name << std::endl;
-            send_error_reply(request.header, HAKO_SERVICE_RESULT_CODE_INVALID);
+            reject_request(request.header, HAKO_SERVICE_RESULT_CODE_INVALID);
             return ServerEventType::NONE;
         }
         server_states_[request.header.client_name].state = ServerState::SERVER_STATE_CANCELLING;
@@ -366,7 +389,7 @@ ServerEventType RpcServerEndpointImpl::handle_cancel_request(RpcRequest& request
         // Already cancelling
         //TODO reply busy reply
         std::cerr << "WARNING: Received cancel request while already cancelling for client: " << request.header.client_name << std::endl;
-        send_error_reply(request.header, HAKO_SERVICE_RESULT_CODE_BUSY);
+        reject_request(request.header, HAKO_SERVICE_RESULT_CODE_BUSY);
         return ServerEventType::NONE;
     }
 }
