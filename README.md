@@ -209,11 +209,15 @@ add_client = make_typed_client(
     service_type="AddTwoInts",
 )
 
-request = add_client.create_request()
-request.body.a = 5
-request.body.b = 7
-response = add_client.call(request, timeout_usec=1_000_000)
+request = add_client.create_request()   # the request body
+request.a = 5
+request.b = 7
+response = add_client.call(request, timeout_usec=1_000_000)   # the response body
+print(response.sum)
 ```
+
+`create_request()` returns the generated request **body** (not the packet), and
+`call()` returns the response body; packet headers are handled by PDU-RPC.
 
 The auto-wire layer owns packet conversion and normalizes generated converter output to Python `bytes`. Higher-level bridges should map only the service request/response body and leave packet headers, request IDs, timeout, and cancellation lifecycle to PDU-RPC.
 
