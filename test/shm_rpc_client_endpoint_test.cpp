@@ -1,5 +1,7 @@
 #include "hakoniwa/pdu/rpc/rpc_services_client.hpp"
 #include "hakoniwa/pdu/rpc/shm_rpc_client_endpoint.hpp"
+#include "hakoniwa/pdu/rpc/c_rpc.h"
+#include "hakoniwa/pdu/rpc/rpc_services_server.hpp"
 #include "pdu_convertor.hpp"
 
 #include <gtest/gtest.h>
@@ -367,6 +369,39 @@ void write_json(const std::filesystem::path& path, const nlohmann::json& value)
     output << value.dump(2);
 }
 
+std::string write_shm_server_config(const TemporaryConfigDirectory& directory)
+{
+    const auto config = (directory.path() / "services.json").string();
+    write_json(config, {{"services", {{{"name", "svc"}, {"server_endpoints", {
+        {{"nodeId", "node"}, {"endpointId", "ep"}, {"protocol", "shm"}}
+    }}}}}});
+    return config;
+}
+
+TEST(ShmConfigSelection, CServerRejectsShmBeforeReadingEndpointConfig)
+{
+    TemporaryConfigDirectory directory;
+    const auto config = write_shm_server_config(directory);
+    testing::internal::CaptureStderr();
+    auto* server = hako_pdu_rpc_server_create("node", config.c_str(), nullptr, 1000, "real");
+    const auto error = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(server, nullptr);
+    hako_pdu_rpc_server_destroy(server);
+    EXPECT_NE(error.find("SHM RPC server is not supported"), std::string::npos);
+}
+
+TEST(ShmConfigSelection, CxxServerRejectsShmBeforeUsingEndpointContainer)
+{
+    TemporaryConfigDirectory directory;
+    auto endpoints = std::make_shared<hakoniwa::pdu::EndpointContainer>("node", "");
+    RpcServicesServer server("node", "RpcServerEndpointImpl", write_shm_server_config(directory), 1000);
+    testing::internal::CaptureStderr();
+    const auto initialized = server.initialize_services(endpoints);
+    const auto error = testing::internal::GetCapturedStderr();
+    EXPECT_FALSE(initialized);
+    EXPECT_NE(error.find("SHM RPC server is not supported"), std::string::npos);
+}
+
 TEST(ShmConfigSelection, SelectsShmEndpointOrRefusesWhenDisabled)
 {
     TemporaryConfigDirectory directory;
@@ -376,7 +411,13 @@ TEST(ShmConfigSelection, SelectsShmEndpointOrRefusesWhenDisabled)
             "services", {{{"name", "svc"},
                     {
                         "clients", {{{"name", "client"},
-                                {"client_endpoint", {{"nodeId", "node"}, {"endpointId", "ep"}}}
+                                {"client_endpoint", {
+                                    {"nodeId", "node"},
+                                    {"protocol", "shm"},
+                                    {"assetName", "asset"},
+                                    {"coreConfig", "core.json"},
+                                    {"deltaTimeUsec", 1},
+                                }}
                             }
                         }
                     }
@@ -384,19 +425,6 @@ TEST(ShmConfigSelection, SelectsShmEndpointOrRefusesWhenDisabled)
             }
         },
     });
-    write_json(directory.path() / "endpoints.json", {{{"nodeId", "node"}, {
-                "endpoints", {{{"id", "ep"}, {"config_path", "endpoint.json"}}}
-            }
-        }
-    });
-    write_json(directory.path() / "endpoint.json", {{"comm", "comm.json"}});
-    write_json(directory.path() / "comm.json", {
-        {"protocol", "shm"},
-        {"assetName", "asset"},
-        {"coreConfig", "core.json"},
-        {"deltaTimeUsec", 1},
-    });
-
     auto fake = std::make_shared<FakeCore>();
     RpcServicesClient client(
         "node",

@@ -47,7 +47,19 @@ configured PDU transport
 hakoniwa_pdu_endpoint::hakoniwa_pdu_endpoint
 ```
 
-The RPC package itself does not require a direct dependency on Hakoniwa Core. Whether a particular endpoint configuration needs additional runtime components is an Endpoint concern.
+RPC clients built with `-DHAKO_PDU_RPC_ENABLE_SHM=ON` also support direct calls to core-pro services. Put the SHM settings in the client's `client_endpoint` entry in the RPC service definition that core-pro loads.
+
+```json
+{
+  "nodeId": "client_node",
+  "protocol": "shm",
+  "assetName": "CarRpcClient",
+  "deltaTimeUsec": 1000,
+  "coreConfig": "/path/to/cpp_core_config.json"
+}
+```
+
+The SHM client uses the polling API. Omit `coreConfig` to use core-pro's environment or default configuration. In a SHM-only client, pass a null or empty Endpoint config path in C, omit it in Python, or call `initialize_services(nullptr)` in C++. For a client using SHM and TCP, list the TCP endpoints in the Endpoint config. Server-side SHM is planned for S5.
 
 ## RPC Lifecycle Contract
 

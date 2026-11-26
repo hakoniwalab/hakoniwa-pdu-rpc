@@ -10,66 +10,16 @@
 namespace hakoniwa::pdu::rpc {
 
 
-// Constructor: takes client_name as a specific identity for this client instance
-namespace {
-
-std::optional<nlohmann::json> load_shm_comm_config(
-    const std::string& endpoint_config_path,
-    const std::string& node_id,
-    const std::string& endpoint_id)
-{
-    if (endpoint_config_path.empty()) {
-        return std::nullopt;
-    }
-
-    std::ifstream endpoints_file(endpoint_config_path);
-    nlohmann::json endpoints;
-    if (!endpoints_file.is_open() || !(endpoints_file >> endpoints)) {
-        return std::nullopt;
-    }
-
-    const fs::path endpoints_base = fs::path(endpoint_config_path).parent_path();
-    for (const auto& node : endpoints) {
-        if (node.value("nodeId", "") != node_id) {
-            continue;
-        }
-        for (const auto& endpoint : node.value("endpoints", nlohmann::json::array())) {
-            if (endpoint.value("id", "") != endpoint_id) {
-                continue;
-            }
-            const fs::path endpoint_path = endpoints_base / endpoint.value("config_path", "");
-            std::ifstream endpoint_file(endpoint_path);
-            nlohmann::json endpoint_config;
-            if (!endpoint_file.is_open() || !(endpoint_file >> endpoint_config)) {
-                return std::nullopt;
-            }
-            const fs::path comm_path = endpoint_path.parent_path() / endpoint_config.value("comm", "");
-            std::ifstream comm_file(comm_path);
-            nlohmann::json comm_config;
-            if (!comm_file.is_open() || !(comm_file >> comm_config)) {
-                return std::nullopt;
-            }
-            if (comm_config.value("protocol", "") == "shm") {
-                return comm_config;
-            }
-            return std::nullopt;
-        }
-    }
-    return std::nullopt;
-}
-
-} // namespace
-
 RpcServicesClient::RpcServicesClient(const std::string& node_id, const std::string& client_name,
     const std::string& config_path, const std::string& impl_type,
     uint64_t delta_time_usec, std::string time_source_type,
     std::string endpoint_config_path, std::shared_ptr<CoreProServiceApi> shm_api)
     : node_id_(node_id), client_name_(client_name), config_path_(config_path),
-      impl_type_(impl_type), endpoint_config_path_(std::move(endpoint_config_path)),
+      impl_type_(impl_type), time_source_type_(std::move(time_source_type)),
+      endpoint_config_path_(std::move(endpoint_config_path)),
       delta_time_usec_(delta_time_usec), shm_api_(std::move(shm_api)) {
-        time_source_ = hakoniwa::time_source::create_time_source(time_source_type, delta_time_usec);
         #ifdef ENABLE_DEBUG_MESSAGES
-        std::cout << "DEBUG: node_id_: " << node_id_ << ", client_name_: " << client_name_ << ", config_path_: " << config_path_ << ", impl_type_: " << impl_type_ << ", delta_time_usec_: " << delta_time_usec_ << ", time_source_type: " << time_source_type << std::endl;
+        std::cout << "DEBUG: node_id_: " << node_id_ << ", client_name_: " << client_name_ << ", config_path_: " << config_path_ << ", impl_type_: " << impl_type_ << ", delta_time_usec_: " << delta_time_usec_ << ", time_source_type: " << time_source_type_ << std::endl;
         #endif
 }
 
@@ -80,7 +30,15 @@ RpcServicesClient::~RpcServicesClient() {
 }
 
 bool RpcServicesClient::initialize_services(std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container) {
-    this->endpoint_container_ = endpoint_container;
+    endpoint_container_ = std::move(endpoint_container);
+    return initialize_services_impl(false);
+}
+
+bool RpcServicesClient::initialize_services_with_endpoint_config() {
+    return initialize_services_impl(true);
+}
+
+bool RpcServicesClient::initialize_services_impl(bool create_endpoint_container) {
     fs::path file_path(this->config_path_);
     fs::path parent_abs = fs::absolute(file_path.parent_path());
     std::cout << "INFO: service_config_path parent: " << parent_abs << std::endl;
@@ -103,42 +61,29 @@ bool RpcServicesClient::initialize_services(std::shared_ptr<hakoniwa::pdu::Endpo
             std::string service_name = service_entry["name"];
             
             // Look for client-specific configuration for this service
-            bool client_config_found = false;
-            std::string client_ep_node_id;
-            std::string client_ep_id;
+            const nlohmann::json* client_endpoint = nullptr;
             
             for (const auto& client_spec : service_entry["clients"]) {
                 if (client_spec["name"] == this->client_name_) {
-                    client_ep_node_id = client_spec["client_endpoint"]["nodeId"];
-                    client_ep_id = client_spec["client_endpoint"]["endpointId"];
-                    #ifdef ENABLE_DEBUG_MESSAGES
-                    std::cout << "DEBUG: Found matching client config for service " << service_name << ": nodeId=" << client_ep_node_id << ", endpointId=" << client_ep_id << std::endl;
-                    #endif
-                    client_config_found = true;
+                    client_endpoint = &client_spec.at("client_endpoint");
                     break;
                 }
             }
 
-            if (!client_config_found) {
-                continue; 
-            }
-
-            if (client_ep_node_id != this->node_id_) {
+            if (!client_endpoint || client_endpoint->at("nodeId") != node_id_) {
                 continue;
             }
             std::cout << "INFO: Initializing RPC client for service: " << service_name << " on node " << this->node_id_ << std::endl;
             std::shared_ptr<IRpcClientEndpoint> rpc_client_endpoint;
-            const auto shm_config = load_shm_comm_config(
-                endpoint_config_path_, client_ep_node_id, client_ep_id);
-            if (shm_config) {
+            if (client_endpoint->value("protocol", "") == "shm") {
+                const auto asset_name = client_endpoint->value("assetName", std::string{});
+                const auto core_config = client_endpoint->value("coreConfig", std::string{});
+                const auto delta = client_endpoint->value("deltaTimeUsec", delta_time_usec_);
+                if (asset_name.empty() || delta == 0) {
+                    std::cerr << "ERROR: protocol 'shm' requires assetName and a positive deltaTimeUsec" << std::endl;
+                    return false;
+                }
                 if (!shm_asset_) {
-                    const auto asset_name = shm_config->value("assetName", std::string{});
-                    const auto core_config = shm_config->value("coreConfig", std::string{});
-                    const auto delta = shm_config->value("deltaTimeUsec", delta_time_usec_);
-                    if (asset_name.empty() || core_config.empty() || delta == 0) {
-                        std::cerr << "ERROR: protocol 'shm' requires assetName, coreConfig, and deltaTimeUsec" << std::endl;
-                        return false;
-                    }
                     shm_asset_ = std::make_shared<ShmRpcAsset>(
                         asset_name, core_config, config_path_, delta,
                         shm_api_ ? shm_api_ : make_core_pro_service_api());
@@ -147,12 +92,25 @@ bool RpcServicesClient::initialize_services(std::shared_ptr<hakoniwa::pdu::Endpo
                     service_name, client_name_, delta_time_usec_, shm_asset_);
             }
             else {
+                const auto client_ep_id = client_endpoint->at("endpointId").get<std::string>();
+                if (!endpoint_container_ && create_endpoint_container && !endpoint_config_path_.empty()) {
+                    auto endpoints = std::make_shared<hakoniwa::pdu::EndpointContainer>(node_id_, endpoint_config_path_);
+                    if (endpoints->initialize() != HAKO_PDU_ERR_OK) return false;
+                    endpoint_container_ = std::move(endpoints);
+                }
+                if (!endpoint_container_) {
+                    std::cerr << "ERROR: PDU Endpoint configuration required for RPC endpoint '" << client_ep_id << "'" << std::endl;
+                    return false;
+                }
                 std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = endpoint_container_->ref(client_ep_id);
                 if (!pdu_endpoint) {
-                    std::cerr << "ERROR: PDU Endpoint instance not found for node '" << client_ep_node_id << "' and endpoint '" << client_ep_id << "'" << std::endl;
+                    std::cerr << "ERROR: PDU Endpoint instance not found for node '" << node_id_ << "' and endpoint '" << client_ep_id << "'" << std::endl;
                     std::cout.flush();
                     stop_all_services();
                     return false;
+                }
+                if (!time_source_) {
+                    time_source_ = hakoniwa::time_source::create_time_source(time_source_type_, delta_time_usec_);
                 }
                 rpc_client_endpoint = std::make_shared<RpcClientEndpointImpl>(
                     service_name, client_name_, delta_time_usec_, pdu_endpoint, time_source_);

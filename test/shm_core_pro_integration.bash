@@ -8,6 +8,7 @@ DIRECT_CLIENT=$4
 CORE_LIBDIR=$5
 CORE_PREFIX=${CORE_LIBDIR%/*}
 SCENARIO=$6
+shift 6
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/hako-pdu-rpc-shm-${SCENARIO}.XXXXXX")
 PIDS=()
 PASSED=0
@@ -90,6 +91,7 @@ ADD_MAX_CLIENTS=1
 if [[ "$SCENARIO" == "compare" || "$SCENARIO" == "busy" ]]; then
     ADD_MAX_CLIENTS=2
 fi
+CLIENT_ENDPOINT_FIELDS=", \"protocol\": \"shm\", \"assetName\": \"PduRpcShmClient\", \"coreConfig\": \"$HAKO_CONFIG_PATH\""
 cat > "$WORK/service.json" <<JSON
 {
   "pduMetaDataSize": 24,
@@ -105,7 +107,7 @@ cat > "$WORK/service.json" <<JSON
       "clients": [
         {
           "name": "ShmClient",
-          "client_endpoint": {"nodeId": "shm_client_node", "endpointId": "shm_client_ep"}
+          "client_endpoint": {"nodeId": "shm_client_node", "endpointId": "shm_client_ep"$CLIENT_ENDPOINT_FIELDS}
         }
       ]
     },
@@ -120,35 +122,13 @@ cat > "$WORK/service.json" <<JSON
       "clients": [
         {
           "name": "ShmClient",
-          "client_endpoint": {"nodeId": "shm_client_node", "endpointId": "shm_client_ep"}
+          "client_endpoint": {"nodeId": "shm_client_node", "endpointId": "shm_client_ep"$CLIENT_ENDPOINT_FIELDS}
         }
       ]
     }
   ]
 }
 JSON
-cat > "$WORK/endpoints.json" <<'JSON'
-[
-  {
-    "nodeId": "shm_client_node",
-    "endpoints": [
-      {"id": "shm_client_ep", "config_path": "endpoint.json"}
-    ]
-  }
-]
-JSON
-cat > "$WORK/endpoint.json" <<'JSON'
-{"comm":"comm.json"}
-JSON
-cat > "$WORK/comm.json" <<JSON
-{
-  "protocol": "shm",
-  "assetName": "PduRpcShmClient",
-  "coreConfig": "$HAKO_CONFIG_PATH",
-  "deltaTimeUsec": 1000
-}
-JSON
-
 "$CONDUCTOR" >"$WORK/conductor.log" 2>&1 &
 CONDUCTOR_PID=$!
 PIDS+=("$CONDUCTOR_PID")
@@ -166,7 +146,12 @@ if [[ "$SCENARIO" == "compare" || "$SCENARIO" == "busy" ]]; then
     wait_log "$WORK/direct.log" "DIRECT registered" "$DIRECT_PID"
 fi
 
-"$CLIENT" "$WORK/service.json" "$WORK/endpoints.json" "$SCENARIO" "$WORK" \
+client_args=("$WORK/service.json" "$WORK/endpoints.json" "$SCENARIO" "$WORK")
+if [[ "$SCENARIO" == "cffi" ]]; then
+    export HAKO_PDU_RPC_SHM_TEST_DIR="$WORK"
+    client_args=("$@")
+fi
+"$CLIENT" "${client_args[@]}" \
     >"$WORK/client.log" 2>&1 &
 CLIENT_PID=$!
 PIDS+=("$CLIENT_PID")
@@ -181,6 +166,11 @@ wait_asset "PduRpcShmClient" "$CLIENT_PID"
 case "$SCENARIO" in
     ok)
         wait_log "$WORK/client.log" "PASS shm core-pro OK sum=42" "$CLIENT_PID"
+        ;;
+    c-api|cffi)
+        wait_log "$WORK/client.log" "PASS shm round trip sum=42" "$CLIENT_PID"
+        wait "$CLIENT_PID"
+        echo "PASS $SCENARIO shm round trip sum=42"
         ;;
     compare)
         wait_log "$WORK/client.log" "PASS S2(a)" "$CLIENT_PID"

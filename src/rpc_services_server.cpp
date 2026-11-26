@@ -71,6 +71,12 @@ bool RpcServicesServer::initialize_services_impl(
 
         for (const auto& service_entry : json_config["services"]) {
             std::string service_name = service_entry["name"];
+            for (const auto& server_ep : service_entry.value("server_endpoints", nlohmann::json::array())) {
+                if (server_ep.value("nodeId", "") == node_id_ && server_ep.value("protocol", "") == "shm") {
+                    std::cerr << "ERROR: SHM RPC server is not supported" << std::endl;
+                    return false;
+                }
+            }
             std::shared_ptr<hakoniwa::pdu::Endpoint> pdu_endpoint = endpoint_override;
 
             if (!pdu_endpoint) {

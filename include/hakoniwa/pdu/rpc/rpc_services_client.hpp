@@ -26,6 +26,8 @@ public:
     ~RpcServicesClient();
 
     bool initialize_services(std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container);
+    bool initialize_services_with_endpoint_config();
+    std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container() const { return endpoint_container_; }
     bool start_all_services();
     void stop_all_services();
     void clear_all_instances();
@@ -51,10 +53,12 @@ public:
     bool create_request_buffer(const std::string& service_name, Hako_uint8 opcode, PduData& pdu);
 
 private:
+    bool initialize_services_impl(bool create_endpoint_container);
     std::string node_id_;
     std::string client_name_; // Single client identity
     std::string config_path_;
     std::string impl_type_;
+    std::string time_source_type_;
     std::string endpoint_config_path_;
     uint64_t delta_time_usec_; // For client endpoint initialization
 

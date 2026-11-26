@@ -1,6 +1,7 @@
 #include "hakoniwa/pdu/rpc/shm_rpc_client_endpoint.hpp"
 #include "nlohmann/json.hpp"
 #include "pdu_convertor.hpp"
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 
@@ -22,6 +23,10 @@ bool ShmRpcClientEndpoint::initialize(const nlohmann::json& config, int)
         return false;
     }
     if (!config.contains("name") || config["name"] != service_name_) return false;
+    if (config.contains("pduSize")) {
+        const auto base_size = config.at("pduSize").at("client").at("baseSize").get<std::size_t>();
+        response_packet_size_ = HAKO_PDU_META_DATA_SIZE() + HAKO_ALIGN_SIZE(base_size, HAKO_ALIGNMENT_SIZE);
+    }
     asset_->add_client(shared_from_this());
     return asset_->start();
 #endif
@@ -138,11 +143,15 @@ void ShmRpcClientEndpoint::asset_step(CoreProServiceApi& api)
     if (header.result_code == HAKO_SERVICE_RESULT_CODE_BUSY || header.status == HAKO_SERVICE_STATUS_DOING) return;
     std::lock_guard lock(mutex_);
     if (in_flight_) {
+        HakoPduMetaDataType metadata{};
+        std::memcpy(&metadata, reply.data(), sizeof(metadata));
         header.request_id = active_request_id_;
         hako::pdu::PduConvertor<
             HakoCpp_ServiceResponseHeader,
             hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader> {}.cpp2pdu(
             header, reinterpret_cast<char*>(reply.data()), reply.size());
+        // The generated header writer replaces the full packet's metadata.
+        std::memcpy(reply.data(), &metadata, sizeof(metadata));
         inbox_ = std::move(reply);
         response_ready_ = true;
         cancel_state_ = CancelState::none;
@@ -166,7 +175,7 @@ void ShmRpcClientEndpoint::asset_fail_request()
     header.client_name = client_name_;
     header.status = HAKO_SERVICE_STATUS_DONE;
     header.result_code = HAKO_SERVICE_RESULT_CODE_ERROR;
-    inbox_.resize(512);
+    inbox_.assign(std::max<std::size_t>(512, response_packet_size_), 0);
     const int size = hako::pdu::PduConvertor<
         HakoCpp_ServiceResponseHeader,
         hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader> {}.cpp2pdu(
@@ -175,7 +184,15 @@ void ShmRpcClientEndpoint::asset_fail_request()
         inbox_.clear();
         return;
     }
-    inbox_.resize(static_cast<std::size_t>(size));
+    const auto packet_size = std::max(static_cast<std::size_t>(size), response_packet_size_);
+    inbox_.resize(packet_size);
+    // A short header cannot be decoded by a typed client. Include an empty
+    // response body and describe its extent in the packet metadata.
+    HakoPduMetaDataType metadata{};
+    std::memcpy(&metadata, inbox_.data(), sizeof(metadata));
+    metadata.heap_off = packet_size;
+    metadata.total_size = packet_size;
+    std::memcpy(inbox_.data(), &metadata, sizeof(metadata));
     response_ready_ = true;
 }
 } // namespace hakoniwa::pdu::rpc

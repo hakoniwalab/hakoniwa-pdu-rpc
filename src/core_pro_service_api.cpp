@@ -89,6 +89,9 @@ public:
                     0) != 0 || size < request_size) return false;
         const size_t header_size = service_request_header_size();
         if (request_size < header_size || size < header_size) return false;
+        // Core initialized only the request header. Preserve its request ID and
+        // copy the envelope for the full RPC body and heap along with the body.
+        std::memcpy(packet, request.data(), HAKO_PDU_META_DATA_SIZE());
         std::memcpy(packet + header_size, request.data() + header_size, request_size - header_size);
         return hako_asset_service_client_call_request(&clients_[id], packet, size, 0) == 0;
     }

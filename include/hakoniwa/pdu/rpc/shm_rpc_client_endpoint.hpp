@@ -36,6 +36,7 @@ private:
     std::mutex mutex_; // one hand-off box: copied data only while held
     PduData outbox_;
     PduData inbox_;
+    std::size_t response_packet_size_{0};
     bool request_queued_{false};
     CancelState cancel_state_{CancelState::none};
     bool in_flight_{false};
