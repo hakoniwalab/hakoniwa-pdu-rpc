@@ -5,6 +5,7 @@
 #include "hakoniwa/pdu/endpoint_container.hpp"
 #include "rpc_client_endpoint.hpp" // For IRpcClientEndpoint
 #include "rpc_client_endpoint_impl.hpp" // For RpcClientEndpointImpl
+#include "shm_rpc_asset.hpp"
 #include "hakoniwa/time_source/time_source.hpp" // For ITimeSource
 #include <string>
 #include <memory>
@@ -17,7 +18,11 @@ namespace hakoniwa::pdu::rpc {
 
 class RpcServicesClient {
 public:
-    RpcServicesClient(const std::string& node_id, const std::string& client_name, const std::string& config_path, const std::string& impl_type = "RpcClientEndpointImpl", uint64_t delta_time_usec = 1000, std::string time_source_type = "real");
+    RpcServicesClient(const std::string& node_id, const std::string& client_name,
+        const std::string& config_path, const std::string& impl_type = "RpcClientEndpointImpl",
+        uint64_t delta_time_usec = 1000, std::string time_source_type = "real",
+        std::string endpoint_config_path = {},
+        std::shared_ptr<CoreProServiceApi> shm_api = {});
     ~RpcServicesClient();
 
     bool initialize_services(std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container);
@@ -50,6 +55,7 @@ private:
     std::string client_name_; // Single client identity
     std::string config_path_;
     std::string impl_type_;
+    std::string endpoint_config_path_;
     uint64_t delta_time_usec_; // For client endpoint initialization
 
     // Low-level PDU endpoints (node_id, endpoint_id) -> endpoint
@@ -58,6 +64,8 @@ private:
     std::map<std::string, std::shared_ptr<IRpcClientEndpoint>> rpc_endpoints_;
     std::shared_ptr<hakoniwa::time_source::ITimeSource> time_source_;
     std::shared_ptr<hakoniwa::pdu::EndpointContainer> endpoint_container_;
+    std::shared_ptr<ShmRpcAsset> shm_asset_;
+    std::shared_ptr<CoreProServiceApi> shm_api_;
 };
 
 } // namespace hakoniwa::pdu::rpc

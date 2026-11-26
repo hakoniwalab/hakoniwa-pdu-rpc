@@ -107,7 +107,10 @@ hako_pdu_rpc_client_handle_t* hako_pdu_rpc_client_create(const char* node_id, co
         auto h = std::make_unique<hako_pdu_rpc_client_handle_t>();
         h->endpoints = std::make_shared<EndpointContainer>(node_id, endpoint_config_path);
         if (h->endpoints->initialize() != HAKO_PDU_ERR_OK) return nullptr;
-        h->rpc = std::make_unique<RpcServicesClient>(node_id, client_name, service_config_path, kClientImpl, delta_time_usec, valid_text(time_source_type) ? time_source_type : kDefaultTimeSource);
+        h->rpc = std::make_unique<RpcServicesClient>(node_id, client_name,
+            service_config_path, kClientImpl, delta_time_usec,
+            valid_text(time_source_type) ? time_source_type : kDefaultTimeSource,
+            endpoint_config_path);
         if (!h->rpc->initialize_services(h->endpoints)) return nullptr;
         return h.release();
     } catch (...) { return nullptr; }

@@ -15,6 +15,9 @@ if(NOT TARGET nlohmann_json::nlohmann_json)
 endif()
 
 set(HAKO_PDU_RPC_SOURCES
+  core_pro_service_api.cpp
+  shm_rpc_asset.cpp
+  shm_rpc_client_endpoint.cpp
   rpc_server_endpoint_impl.cpp
   rpc_services_server.cpp
   rpc_services_mux_server.cpp
@@ -56,6 +59,10 @@ function(hako_pdu_rpc_configure_target target)
       hakoniwa_pdu_endpoint::hakoniwa_pdu_endpoint
       nlohmann_json::nlohmann_json
   )
+  if(HAKO_PDU_RPC_ENABLE_SHM)
+    target_compile_definitions(${target} PRIVATE HAKO_PDU_RPC_ENABLE_SHM=1)
+    target_link_libraries(${target} PRIVATE hakoniwa-core::assets hakoniwa-core::shakoc)
+  endif()
 endfunction()
 
 # Keep the historical native CMake target static. Existing C++ consumers and

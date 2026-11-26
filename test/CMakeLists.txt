@@ -25,6 +25,14 @@ endif()
 # separately by the Python CFFI integration suite.
 set(HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY hakoniwa_pdu_rpc::rpc)
 
+add_executable(hakoniwa_pdu_shm_rpc_client_test shm_rpc_client_endpoint_test.cpp)
+target_link_libraries(hakoniwa_pdu_shm_rpc_client_test PRIVATE ${HAKO_PDU_RPC_NATIVE_CONTRACT_LIBRARY} GTest::gtest_main)
+if(HAKO_PDU_RPC_ENABLE_SHM)
+  target_compile_definitions(hakoniwa_pdu_shm_rpc_client_test PRIVATE HAKO_PDU_RPC_ENABLE_SHM=1)
+endif()
+add_test(NAME hakoniwa_pdu_shm_rpc_client_test COMMAND hakoniwa_pdu_shm_rpc_client_test)
+set_tests_properties(hakoniwa_pdu_shm_rpc_client_test PROPERTIES TIMEOUT 30)
+
 function(hako_pdu_rpc_stage_windows_test_dlls target)
   if(NOT WIN32)
     return()

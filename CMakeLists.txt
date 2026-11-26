@@ -46,6 +46,11 @@ endif()
 
 option(HAKO_PDU_RPC_BUILD_TESTS "Build tests for hakoniwa-pdu-rpc" ON)
 option(HAKO_PDU_RPC_BUILD_EXAMPLES "Build examples for hakoniwa-pdu-rpc" OFF)
+option(HAKO_PDU_RPC_ENABLE_SHM "Enable Hakoniwa core-pro shared-memory RPC endpoints" OFF)
+
+if(HAKO_PDU_RPC_ENABLE_SHM)
+  find_package(hakoniwa-core CONFIG REQUIRED)
+endif()
 
 set(HAKONIWA_PDU_REGISTRY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/hakoniwa-pdu-registry" CACHE PATH
     "Source checkout of hakoniwa-pdu-registry used for generated public PDU headers")
