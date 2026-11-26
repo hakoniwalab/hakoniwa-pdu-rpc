@@ -26,7 +26,7 @@ existing RPC definition files:
 | D5 | **One class library everywhere**: hakoniwa-pdu-ros (through `libhakoniwa_pdu_rpc`), the RPC bridge and any other PDU-RPC application use the same SHM endpoints, with the same threading and locking | One implementation, one set of tests |
 | D6 | **Hakoniwa time runs on its own asset thread** (core-pro polling-asset loop: `get_event`, time advanced with `notify_simtime`), separated from the RPC side's real time (section 4) | A process that waits for a reply must never hold Hakoniwa time; otherwise a lockstep service deadlocks (seen in hakoniwa-robot-runtime stage P2) |
 | D7 | **All core-pro calls happen on the asset thread only** | core-pro reuses one request and one response buffer per client / server; calls from two threads would race |
-| D8 | Client endpoint first, server endpoint next (stages, section 9) | ROS 2 → Hakoniwa is the direction needed now |
+| D8 | Client endpoint first, server endpoint next (stages, section 10) | ROS 2 → Hakoniwa is the direction needed now |
 
 ## 3. Routes
 
@@ -190,7 +190,19 @@ name into the request header; the SHM endpoints keep the mapping between the
 PDU-RPC request id and the Core one. Both sides must use the same
 hakoniwa-pdu-registry revision.
 
-## 8. Open points
+## 8. Known constraint: one client at a time per Core service
+
+core-pro's service server reads only the current client's channel and moves to
+the next client only after it sends the final reply (round-robin;
+hakoniwalab/hakoniwa-core-pro#115). When several clients (shm endpoints or
+direct Core clients) share one server, a client that does not send its request
+holds up the others: their requests stay unread. Found in S2 (the compare
+test deadlocked when the clients called out of client-id order). Kept as a
+constraint (Mori, 2026-11-26): with several clients on one service, call in
+client-id order, or give each caller its own service. The bridge (section 6)
+is one client per service, so it is not affected.
+
+## 9. Open points
 
 No open points remain for stages S1–S5.
 
@@ -218,7 +230,7 @@ Decided on 2026-11-26:
   behaviour (for example "send a trajectory and report until arrival"), design
   it then: actions in core-pro, or another shape on the Robot Runtime side.
 
-## 9. Stages
+## 10. Stages
 
 | Stage | Content | Done when |
 |---|---|---|
