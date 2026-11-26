@@ -216,8 +216,8 @@ Decided on 2026-11-26:
 | Stage | Content | Done when |
 |---|---|---|
 | S1 | `CoreProServiceApi` (+ fake), `ShmRpcAsset`, the mailbox, `ShmRpcClientEndpoint`; `HAKO_PDU_RPC_ENABLE_SHM` | Unit tests with the fake core-pro: request, reply, cancel, timeout, one outstanding request, the asset thread never blocks on a reply; `OFF` build rejects `shm` |
-| S2 | Real core-pro: a PDU-RPC client with an shm endpoint calls a Core service served by a test server asset | Integration test on Linux and macOS: OK, INVALID, CANCELED; replies byte-identical to a direct Core client |
-| S3 | docker-only: hakoniwa-pdu-ros with an shm client endpoint calls Robot Runtime's `CarService/AckermannStep/<car>` (lockstep) | A ROS 2 service call returns the same reply as Robot Runtime's direct Core client test |
+| S2 | **Real core-pro with PDU-RPC only** (no Robot Runtime): a PDU-RPC client with an shm endpoint calls a Core service served by a test server asset. Quality gate before any Robot Runtime test | On Linux and macOS: OK / INVALID / CANCELED replies byte-identical to a direct Core client; hundreds of sequential requests with no loss or mismatch; a second `call()` while busy is rejected before core-pro, and core-pro's BUSY path (#123) still holds; caller timeout → cancel → CANCELED, then the next request succeeds; while the server delays a reply the asset thread keeps advancing its time (never holds world time); several shm endpoints in one process share one asset; on Hakoniwa stop / reset in-flight requests come back as errors and the endpoint works again after restart |
+| S3 | After S2 passes — docker-only: hakoniwa-pdu-ros with an shm client endpoint calls Robot Runtime's `CarService/AckermannStep/<car>` (lockstep) | A ROS 2 service call returns the same reply as Robot Runtime's direct Core client test |
 | S4 | Generic RPC bridge; docker-host route (tcp → shm) | hakoniwa-pdu-ros in Docker → bridge on the host → Robot Runtime: same replies as S3 |
 | S5 | `ShmRpcServerEndpoint`; reverse route (shm → tcp) | A core-pro client calls a service served on the PDU-RPC side through the bridge |
 
