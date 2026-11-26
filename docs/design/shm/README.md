@@ -75,7 +75,8 @@ RPC side (real time)                          Asset thread (Hakoniwa time, polli
 client endpoint                               every Hakoniwa step:
   call(): copy request into the outbox          client side:
   poll(): read the inbox                          - queued request -> get_request_buffer, copy, call_request
-  send_cancel_request(): set cancel flag          - queued cancel  -> cancel_request
+  send_cancel_request(): set cancel flag          - pending cancel -> cancel_request, retried every step
+                                                    until core-pro accepts it
 server endpoint                                   - busy client    -> client_poll; RESPONSE_IN / CANCEL_DONE /
   poll(): read the inbox (requests, cancels)        TIMEOUT -> copy the reply into the inbox
   send_reply / send_cancel_reply: copy the      server side:
@@ -92,6 +93,14 @@ server endpoint                                   - busy client    -> client_pol
   step and never holds world time. A lockstep service (Robot Runtime) holds the
   world time itself until its requests arrive; the asset thread then simply
   cannot run ahead of world time.
+- **Cancel is retried until core-pro accepts it.** core-pro writes a cancel into
+  the same channel as the request and refuses it while the server has not read
+  the previous request yet; the client stays DOING, so retrying on a later step
+  is allowed. The endpoint keeps the cancel as `none -> pending -> sent` and
+  retries every step (found in S2, round 4). Each refusal prints
+  `ERROR: put_request() failed` from core-pro; during a retry this is expected,
+  not a failure. A failed first request send is reported to the RPC side as an
+  error.
 - **The RPC side never touches core-pro.** Real-time timeouts stay with the
   caller, as today.
 - The asset thread uses core-pro's **polling** asset API, not the callback API
