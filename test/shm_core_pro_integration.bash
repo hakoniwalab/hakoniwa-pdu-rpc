@@ -51,13 +51,16 @@ wait_file() {
     return 1
 }
 
-wait_log_count() {
-    local file=$1 marker=$2 count=$3 pid=$4
+wait_sim_state() {
+    local expected=$1 file="$WORK/status-$1.log" i
     for ((i=0; i<300; ++i)); do
-        test "$(grep -cF -- "$marker" "$file" 2>/dev/null || true)" -ge "$count" && return 0
-        kill -0 "$pid" 2>/dev/null || break
+        if "$CORE_PREFIX/bin/hako-cmd" status >"$file" 2>&1 && grep -qxF "status=$expected" "$file"; then
+            return 0
+        fi
+        kill -0 "$CONDUCTOR_PID" 2>/dev/null || break
         sleep 0.1
     done
+    echo "ERROR: simulation did not reach status=$expected ($SCENARIO)" >&2
     cat "$file" >&2
     return 1
 }
@@ -211,11 +214,12 @@ case "$SCENARIO" in
         wait_log "$WORK/server.log" "SERVER request a=-1000 b=9" "$SERVER_PID"
         "$CORE_PREFIX/bin/hako-cmd" stop >"$WORK/stop-inflight.log" 2>&1
         wait_file "$WORK/restart-error.done" "$CLIENT_PID"
+        wait_sim_state stopped
         "$CORE_PREFIX/bin/hako-cmd" reset >"$WORK/reset.log" 2>&1
-        wait_log "$WORK/server.log" "SERVER event Reset" "$SERVER_PID"
-        sleep 0.2
+        # The conductor publishes Stopped before it clears the previous run's PDU data.
+        wait_log "$WORK/conductor.log" "INFO: pdu reset cleared buffer size=" "$CONDUCTOR_PID"
         "$CORE_PREFIX/bin/hako-cmd" start >"$WORK/restart.log" 2>&1
-        wait_log_count "$WORK/server.log" "SERVER event Start" 2 "$SERVER_PID"
+        wait_sim_state running
         : > "$WORK/restart-go"
         wait_log "$WORK/client.log" "PASS S2(g) call succeeded" "$CLIENT_PID"
         echo "PASS S2(g) stop/reset error and restart recovery"
