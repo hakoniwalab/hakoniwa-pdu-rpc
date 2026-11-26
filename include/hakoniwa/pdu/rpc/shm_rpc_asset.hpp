@@ -2,6 +2,7 @@
 
 #include "core_pro_service_api.hpp"
 #include <atomic>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -32,7 +33,7 @@ public:
     }
 
 private:
-    void run();
+    void run(std::promise<bool> initialized);
 
     std::string asset_name_;
     std::string core_config_;

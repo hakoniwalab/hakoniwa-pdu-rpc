@@ -54,15 +54,16 @@ function(hako_pdu_rpc_configure_target target)
       $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   )
 
+  if(HAKO_PDU_RPC_ENABLE_SHM)
+    target_compile_definitions(${target} PRIVATE HAKO_PDU_RPC_ENABLE_SHM=1)
+    # Resolve both Core APIs here before Endpoint's transitive dependencies.
+    target_link_libraries(${target} PRIVATE hakoniwa-core::shakoc)
+  endif()
   target_link_libraries(${target}
     PUBLIC
       hakoniwa_pdu_endpoint::hakoniwa_pdu_endpoint
       nlohmann_json::nlohmann_json
   )
-  if(HAKO_PDU_RPC_ENABLE_SHM)
-    target_compile_definitions(${target} PRIVATE HAKO_PDU_RPC_ENABLE_SHM=1)
-    target_link_libraries(${target} PRIVATE hakoniwa-core::assets hakoniwa-core::shakoc)
-  endif()
 endfunction()
 
 # Keep the historical native CMake target static. Existing C++ consumers and
@@ -115,3 +116,10 @@ install(
     PATTERN "*.h"
     PATTERN "*.hpp"
 )
+
+if(HAKO_PDU_RPC_ENABLE_SHM)
+  find_package(Threads REQUIRED)
+  add_executable(rpc-bridge rpc_bridge_main.cpp rpc_bridge.cpp)
+  target_link_libraries(rpc-bridge PRIVATE hakoniwa_pdu_rpc::rpc Threads::Threads)
+  install(TARGETS rpc-bridge RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+endif()

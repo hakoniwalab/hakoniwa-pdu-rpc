@@ -79,4 +79,11 @@ enum HakoServiceResultCode {
     HAKO_SERVICE_RESULT_CODE_NUM
 };
 
+inline bool is_interim_response(Hako_uint8 status, Hako_int32 result_code)
+{
+    return status == HAKO_SERVICE_STATUS_DOING
+        || status == HAKO_SERVICE_STATUS_CANCELING
+        || (result_code == HAKO_SERVICE_RESULT_CODE_BUSY && status != HAKO_SERVICE_STATUS_ERROR);
+}
+
 } // namespace hakoniwa::pdu::rpc

@@ -7,7 +7,9 @@
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp"
 #include "hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsResponsePacket.hpp"
 
+#include <atomic>
 #include <chrono>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <thread>
@@ -56,6 +58,15 @@ public:
             !client_.initialize_services(client_endpoint_)) {
             return false;
         }
+        client_endpoint()->subscribe_on_recv_callback(
+            {kServiceName, 2}, [this](const auto&, auto bytes) {
+                hakoniwa::pdu::rpc::PduData pdu(bytes.size());
+                std::memcpy(pdu.data(), bytes.data(), bytes.size());
+                HakoCpp_ServiceResponseHeader header{};
+                hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader{}.pdu2cpp(
+                    reinterpret_cast<char*>(pdu.data()), header);
+                last_result_ = header.result_code;
+            });
         if (server_endpoint_->start_all() != HAKO_PDU_ERR_OK ||
             client_endpoint_->start_all() != HAKO_PDU_ERR_OK) {
             return false;
@@ -122,6 +133,9 @@ public:
         }
     }
 
+    std::shared_ptr<hakoniwa::pdu::Endpoint> client_endpoint() { return client_endpoint_->ref("client_ep_id"); }
+    int last_result() const { return last_result_; }
+
     RpcServicesServer& server() { return server_; }
     RpcServicesClient& client() { return client_; }
 
@@ -131,6 +145,7 @@ private:
     RpcServicesServer server_;
     RpcServicesClient client_;
     bool started_ = false;
+    std::atomic<int> last_result_{-1};
 };
 
 bool execute_add(RpcRuntime& runtime, long long a, long long b, long long expected)
@@ -197,6 +212,43 @@ TEST(RpcBasicContractTest, ConsecutiveCallsReuseEndpoint)
     ASSERT_TRUE(runtime.start());
     ASSERT_TRUE(execute_add(runtime, 10, 20, 30));
     EXPECT_TRUE(execute_add(runtime, 15, 25, 40));
+}
+
+TEST(RpcBasicContractTest, BusyNoticeLeavesOriginalTcpRequestActive)
+{
+    using namespace hakoniwa::pdu::rpc;
+
+    RpcRuntime runtime;
+    ASSERT_TRUE(runtime.start());
+    HakoRpcServiceServerTemplateType(AddTwoInts) service;
+    HakoCpp_AddTwoIntsRequest body{};
+    ASSERT_TRUE(service.call(runtime.client(), kServiceName, body, 0));
+
+    RpcRequest original;
+    ASSERT_EQ(runtime.wait_server_event(original), ServerEventType::REQUEST_IN);
+    const hakoniwa::pdu::PduKey key{kServiceName, std::string(kClientName) + "Req"};
+    const auto duplicate = std::as_bytes(std::span(original.pdu));
+    ASSERT_EQ(runtime.client_endpoint()->send(key, duplicate), HAKO_PDU_ERR_OK);
+
+    RpcRequest unexpected;
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (runtime.last_result() == -1 && std::chrono::steady_clock::now() < deadline) {
+        ASSERT_EQ(runtime.server().poll(unexpected), ServerEventType::NONE);
+        std::this_thread::sleep_for(1ms);
+    }
+    ASSERT_EQ(runtime.last_result(), HAKO_SERVICE_RESULT_CODE_BUSY);
+    std::string service_name;
+    RpcResponse response;
+    EXPECT_EQ(runtime.client().poll(service_name, response), ClientEventType::NONE);
+
+    HakoCpp_AddTwoIntsResponse result{};
+    result.sum = 42;
+    ASSERT_TRUE(service.reply(runtime.server(), original, HAKO_SERVICE_STATUS_DONE,
+                              HAKO_SERVICE_RESULT_CODE_OK, result));
+    ASSERT_EQ(runtime.wait_client_event(service_name, response), ClientEventType::RESPONSE_IN);
+    EXPECT_EQ(response.header.request_id, original.header.request_id);
+    EXPECT_TRUE(service.get_response_body(response, result));
+    EXPECT_EQ(result.sum, 42);
 }
 
 } // namespace

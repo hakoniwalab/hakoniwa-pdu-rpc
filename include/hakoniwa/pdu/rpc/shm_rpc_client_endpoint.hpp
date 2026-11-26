@@ -18,6 +18,8 @@ public:
         uint64_t delta_usec,
         std::shared_ptr<ShmRpcAsset> asset);
     bool initialize(const nlohmann::json& service_config, int pdu_meta_data_size) override;
+    // Register every route before the shared polling asset is started.
+    bool initialize_without_start(const nlohmann::json& service_config, int pdu_meta_data_size);
     bool call(const PduData& pdu, uint64_t timeout_usec) override;
     ClientEventType poll(RpcResponse& response) override;
     bool send_cancel_request() override;
