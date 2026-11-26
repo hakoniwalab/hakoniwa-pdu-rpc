@@ -5,18 +5,28 @@ CONDUCTOR=$1
 SERVER=$2
 CLIENT=$3
 DIRECT_CLIENT=$4
-FOUNDATION=$5
+CORE_LIBDIR=$5
+CORE_PREFIX=${CORE_LIBDIR%/*}
 SCENARIO=$6
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/hako-pdu-rpc-shm-${SCENARIO}.XXXXXX")
 PIDS=()
+PASSED=0
 
 cleanup() {
-    "$FOUNDATION/bin/hako-cmd" stop >/dev/null 2>&1 || true
+    status=$?
+    trap - EXIT
+    set +e
+    if [[ "$PASSED" -ne 1 ]]; then
+        status=1
+        echo "ERROR: integration PASS marker was not reached ($SCENARIO)" >&2
+    fi
+    "$CORE_PREFIX/bin/hako-cmd" stop >/dev/null 2>&1 || true
     for pid in "${PIDS[@]:-}"; do
         kill "$pid" 2>/dev/null || true
     done
     wait 2>/dev/null || true
     echo "Integration logs: $WORK"
+    exit "$status"
 }
 trap cleanup EXIT
 
@@ -52,10 +62,24 @@ wait_log_count() {
     return 1
 }
 
+wait_asset() {
+    local asset=$1 pid=$2
+    for ((i=0; i<300; ++i)); do
+        if "$CORE_PREFIX/bin/hako-cmd" jmeta >"$WORK/assets.json" 2>/dev/null &&
+                grep -qF -- "\"name\": \"$asset\"" "$WORK/assets.json"; then
+            return 0
+        fi
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+    done
+    cat "$WORK/assets.json" >&2 2>/dev/null || true
+    return 1
+}
+
 mkdir -p "$WORK/mmap"
 export HAKO_CONFIG_PATH="$WORK/core.json"
 export HAKO_CORE_MMAP_PATH="$WORK/mmap"
-export LD_LIBRARY_PATH="$FOUNDATION/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$CORE_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 printf '{"shm_type":"mmap","core_mmap_path":"%s","asset_timeout_usec":600000000}\n' \
     "$WORK/mmap" > "$HAKO_CONFIG_PATH"
 
@@ -123,29 +147,32 @@ cat > "$WORK/comm.json" <<JSON
 JSON
 
 "$CONDUCTOR" >"$WORK/conductor.log" 2>&1 &
-PIDS+=("$!")
-wait_log "$WORK/conductor.log" "CONDUCTOR started" "${PIDS[-1]}"
+CONDUCTOR_PID=$!
+PIDS+=("$CONDUCTOR_PID")
+wait_log "$WORK/conductor.log" "CONDUCTOR started" "$CONDUCTOR_PID"
 
 "$SERVER" "$WORK/service.json" >"$WORK/server.log" 2>&1 &
-PIDS+=("$!")
-wait_log "$WORK/server.log" "SERVER registered" "${PIDS[-1]}"
+SERVER_PID=$!
+PIDS+=("$SERVER_PID")
+wait_log "$WORK/server.log" "SERVER registered" "$SERVER_PID"
 
 if [[ "$SCENARIO" == "compare" || "$SCENARIO" == "busy" ]]; then
     "$DIRECT_CLIENT" "$WORK/service.json" "$SCENARIO" "$WORK" >"$WORK/direct.log" 2>&1 &
-    PIDS+=("$!")
-    wait_log "$WORK/direct.log" "DIRECT registered" "${PIDS[-1]}"
+    DIRECT_PID=$!
+    PIDS+=("$DIRECT_PID")
+    wait_log "$WORK/direct.log" "DIRECT registered" "$DIRECT_PID"
 fi
 
 "$CLIENT" "$WORK/service.json" "$WORK/endpoints.json" "$SCENARIO" "$WORK" \
     >"$WORK/client.log" 2>&1 &
-PIDS+=("$!")
-CLIENT_PID=${PIDS[-1]}
+CLIENT_PID=$!
+PIDS+=("$CLIENT_PID")
 wait_log "$WORK/client.log" "CLIENT registered" "$CLIENT_PID"
 
-# The pdu-rpc asset registers on its background thread. Give the polling
-# registration time to reach the conductor before issuing Start.
-sleep 0.2
-"$FOUNDATION/bin/hako-cmd" start >"$WORK/start.log" 2>&1
+# Endpoint initialization starts the polling asset on a background thread.
+# Core-pro's shared metadata is the authoritative registration barrier.
+wait_asset "PduRpcShmClient" "$CLIENT_PID"
+"$CORE_PREFIX/bin/hako-cmd" start >"$WORK/start.log" 2>&1
 : > "$WORK/start-go"
 
 case "$SCENARIO" in
@@ -164,7 +191,7 @@ case "$SCENARIO" in
         echo "PASS S2(b) 500/500 consecutive calls aligned"
         ;;
     busy)
-        wait_log "$WORK/direct.log" "PASS direct core-pro BUSY interim path" "${PIDS[-2]}"
+        wait_log "$WORK/direct.log" "PASS direct core-pro BUSY interim path" "$DIRECT_PID"
         wait_log "$WORK/client.log" "PASS S2(c) second call refused" "$CLIENT_PID"
         echo "PASS S2(c) core-pro BUSY path preserved"
         ;;
@@ -181,14 +208,14 @@ case "$SCENARIO" in
         echo "PASS S2(f) two shm endpoints shared one polling asset"
         ;;
     restart)
-        wait_log "$WORK/server.log" "SERVER request a=-1000 b=9" "${PIDS[1]}"
-        "$FOUNDATION/bin/hako-cmd" stop >"$WORK/stop-inflight.log" 2>&1
+        wait_log "$WORK/server.log" "SERVER request a=-1000 b=9" "$SERVER_PID"
+        "$CORE_PREFIX/bin/hako-cmd" stop >"$WORK/stop-inflight.log" 2>&1
         wait_file "$WORK/restart-error.done" "$CLIENT_PID"
-        "$FOUNDATION/bin/hako-cmd" reset >"$WORK/reset.log" 2>&1
-        wait_log "$WORK/server.log" "SERVER event Reset" "${PIDS[1]}"
+        "$CORE_PREFIX/bin/hako-cmd" reset >"$WORK/reset.log" 2>&1
+        wait_log "$WORK/server.log" "SERVER event Reset" "$SERVER_PID"
         sleep 0.2
-        "$FOUNDATION/bin/hako-cmd" start >"$WORK/restart.log" 2>&1
-        wait_log_count "$WORK/server.log" "SERVER event Start" 2 "${PIDS[1]}"
+        "$CORE_PREFIX/bin/hako-cmd" start >"$WORK/restart.log" 2>&1
+        wait_log_count "$WORK/server.log" "SERVER event Start" 2 "$SERVER_PID"
         : > "$WORK/restart-go"
         wait_log "$WORK/client.log" "PASS S2(g) call succeeded" "$CLIENT_PID"
         echo "PASS S2(g) stop/reset error and restart recovery"
@@ -199,5 +226,6 @@ case "$SCENARIO" in
         ;;
 esac
 
-"$FOUNDATION/bin/hako-cmd" stop >"$WORK/stop.log" 2>&1
+"$CORE_PREFIX/bin/hako-cmd" stop >"$WORK/stop.log" 2>&1
 echo "PASS integration harness stop ($SCENARIO)"
+PASSED=1

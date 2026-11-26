@@ -106,6 +106,28 @@ bool wait_file(const std::filesystem::path& path, std::chrono::seconds timeout =
     return false;
 }
 
+bool mark_file(const std::filesystem::path& path)
+{
+    std::ofstream output(path);
+    output.put('\n');
+    return output.good();
+}
+
+int wait_direct_client_id(const std::filesystem::path& work)
+{
+    const auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (std::chrono::steady_clock::now() < deadline) {
+        for (int id = 0; id < 2; ++id) {
+            if (std::filesystem::exists(
+                    work / ("direct-client-" + std::to_string(id) + ".ready"))) {
+                return id;
+            }
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+    return -1;
+}
+
 bool write_body(const std::string& path, const RpcResponse& response)
 {
     HakoCpp_ServiceResponseHeader empty{};
@@ -175,9 +197,15 @@ bool run_compare(IntegrationClient& client, const std::string& work)
         {"invalid", kInvalidRequest, HAKO_SERVICE_RESULT_CODE_INVALID, ClientEventType::RESPONSE_IN, false},
         {"canceled", kNeverRequest, HAKO_SERVICE_RESULT_CODE_CANCELED, ClientEventType::RESPONSE_CANCEL, true},
     };
+    const int direct_client_id = wait_direct_client_id(work);
+    if (direct_client_id < 0) return false;
+    const int client_id = 1 - direct_client_id;
     for (const auto& test : cases) {
-        if (!wait_file(std::filesystem::path(work) /
-                (std::string("direct-") + test.name + ".done"))) {
+        const auto slot0_done = std::filesystem::path(work) /
+            (std::string(test.name) + "-slot0.done");
+        const auto slot1_done = std::filesystem::path(work) /
+            (std::string(test.name) + "-slot1.done");
+        if (client_id == 1 && !wait_file(slot0_done)) {
             return false;
         }
         uint64_t request_id = 0;
@@ -193,7 +221,12 @@ bool run_compare(IntegrationClient& client, const std::string& work)
             !write_body(work + "/rpc-" + test.name + ".body", response)) {
             return false;
         }
-        std::ofstream(work + "/rpc-" + test.name + ".done").put('\n');
+        if (!mark_file(work + "/rpc-" + test.name + ".done")) return false;
+        if (client_id == 0) {
+            if (!mark_file(slot0_done) || !wait_file(slot1_done)) return false;
+        } else if (!mark_file(slot1_done)) {
+            return false;
+        }
     }
     std::cout << "PASS S2(a) rpc result bodies and restored request ids\n";
     return true;

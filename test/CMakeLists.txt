@@ -35,9 +35,6 @@ set_tests_properties(hakoniwa_pdu_shm_rpc_client_test PROPERTIES TIMEOUT 30)
 
 if(HAKO_PDU_RPC_ENABLE_SHM AND UNIX)
   find_package(Threads REQUIRED)
-  get_target_property(_hako_shakoc_location hakoniwa-core::shakoc IMPORTED_LOCATION_NOCONFIG)
-  get_filename_component(_hako_core_libdir "${_hako_shakoc_location}" DIRECTORY)
-  get_filename_component(_hako_core_prefix "${_hako_core_libdir}" DIRECTORY)
 
   add_executable(hakoniwa_pdu_shm_integration_conductor shm_integration_conductor.cpp)
   target_link_libraries(hakoniwa_pdu_shm_integration_conductor PRIVATE hakoniwa-core::conductor Threads::Threads)
@@ -61,7 +58,7 @@ if(HAKO_PDU_RPC_ENABLE_SHM AND UNIX)
         $<TARGET_FILE:hakoniwa_pdu_shm_integration_server>
         $<TARGET_FILE:hakoniwa_pdu_shm_integration_client>
         $<TARGET_FILE:hakoniwa_pdu_shm_integration_direct_client>
-        ${_hako_core_prefix}
+        $<TARGET_FILE_DIR:hakoniwa-core::shakoc>
         ${scenario})
     set_tests_properties(${name} PROPERTIES
       TIMEOUT ${timeout}

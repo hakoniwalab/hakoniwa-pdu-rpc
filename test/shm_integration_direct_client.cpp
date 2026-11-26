@@ -130,6 +130,13 @@ bool wait_file(const std::filesystem::path& path)
     return false;
 }
 
+bool mark_file(const std::filesystem::path& path)
+{
+    std::ofstream output(path);
+    output.put('\n');
+    return output.good();
+}
+
 bool run_compare(HakoServiceHandleType& handle, hako_time_t& local_time, const std::string& work)
 {
     struct Case {
@@ -143,7 +150,17 @@ bool run_compare(HakoServiceHandleType& handle, hako_time_t& local_time, const s
         {"invalid", kInvalidRequest, HAKO_SERVICE_API_RESULT_CODE_INVALID, false},
         {"canceled", kNeverRequest, HAKO_SERVICE_API_RESULT_CODE_CANCELED, true},
     };
+    if (!mark_file(
+            std::filesystem::path(work) /
+            ("direct-client-" + std::to_string(handle.client_id) + ".ready"))) {
+        return false;
+    }
     for (const auto& test : cases) {
+        const auto slot0_done = std::filesystem::path(work) /
+            (std::string(test.name) + "-slot0.done");
+        const auto slot1_done = std::filesystem::path(work) /
+            (std::string(test.name) + "-slot1.done");
+        if (handle.client_id == 1 && !wait_file(slot0_done)) return false;
         std::vector<uint8_t> response;
         if (!start_call(handle, test.a, 22) ||
             !wait_response(handle, local_time, test.cancel, response) ||
@@ -151,8 +168,10 @@ bool run_compare(HakoServiceHandleType& handle, hako_time_t& local_time, const s
             !write_body(work + "/direct-" + test.name + ".body", response)) {
             return false;
         }
-        std::ofstream(work + "/direct-" + test.name + ".done").put('\n');
-        if (!wait_file(std::filesystem::path(work) / (std::string("rpc-") + test.name + ".done"))) {
+        if (!mark_file(work + "/direct-" + test.name + ".done")) return false;
+        if (handle.client_id == 0) {
+            if (!mark_file(slot0_done) || !wait_file(slot1_done)) return false;
+        } else if (!mark_file(slot1_done)) {
             return false;
         }
     }
