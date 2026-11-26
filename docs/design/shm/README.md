@@ -115,23 +115,33 @@ server endpoint                                   - busy client    -> client_pol
 
 ## 5. Endpoint configuration
 
-An SHM endpoint is configured like the others; its comm file says `"protocol":
-"shm"`:
+An SHM client endpoint is configured **in the RPC definition file**, on the
+client's `client_endpoint` (changed in S3, 2026-11-26: it used to be a
+pdu-endpoint comm file; since D2 forbids pdu-endpoint for shm, no endpoint
+configuration file is read for shm):
 
 ```json
-{
-  "protocol": "shm",
-  "assetName": "pdu-ros-shm",
-  "deltaTimeUsec": 1000,
-  "coreConfig": "/path/to/cpp_core_config.json"
-}
+"clients": [
+  { "name": "pdu-ros-Car-1",
+    "client_endpoint": {
+      "nodeId": "pdu-ros",
+      "protocol": "shm",
+      "assetName": "pdu-ros-shm",
+      "deltaTimeUsec": 1000,
+      "coreConfig": "/path/to/cpp_core_config.json" } }
+]
 ```
 
+- `protocol: "shm"` selects the SHM endpoint; without it, `endpointId` names a
+  pdu-endpoint endpoint as before (tcp and the other protocols), and only then
+  is the pdu-endpoint configuration read.
 - `assetName`: the Hakoniwa asset this process registers as. One asset per
   process; every SHM endpoint in the process shares it.
 - `deltaTimeUsec`: the asset thread's step.
-- `coreConfig`: core-pro's configuration (if not taken from the environment,
-  e.g. `HAKO_CONFIG_PATH`).
+- `coreConfig` (optional): core-pro's configuration; otherwise taken from the
+  environment (`HAKO_CONFIG_PATH`).
+- The C API and the Python binding accept an empty pdu-endpoint configuration
+  path when every endpoint of the node is shm.
 
 **One RPC definition file** (decided 2026-11-26). core-pro's service loader
 (`hako_pro_data_service.cpp`) reads only `pduMetaDataSize` and
