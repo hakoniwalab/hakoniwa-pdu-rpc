@@ -24,7 +24,7 @@ existing RPC definition files:
 | D3 | **Dependency on core-pro by a build option**, linked dynamically in the ordinary way (`.so` / `.dylib` / `.dll`), **no `dlopen`**. CMake option `HAKO_PDU_RPC_ENABLE_SHM` (default `OFF`): `OFF` builds without core-pro and rejects protocol `shm` with a clear message; `ON` links the core-pro shared libraries | hakoniwa-pdu-rpc keeps building without core-pro by default; with SHM the OS loader resolves core-pro. A thin function table (`CoreProServiceApi`) remains only as a seam for tests (fake core-pro) |
 | D4 | **A generic RPC bridge, wired by the existing RPC definition file** (section 6). The bridge connects, per service, the endpoint where it is a server to the endpoint where it is a client; both protocols come from the configuration | Like hakoniwa-pdu-bridge-core does for topics, but with RPC semantics instead of topic transfer policies (ticker / throttle / immediate do not fit RPC). One bridge covers tcp→shm (docker-host), shm→tcp (Hakoniwa → ROS), tcp→tcp |
 | D5 | **One class library everywhere**: hakoniwa-pdu-ros (through `libhakoniwa_pdu_rpc`), the RPC bridge and any other PDU-RPC application use the same SHM endpoints, with the same threading and locking | One implementation, one set of tests |
-| D6 | **Hakoniwa time runs on its own asset thread** (`hako_asset_usleep` loop), separated from the RPC side's real time (section 4) | A process that waits for a reply must never hold Hakoniwa time; otherwise a lockstep service deadlocks (seen in hakoniwa-robot-runtime stage P2) |
+| D6 | **Hakoniwa time runs on its own asset thread** (core-pro polling-asset loop: `get_event`, time advanced with `notify_simtime`), separated from the RPC side's real time (section 4) | A process that waits for a reply must never hold Hakoniwa time; otherwise a lockstep service deadlocks (seen in hakoniwa-robot-runtime stage P2) |
 | D7 | **All core-pro calls happen on the asset thread only** | core-pro reuses one request and one response buffer per client / server; calls from two threads would race |
 | D8 | Client endpoint first, server endpoint next (stages, section 9) | ROS 2 → Hakoniwa is the direction needed now |
 
@@ -70,8 +70,8 @@ IRpcServerEndpoint ─┬─ RpcServerEndpointImpl     existing
 ```
 
 ```text
-RPC side (real time)                          Asset thread (Hakoniwa time, hako_asset_usleep loop)
-------------------------------------          -----------------------------------------------------
+RPC side (real time)                          Asset thread (Hakoniwa time, polling-asset loop)
+------------------------------------          ------------------------------------------------
 client endpoint                               every Hakoniwa step:
   call(): copy request into the outbox          client side:
   poll(): read the inbox                          - queued request -> get_request_buffer, copy, call_request
@@ -81,7 +81,8 @@ server endpoint                                   - busy client    -> client_pol
   send_reply / send_cancel_reply: copy the      server side:
     reply into the outbox                         - server_poll; REQUEST_IN / REQUEST_CANCEL -> copy into the inbox
                                                   - queued reply -> get_response_buffer, copy body, put_response
-                                                - advance its own time; never waits for a reply
+                                                - advance its own time (get_worldtime / notify_simtime);
+                                                  never waits for a reply
         └──── per-endpoint mailbox: outbox + inbox, one mutex ────┘
 ```
 
@@ -93,9 +94,15 @@ server endpoint                                   - busy client    -> client_pol
   cannot run ahead of world time.
 - **The RPC side never touches core-pro.** Real-time timeouts stay with the
   caller, as today.
-- Start, stop and reset are read from the return values of the asset API
-  (`hako_asset_usleep` and friends), following core-pro's polling samples. On
-  reset, in-flight requests are dropped and reported as errors to the RPC side.
+- The asset thread uses core-pro's **polling** asset API, not the callback API
+  (`hako_asset_register` / `hako_asset_start` / `hako_asset_usleep` block and
+  belong to callback assets). Order, following core-pro `examples/service_polling`:
+  `hakoniwa_asset_init` → `hakoniwa_simevent_init` → `hakoniwa_asset_register_polling`
+  → `hako_asset_service_initialize` while the simulation is Stopped → loop on
+  `hakoniwa_asset_get_event` (start, stop, reset) → once running, wait for
+  `is_pdu_created` before `client_create` → each step advance time with
+  `notify_simtime`, bounded by `get_worldtime`. On reset, in-flight requests are
+  dropped and reported as errors to the RPC side, and the asset time returns to 0.
 
 ## 5. Endpoint configuration
 
@@ -189,7 +196,7 @@ No open points remain for stages S1–S5.
 
 Decided on 2026-11-26:
 
-- Asset thread = `hako_asset_usleep` loop; core-pro linked dynamically by a build
+- Asset thread = core-pro polling-asset loop (`get_event`, `notify_simtime`; corrected after S2, the callback API's `hako_asset_usleep` blocks); core-pro linked dynamically by a build
   option (no `dlopen`).
 - The bridge is a generic RPC bridge in hakoniwa-pdu-rpc wired by the RPC
   definition file, not a part of hakoniwa-pdu-bridge-core (its topic transfer
