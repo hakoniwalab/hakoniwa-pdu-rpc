@@ -252,7 +252,12 @@ bool run_500(IntegrationClient& client)
 
 bool run_busy(IntegrationClient& client, const std::string& work)
 {
-    if (!wait_file(std::filesystem::path(work) / "direct-busy.done")) return false;
+    const int direct_client_id = wait_direct_client_id(work);
+    if (direct_client_id < 0) return false;
+    const int client_id = 1 - direct_client_id;
+    const auto slot0_done = std::filesystem::path(work) / "busy-slot0.done";
+    // The polling server reads slot 1 after slot 0 gets a terminal reply.
+    if (client_id == 1 && !wait_file(slot0_done)) return false;
     uint64_t first_id = 0;
     uint64_t second_id = 0;
     if (!client.call(kService, kNeverRequest, 2, 0, first_id) ||
@@ -271,6 +276,7 @@ bool run_busy(IntegrationClient& client, const std::string& work)
             kNeverRequest + 2)) {
         return false;
     }
+    if (client_id == 0 && !mark_file(slot0_done)) return false;
     std::cout << "PASS S2(c) second call refused before core-pro\n";
     return true;
 }

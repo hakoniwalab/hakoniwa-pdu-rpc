@@ -150,11 +150,6 @@ bool run_compare(HakoServiceHandleType& handle, hako_time_t& local_time, const s
         {"invalid", kInvalidRequest, HAKO_SERVICE_API_RESULT_CODE_INVALID, false},
         {"canceled", kNeverRequest, HAKO_SERVICE_API_RESULT_CODE_CANCELED, true},
     };
-    if (!mark_file(
-            std::filesystem::path(work) /
-            ("direct-client-" + std::to_string(handle.client_id) + ".ready"))) {
-        return false;
-    }
     for (const auto& test : cases) {
         const auto slot0_done = std::filesystem::path(work) /
             (std::string(test.name) + "-slot0.done");
@@ -182,6 +177,8 @@ bool run_compare(HakoServiceHandleType& handle, hako_time_t& local_time, const s
 
 bool run_busy(HakoServiceHandleType& handle, hako_time_t& local_time, const std::string& work)
 {
+    const auto slot0_done = std::filesystem::path(work) / "busy-slot0.done";
+    if (handle.client_id == 1 && !wait_file(slot0_done)) return false;
     char* packet = nullptr;
     size_t packet_size = 0;
     HakoCpp_AddTwoIntsRequestPacket request{};
@@ -262,7 +259,7 @@ bool run_busy(HakoServiceHandleType& handle, hako_time_t& local_time, const std:
         !check_result(canceled, HAKO_SERVICE_API_RESULT_CODE_CANCELED)) {
         return false;
     }
-    std::ofstream(work + "/direct-busy.done").put('\n');
+    if (handle.client_id == 0 && !mark_file(slot0_done)) return false;
     std::cout << "PASS direct core-pro BUSY interim path\n";
     return true;
 }
@@ -314,6 +311,10 @@ int main(int argc, char** argv)
             return 1;
         }
         if (started && !finished && hakoniwa_simevent_get_state() == 2) {
+            if (!mark_file(std::filesystem::path(work) /
+                    ("direct-client-" + std::to_string(handle.client_id) + ".ready"))) {
+                return 1;
+            }
             finished = scenario == "compare"
                 ? run_compare(handle, local_time, work)
                 : run_busy(handle, local_time, work);
