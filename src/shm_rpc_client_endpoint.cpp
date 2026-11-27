@@ -2,6 +2,7 @@
 #include "nlohmann/json.hpp"
 #include "pdu_convertor.hpp"
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <iostream>
 
@@ -138,25 +139,22 @@ void ShmRpcClientEndpoint::asset_step(CoreProServiceApi& api)
         return;
     }
     PduData reply;
-    if (!api.response(core_client_, reply)) return;
+    if (!api.response(core_client_, reply) ||
+        reply.size() < HAKO_PDU_FIXED_DATA_SIZE_BY_TYPE(Hako_ServiceResponseHeader)) return;
+    HakoPduMetaDataType metadata{};
+    std::memcpy(&metadata, reply.data(), sizeof(metadata));
+    if (metadata.base_off != HAKO_PDU_META_DATA_SIZE()) return;
     HakoCpp_ServiceResponseHeader header{};
-    hako::pdu::PduConvertor<
-        HakoCpp_ServiceResponseHeader,
-        hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader> {}.pdu2cpp(
-        reinterpret_cast<char*>(reply.data()), header);
+    if (!hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader{}.pdu2cpp(
+            reinterpret_cast<char*>(reply.data()), header)) return;
     // core-pro #123: BUSY and progress/DOING are notices, not a terminal reply.
     if (header.result_code == HAKO_SERVICE_RESULT_CODE_BUSY || header.status == HAKO_SERVICE_STATUS_DOING) return;
     std::lock_guard lock(mutex_);
     if (in_flight_) {
-        HakoPduMetaDataType metadata{};
-        std::memcpy(&metadata, reply.data(), sizeof(metadata));
-        header.request_id = active_request_id_;
-        hako::pdu::PduConvertor<
-            HakoCpp_ServiceResponseHeader,
-            hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader> {}.cpp2pdu(
-            header, reinterpret_cast<char*>(reply.data()), reply.size());
-        // The generated header writer replaces the full packet's metadata.
-        std::memcpy(reply.data(), &metadata, sizeof(metadata));
+        // Rewrite only the request ID so the response body and metadata stay intact.
+        const auto request_id = static_cast<Hako_uint32>(active_request_id_);
+        const size_t request_id_offset = metadata.base_off + offsetof(Hako_ServiceResponseHeader, request_id);
+        std::memcpy(reply.data() + request_id_offset, &request_id, sizeof(request_id));
         inbox_ = std::move(reply);
         response_ready_ = true;
         cancel_state_ = CancelState::none;

@@ -2,8 +2,7 @@
 
 #ifdef HAKO_PDU_RPC_ENABLE_SHM
 #include <hakoniwa_asset_polling.h>
-#include <pdu_convertor.hpp>
-#include <hako_srv_msgs/pdu_cpptype_conv_ServiceRequestHeader.hpp>
+#include <hako_srv_msgs/pdu_ctype_ServiceRequestHeader.h>
 #include <cstring>
 #include <vector>
 
@@ -87,12 +86,13 @@ public:
                     &size,
                     HAKO_SERVICE_CLIENT_API_OPCODE_REQUEST,
                     0) != 0 || size < request_size) return false;
-        const size_t header_size = service_request_header_size();
-        if (request_size < header_size || size < header_size) return false;
-        // Core initialized only the request header. Preserve its request ID and
-        // copy the envelope for the full RPC body and heap along with the body.
-        std::memcpy(packet, request.data(), HAKO_PDU_META_DATA_SIZE());
-        std::memcpy(packet + header_size, request.data() + header_size, request_size - header_size);
+        constexpr size_t base_off = HAKO_PDU_META_DATA_SIZE();
+        constexpr size_t body_offset = base_off + sizeof(Hako_ServiceRequestHeader);
+        if (request_size < body_offset || size < body_offset) return false;
+        // Keep Core's header. The full packet's body can start before the
+        // padding at the end of a standalone header PDU.
+        std::memcpy(packet, request.data(), base_off);
+        std::memcpy(packet + body_offset, request.data() + body_offset, request_size - body_offset);
         return hako_asset_service_client_call_request(&clients_[id], packet, size, 0) == 0;
     }
     bool cancel(int id) override
@@ -123,15 +123,6 @@ public:
     }
     void stop_asset() override {}
 private:
-    static size_t service_request_header_size()
-    {
-        HakoCpp_ServiceRequestHeader header{};
-        std::vector<uint8_t> bytes(512);
-        return hako::pdu::PduConvertor<
-            HakoCpp_ServiceRequestHeader,
-            hako::pdu::msgs::hako_srv_msgs::ServiceRequestHeader> {}.cpp2pdu(
-                header, reinterpret_cast<char*>(bytes.data()), bytes.size());
-    }
     bool valid(int id) const
     {
         return id >= 0 && static_cast<size_t>(id) < clients_.size();

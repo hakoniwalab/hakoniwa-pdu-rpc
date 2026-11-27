@@ -4,6 +4,8 @@
 #include <hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp>
 #include <hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsResponsePacket.hpp>
 #include <hako_srv_msgs/pdu_cpptype_conv_ServiceResponseHeader.hpp>
+#include <hako_srv_msgs/pdu_cpptype_conv_SystemControlRequestPacket.hpp>
+#include <hako_srv_msgs/pdu_cpptype_conv_SystemControlResponsePacket.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -20,6 +22,7 @@ namespace {
 using namespace std::chrono_literals;
 constexpr const char* kService = "Service/Add";
 constexpr const char* kService2 = "Service/Add2";
+constexpr const char* kOpcodeService = "Service/Opcode";
 constexpr Hako_int64 kInvalidRequest = -3000;
 constexpr Hako_int64 kDelayedRequest = -2000;
 constexpr Hako_int64 kNeverRequest = -1000;
@@ -89,6 +92,30 @@ public:
     bool cancel(const std::string& service)
     {
         return client_.send_cancel_request(service);
+    }
+
+    bool run_request_body_offset()
+    {
+        HakoRpcServiceServerTemplateType(SystemControl) rpc;
+        for (Hako_uint32 opcode : {0u, 1u}) {
+            HakoCpp_SystemControlRequest body{};
+            body.opcode = opcode;
+            if (!rpc.call(client_, kOpcodeService, body, 5'000'000)) return false;
+
+            std::string service;
+            RpcResponse response;
+            HakoCpp_SystemControlResponse reply{};
+            if (wait_event(service, response) != ClientEventType::RESPONSE_IN ||
+                service != kOpcodeService || response.header.result_code != HAKO_SERVICE_RESULT_CODE_OK ||
+                !rpc.get_response_body(response, reply)) {
+                std::cerr << "ERROR: no valid response for opcode=" << opcode << "\n";
+                return false;
+            }
+            std::cout << "CLIENT sent opcode=" << opcode << ", server echoed " << reply.status_code << "\n";
+            if (reply.status_code != opcode) return false;
+        }
+        std::cout << "PASS shm request opcodes 0 and 1\n";
+        return true;
     }
 
 private:
@@ -406,6 +433,7 @@ int main(int argc, char** argv)
     if (!wait_file(std::filesystem::path(work) / "start-go")) return 1;
     bool passed = false;
     if (scenario == "ok") passed = run_ok(client);
+    else if (scenario == "request-body-offset") passed = client.run_request_body_offset();
     else if (scenario == "compare") passed = run_compare(client, work);
     else if (scenario == "calls500") passed = run_500(client);
     else if (scenario == "busy") passed = run_busy(client, work);

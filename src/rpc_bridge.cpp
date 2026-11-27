@@ -1,6 +1,7 @@
 #include "rpc_bridge.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -11,19 +12,20 @@ namespace {
 using RequestHeader = hako::pdu::msgs::hako_srv_msgs::ServiceRequestHeader;
 using ResponseHeader = hako::pdu::msgs::hako_srv_msgs::ServiceResponseHeader;
 
-template<class Converter, class Header>
+template<class WireHeader, class Converter, class Header>
 bool replace_header(PduData& pdu, Header& header)
 {
-    if (pdu.size() < HAKO_PDU_META_DATA_SIZE()
+    constexpr size_t base_off = HAKO_PDU_META_DATA_SIZE();
+    constexpr size_t aligned_header_size = HAKO_ALIGN_SIZE(sizeof(WireHeader), HAKO_ALIGNMENT_SIZE);
+    std::array<char, base_off + aligned_header_size> encoded_header;
+    if (pdu.size() < encoded_header.size()
         || pdu.size() > static_cast<size_t>(std::numeric_limits<int>::max())) return false;
-    // Header conversion also writes metadata for a header-only PDU. Keep
-    // the original packet's body and heap offsets.
     HakoPduMetaDataType metadata{};
     std::memcpy(&metadata, pdu.data(), sizeof(metadata));
-    if (metadata.base_off != HAKO_PDU_META_DATA_SIZE()
-        || Converter{}.cpp2pdu(header, reinterpret_cast<char*>(pdu.data()),
-                               static_cast<int>(pdu.size())) < 0) return false;
-    std::memcpy(pdu.data(), &metadata, sizeof(metadata));
+    if (metadata.base_off != base_off
+        || Converter{}.cpp2pdu(header, encoded_header.data(), encoded_header.size()) < 0) return false;
+    // The standalone encoder writes metadata and trailing padding. Copy only the embedded header.
+    std::memcpy(pdu.data() + base_off, encoded_header.data() + base_off, sizeof(WireHeader));
     return true;
 }
 
@@ -75,7 +77,7 @@ void RpcBridge::forward_request()
     client_.create_request_buffer(HAKO_SERVICE_OPERATION_CODE_REQUEST, false, header_buffer);
     if (!header_buffer.empty()
         && RequestHeader{}.pdu2cpp(reinterpret_cast<char*>(header_buffer.data()), outgoing)
-        && replace_header<RequestHeader>(request.pdu, outgoing)
+        && replace_header<Hako_ServiceRequestHeader, RequestHeader>(request.pdu, outgoing)
         && client_.call(request.pdu, 0)) {
         outgoing_id_ = outgoing.request_id;
         request.pdu.clear();
@@ -99,7 +101,7 @@ void RpcBridge::receive_response()
     header.request_id = original.request_id;
     header.client_name = original.client_name;
     header.service_name = original.service_name;
-    if (!replace_header<ResponseHeader>(response.pdu, header)) {
+    if (!replace_header<Hako_ServiceResponseHeader, ResponseHeader>(response.pdu, header)) {
         reply_with_error(original, HAKO_SERVICE_RESULT_CODE_ERROR);
     } else if (active.cancel_requested && header.result_code == HAKO_SERVICE_RESULT_CODE_CANCELED) {
         server_.send_cancel_reply(original.client_name, response.pdu);
