@@ -89,6 +89,7 @@ if(HAKO_PDU_RPC_ENABLE_SHM AND UNIX)
   endfunction()
 
   hako_add_shm_core_pro_test(hakoniwa_pdu_shm_core_pro_ok ok 90)
+  hako_add_shm_core_pro_test(hakoniwa_pdu_shm_core_pro_request_body_offset request-body-offset 90)
   hako_add_shm_core_pro_test(hakoniwa_pdu_shm_core_pro_s2a_compare compare 120)
   hako_add_shm_core_pro_test(hakoniwa_pdu_shm_core_pro_s2b_500_calls calls500 180)
   hako_add_shm_core_pro_test(hakoniwa_pdu_shm_core_pro_s2c_busy busy 120)

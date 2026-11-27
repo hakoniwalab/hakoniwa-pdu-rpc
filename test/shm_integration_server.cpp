@@ -1,17 +1,21 @@
 #include <hakoniwa_asset_polling.h>
 #include <hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsRequestPacket.hpp>
 #include <hako_srv_msgs/pdu_cpptype_conv_AddTwoIntsResponsePacket.hpp>
+#include <hako_srv_msgs/pdu_cpptype_conv_SystemControlRequestPacket.hpp>
+#include <hako_srv_msgs/pdu_cpptype_conv_SystemControlResponsePacket.hpp>
 
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <iostream>
+#include <string_view>
 #include <thread>
 
 namespace {
 constexpr const char* kAsset = "PduRpcShmServer";
 constexpr std::array<const char*, 2> kServices{"Service/Add", "Service/Add2"};
+constexpr const char* kOpcodeService = "Service/Opcode";
 constexpr hako_time_t kDeltaUsec = 1000;
 constexpr Hako_int64 kInvalidRequest = -3000;
 constexpr Hako_int64 kDelayedRequest = -2000;
@@ -69,13 +73,46 @@ bool receive_request(int service_id, PendingRequest& pending, hako_time_t world_
     std::cout << "SERVER request a=" << in.body.a << " b=" << in.body.b << "\n";
     return true;
 }
+
+bool poll_opcode_service(int service_id)
+{
+    const int event = hako_asset_service_server_poll(service_id);
+    if (event != HAKO_SERVICE_SERVER_API_REQUEST_IN) return event >= 0;
+
+    char* request = nullptr;
+    size_t request_size = 0;
+    HakoCpp_SystemControlRequestPacket in{};
+    if (hako_asset_service_server_get_request(service_id, &request, &request_size) != 0 ||
+        !hako::pdu::msgs::hako_srv_msgs::SystemControlRequestPacket{}.pdu2cpp(request, in)) {
+        return false;
+    }
+    std::cout << "SERVER received opcode=" << in.body.opcode << "\n";
+
+    char* response = nullptr;
+    size_t response_size = 0;
+    HakoCpp_SystemControlResponsePacket out{};
+    if (hako_asset_service_server_get_response_buffer(
+            service_id,
+            &response,
+            &response_size,
+            HAKO_SERVICE_API_STATUS_DONE,
+            HAKO_SERVICE_API_RESULT_CODE_OK) != 0 ||
+        !hako::pdu::msgs::hako_srv_msgs::SystemControlResponsePacket{}.pdu2cpp(response, out)) {
+        return false;
+    }
+    out.body.status_code = in.body.opcode;
+    return hako::pdu::msgs::hako_srv_msgs::SystemControlResponsePacket{}.cpp2pdu(
+               out, response, response_size) >= 0 &&
+        hako_asset_service_server_put_response(service_id, response, response_size) == 0;
+}
 }
 
 int main(int argc, char** argv)
 {
     std::cout << std::unitbuf;
-    if (argc != 2) {
-        std::cerr << "Usage: " << argv[0] << " <service.json>\n";
+    const bool serve_opcode = argc == 3 && std::string_view(argv[2]) == "request-body-offset";
+    if (argc != 2 && !serve_opcode) {
+        std::cerr << "Usage: " << argv[0] << " <service.json> [request-body-offset]\n";
         return 2;
     }
     std::signal(SIGINT, stop_handler);
@@ -89,6 +126,7 @@ int main(int argc, char** argv)
     std::cout << "SERVER registered\n";
 
     std::array<int, kServices.size()> service_ids{-1, -1};
+    int opcode_service_id = -1;
     std::array<PendingRequest, kServices.size()> pending{};
     bool started = false;
     hako_time_t local_time = 0;
@@ -100,6 +138,10 @@ int main(int argc, char** argv)
                 service_ids[i] = hako_asset_service_server_create(kAsset, kServices[i]);
                 if (service_ids[i] < 0) return 1;
                 pending[i] = {};
+            }
+            if (serve_opcode) {
+                opcode_service_id = hako_asset_service_server_create(kAsset, kOpcodeService);
+                if (opcode_service_id < 0) return 1;
             }
             started = true;
             local_time = 0;
@@ -153,6 +195,7 @@ int main(int argc, char** argv)
             if (!send_response(service_ids[i], pending[i], result)) return 1;
             pending[i] = {};
         }
+        if (serve_opcode && !poll_opcode_service(opcode_service_id)) return 1;
         if (local_time <= world_time) {
             local_time += kDeltaUsec;
             hakoniwa_asset_notify_simtime(kAsset, local_time);

@@ -92,6 +92,29 @@ if [[ "$SCENARIO" == "compare" || "$SCENARIO" == "busy" ]]; then
     ADD_MAX_CLIENTS=2
 fi
 CLIENT_ENDPOINT_FIELDS=", \"protocol\": \"shm\", \"assetName\": \"PduRpcShmClient\", \"coreConfig\": \"$HAKO_CONFIG_PATH\""
+SERVER_ARGS=("$WORK/service.json")
+OPCODE_SERVICE=
+if [[ "$SCENARIO" == "request-body-offset" ]]; then
+    SERVER_ARGS+=("$SCENARIO")
+    OPCODE_SERVICE=$(cat <<JSON
+    ,{
+      "name": "Service/Opcode",
+      "type": "hako_srv_msgs/SystemControl",
+      "maxClients": 1,
+      "pduSize": {
+        "server": {"heapSize": 0, "baseSize": 272},
+        "client": {"heapSize": 0, "baseSize": 400}
+      },
+      "clients": [
+        {
+          "name": "ShmClient",
+          "client_endpoint": {"nodeId": "shm_client_node", "endpointId": "shm_client_ep"$CLIENT_ENDPOINT_FIELDS}
+        }
+      ]
+    }
+JSON
+    )
+fi
 cat > "$WORK/service.json" <<JSON
 {
   "pduMetaDataSize": 24,
@@ -125,7 +148,7 @@ cat > "$WORK/service.json" <<JSON
           "client_endpoint": {"nodeId": "shm_client_node", "endpointId": "shm_client_ep"$CLIENT_ENDPOINT_FIELDS}
         }
       ]
-    }
+    }$OPCODE_SERVICE
   ]
 }
 JSON
@@ -134,7 +157,7 @@ CONDUCTOR_PID=$!
 PIDS+=("$CONDUCTOR_PID")
 wait_log "$WORK/conductor.log" "CONDUCTOR started" "$CONDUCTOR_PID"
 
-"$SERVER" "$WORK/service.json" >"$WORK/server.log" 2>&1 &
+"$SERVER" "${SERVER_ARGS[@]}" >"$WORK/server.log" 2>&1 &
 SERVER_PID=$!
 PIDS+=("$SERVER_PID")
 wait_log "$WORK/server.log" "SERVER registered" "$SERVER_PID"
@@ -166,6 +189,10 @@ wait_asset "PduRpcShmClient" "$CLIENT_PID"
 case "$SCENARIO" in
     ok)
         wait_log "$WORK/client.log" "PASS shm core-pro OK sum=42" "$CLIENT_PID"
+        ;;
+    request-body-offset)
+        wait_log "$WORK/client.log" "PASS shm request opcodes 0 and 1" "$CLIENT_PID"
+        wait "$CLIENT_PID"
         ;;
     c-api|cffi)
         wait_log "$WORK/client.log" "PASS shm round trip sum=42" "$CLIENT_PID"

@@ -1,5 +1,7 @@
 #include "rpc_bridge.hpp"
 
+#include <hako_srv_msgs/pdu_cpptype_conv_SystemControlRequestPacket.hpp>
+#include <hako_srv_msgs/pdu_cpptype_conv_SystemControlResponsePacket.hpp>
 #include <gtest/gtest.h>
 #include <cstring>
 #include <deque>
@@ -180,6 +182,43 @@ TEST_F(RpcBridgeTest, MapsIdentityAndPreservesPacketsInBothDirections)
     bridge.poll();
     EXPECT_EQ(client.calls.size(), 1u);
     EXPECT_EQ(server.replies.size(), 1u);
+}
+
+TEST_F(RpcBridgeTest, PreservesBodyAdjacentToHeaderInBothDirections)
+{
+    using hako::pdu::msgs::hako_srv_msgs::SystemControlRequestPacket;
+    using hako::pdu::msgs::hako_srv_msgs::SystemControlResponsePacket;
+
+    server.request("Original", 17);
+    auto& incoming = server.requests.front().second;
+    HakoCpp_SystemControlRequestPacket request{};
+    request.header = incoming.header;
+    request.body.opcode = 1;
+    ASSERT_GT(SystemControlRequestPacket{}.cpp2pdu(
+        request, reinterpret_cast<char*>(incoming.pdu.data()), incoming.pdu.size()), 0);
+
+    bridge.poll();
+    ASSERT_EQ(client.sent_packets.size(), 1u);
+    HakoCpp_SystemControlRequestPacket forwarded{};
+    ASSERT_TRUE(SystemControlRequestPacket{}.pdu2cpp(
+        reinterpret_cast<char*>(client.sent_packets.front().data()), forwarded));
+    EXPECT_EQ(forwarded.body.opcode, 1u);
+
+    client.reply(101);
+    auto& outgoing = client.responses.front().second;
+    HakoCpp_SystemControlResponsePacket response{};
+    response.header = outgoing.header;
+    response.body.status_code = 1;
+    outgoing.pdu.resize(sizeof(Hako_SystemControlResponsePacket) + HAKO_PDU_META_DATA_SIZE());
+    ASSERT_GT(SystemControlResponsePacket{}.cpp2pdu(
+        response, reinterpret_cast<char*>(outgoing.pdu.data()), outgoing.pdu.size()), 0);
+
+    bridge.poll();
+    ASSERT_EQ(server.replies.size(), 1u);
+    HakoCpp_SystemControlResponsePacket returned{};
+    ASSERT_TRUE(SystemControlResponsePacket{}.pdu2cpp(
+        reinterpret_cast<char*>(server.replies.front().pdu.data()), returned));
+    EXPECT_EQ(returned.body.status_code, 1u);
 }
 
 TEST_F(RpcBridgeTest, RejectsDuplicateAndSerializesDifferentClients)
